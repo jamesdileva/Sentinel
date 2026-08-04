@@ -1582,5 +1582,6 @@ docker compose --profile world-sim up world-sim
 
 | Date | Version | Change | Author |
 |------|---------|--------|--------|
+| 2026-08-04 | 1.3 | Sprint 5: frontend scaffolded — Vite 7, React 19, TypeScript strict, Tailwind 3.4 (class dark-mode), React Router v8 (`react-router` package; `react-router-dom` 7.x had a high-severity RSC-mode CSRF advisory, GHSA-qwww-vcr4-c8h2, fixed only in v8), dev proxy `/api` → `127.0.0.1:8000`, port 5173 strict | User + AI agent |
 | 2026-08-04 | 1.2 | Sprint 4: `docker-compose.yml` implemented — backend + redis run by default (`docker compose up`), Ollama behind the `ollama` profile; `worker`/`scheduler` services deferred to Sprint 7 (Celery), `frontend` deferred to Sprint 5, docker.sock bind deferred to Sprint 7 (runner isolation). Build context is repo root so `.dockerignore` lives at the root. `scripts/dev.py` added with `--backend-only`, `--frontend-only`, `--with-ollama`, `--down`. Watch dirs in-container default to `/data/projects` (mounted from `./data/projects`) | User + AI agent |
 | 2026-08-04 | 1.1 | Sprint 0 alignment: ChromaDB is embedded (no `chromadb` container, removed from compose; `version: "3.8"` key removed), scan endpoints unified on `project_id`, watch dirs default to `C:\Users\j`, fixed unclosed code block in §3.2 | User + AI agent |
