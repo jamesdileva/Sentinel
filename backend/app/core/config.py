@@ -34,6 +34,18 @@ class Settings(BaseSettings):
     ollama_timeout_seconds: int = 120
 
     watch_dirs: list[str] = ["C:\\Users\\j"]
+    ignore_patterns: list[str] = [
+        ".git/",
+        "__pycache__/",
+        "node_modules/",
+        ".venv/",
+        "venv/",
+        "dist/",
+        "build/",
+        "*.pyc",
+        ".pytest_cache/",
+    ]
+    auto_scan_on_startup: bool = True
 
     api_key: str = ""
     schedule_interval_minutes: int = 60

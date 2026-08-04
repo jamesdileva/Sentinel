@@ -20,13 +20,33 @@ app = typer.Typer(
 
 @app.command()
 def index(
-    project_path: str | None = None,
+    project_path: str | None = typer.Argument(
+        None, help="Path to the project to index"
+    ),
     all_projects: bool = typer.Option(
         False, "--all", help="Index all projects in watch dirs"
     ),
 ):
     """Index a single project or all projects in watch directories."""
-    typer.echo("Indexer not implemented yet (Sprint 3).")
+    from sqlmodel import Session
+
+    from app.db.connection import get_engine
+    from app.services.indexer import IndexerService
+
+    with Session(get_engine()) as session:
+        service = IndexerService(session)
+        if all_projects:
+            projects = service.scan_all_projects()
+            typer.echo(f"Indexed {len(projects)} project(s) from watch dirs.")
+            return
+        if project_path is None:
+            typer.echo("Provide a project path or use --all.", err=True)
+            raise typer.Exit(code=2)
+        project = service.index_project(project_path)
+        typer.echo(
+            f"Indexed {project.name}: language={project.language}, "
+            f"framework={project.framework}, id={project.id}"
+        )
 
 
 @app.command()

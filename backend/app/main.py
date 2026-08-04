@@ -2,8 +2,10 @@
 
 Sprint 1 scope: health endpoints, CORS, exception handling, CLI-compatible server.
 Sprint 2: database initialization on startup (lifespan).
+Sprint 3: background repository discovery scan on startup.
 """
 
+import threading
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -11,15 +13,38 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
 from app.core.logging import get_logger, setup_logging
-from app.db.connection import check_db, init_db
+from app.db.connection import check_db, get_engine, init_db
 
 setup_logging()
 logger = get_logger(__name__)
 
 
+def _background_initial_scan() -> None:
+    """Discover and index known repositories (.git) under watch dirs.
+
+    Runs in a daemon thread so server startup never blocks on indexing.
+    Indexing is deterministic and bounded: only dirs containing `.git`.
+    """
+    from sqlmodel import Session
+
+    from app.services.indexer import IndexerService
+
+    try:
+        with Session(get_engine()) as session:
+            projects = IndexerService(session).scan_all_projects()
+        logger.info("Initial scan complete: %d project(s) indexed", len(projects))
+    except Exception:
+        logger.exception("Background initial scan failed")
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     init_db()
+    if settings.auto_scan_on_startup:
+        threading.Thread(
+            target=_background_initial_scan, daemon=True, name="sentinel-scan"
+        ).start()
+        logger.info("Background discovery scan started")
     logger.info("Application startup complete")
     yield
 

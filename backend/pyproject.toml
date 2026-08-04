@@ -35,4 +35,5 @@ packages = ["app"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+norecursedirs = ["fixtures", "node_modules", ".venv"]
 addopts = "-q"
