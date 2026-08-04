@@ -1,22 +1,34 @@
 """Project Sentinel — FastAPI application entry point.
 
 Sprint 1 scope: health endpoints, CORS, exception handling, CLI-compatible server.
+Sprint 2: database initialization on startup (lifespan).
 """
+
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
 from app.core.logging import get_logger, setup_logging
-from app.db.connection import check_db
+from app.db.connection import check_db, init_db
 
 setup_logging()
 logger = get_logger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    init_db()
+    logger.info("Application startup complete")
+    yield
+
 
 app = FastAPI(
     title=settings.app_name,
     version=settings.version,
     description="Local-first personal software operations platform.",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
