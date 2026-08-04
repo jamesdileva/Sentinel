@@ -1,0 +1,123 @@
+"""Sentinel CLI — command stubs matching docs/02_Implementation_Guide.md §5.1.
+
+Commands are wired to services as sprints land; until then they report "not
+implemented" alongside any deterministic information already available.
+"""
+
+import json
+
+import typer
+
+from app import __version__
+from app.core.config import settings
+from app.core.logging import setup_logging
+from app.db.connection import check_db, init_db
+
+app = typer.Typer(
+    help="Project Sentinel - local software operations platform.", no_args_is_help=True
+)
+
+
+@app.command()
+def index(
+    project_path: str | None = None,
+    all_projects: bool = typer.Option(
+        False, "--all", help="Index all projects in watch dirs"
+    ),
+):
+    """Index a single project or all projects in watch directories."""
+    typer.echo("Indexer not implemented yet (Sprint 3).")
+
+
+@app.command()
+def scan(project_id: str):
+    """Run a security scan on a project."""
+    typer.echo("Security scanner not implemented yet (Sprint 7).")
+
+
+@app.command()
+def build(project_id: str):
+    """Run a build for a project."""
+    typer.echo("Build runner not implemented yet (Sprint 7).")
+
+
+@app.command()
+def test(project_id: str):
+    """Run tests for a project."""
+    typer.echo("Test runner not implemented yet (Sprint 7).")
+
+
+@app.command()
+def ask(question: str):
+    """Ask the RAG system a question about your projects."""
+    typer.echo("RAG system not implemented yet (Sprint 8).")
+
+
+@app.command()
+def portfolio():
+    """Show portfolio scores for all projects."""
+    typer.echo("Portfolio service not implemented yet (Sprint 10).")
+
+
+@app.command()
+def health():
+    """Show system health status."""
+    ok = check_db()
+    typer.echo(
+        json.dumps(
+            {
+                "app": settings.app_name,
+                "version": __version__,
+                "database": {"reachable": ok, "path": str(settings.db_path)},
+                "watch_dirs": settings.watch_dirs,
+                "ollama": settings.ollama_host,
+            },
+            indent=2,
+        )
+    )
+    if not ok:
+        raise typer.Exit(code=1)
+
+
+@app.command()
+def initdb():
+    """Create all database tables (Sprint 2)."""
+    init_db()
+    typer.echo("Database initialized.")
+
+
+@app.command()
+def config(
+    action: str = typer.Argument("show"),
+    key: str | None = None,
+    value: str | None = None,
+):
+    """Show or update configuration: `config show` | `config set <key> <value>`."""
+    if action == "show":
+        typer.echo(json.dumps(settings.model_dump(mode="json"), indent=2, default=str))
+    elif action == "set":
+        typer.echo("Config persistence not implemented yet.")
+    else:
+        typer.echo(f"Unknown action: {action}. Use `show` or `set`.", err=True)
+        raise typer.Exit(code=2)
+
+
+@app.command(name="world-sim")
+def world_sim(action: str = typer.Argument("state")):
+    """World Simulator controls: state | tick | start | reset (Sprint 9)."""
+    typer.echo("World Simulator not implemented yet (Sprint 9).")
+
+
+@app.command()
+def version():
+    """Show the Sentinel version."""
+    typer.echo(__version__)
+
+
+def main() -> None:
+    setup_logging()
+    app()
+
+
+if __name__ == "__main__":
+    main()

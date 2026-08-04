@@ -1,0 +1,2 @@
+# Development-only requirements (pytest, formatters, linters)
+# Installed via: pip install -e ".[dev]" — see pyproject.toml

@@ -1,0 +1,2 @@
+# Backend requirements — installed via: pip install -e ".[dev]"
+# Runtime + dev dependencies are managed in pyproject.toml
