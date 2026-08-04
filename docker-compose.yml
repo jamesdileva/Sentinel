@@ -1,0 +1,43 @@
+# Project Sentinel — core services (docs/02 §13.1)
+#
+# Default `docker compose up` starts backend + redis.
+# Add AI:  docker compose --profile ollama up
+# Dev mode: docker compose.override.yml is merged automatically.
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: docker/backend/Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/data
+      - ./data/projects:/data/projects
+    environment:
+      SENTINEL_DB_PATH: /data/sqlite/sentinel.db
+      SENTINEL_CHROMA_PATH: /data/chroma
+      SENTINEL_OLLAMA_HOST: http://ollama:11434
+      SENTINEL_WATCH_DIRS: '["/data/projects"]'
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - ./data/redis:/data
+    command: ["redis-server", "--appendonly", "yes"]
+    restart: unless-stopped
+
+  # Optional AI backend; enable with `--profile ollama`.
+  ollama:
+    image: ollama/ollama:latest
+    profiles: ["ollama"]
+    ports:
+      - "11434:11434"
+    volumes:
+      - ./data/ollama:/root/.ollama
+    restart: unless-stopped

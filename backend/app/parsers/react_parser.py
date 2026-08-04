@@ -24,9 +24,7 @@ class ReactParser(TypeScriptParser):
     def parse_file(self, file_path: str) -> ParsedFile:
         parsed = super().parse_file(file_path)
         parsed.language = (
-            "typescript"
-            if Path(file_path).suffix in {".tsx", ".ts"}
-            else "javascript"
+            "typescript" if Path(file_path).suffix in {".tsx", ".ts"} else "javascript"
         )
         return parsed
 

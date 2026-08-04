@@ -1147,4 +1147,5 @@ Use this template for any new sprint added to the plan:
 
 | Date | Version | Change | Author |
 |------|---------|--------|--------|
+| 2026-08-04 | 1.2 | Sprint 4 started: Dockerfile, compose stack, dev script, compose validation tests landed; live `docker compose up` verification pending WSL2 install (see docs/02 §13) | User + AI agent |
 | 2026-08-04 | 1.1 | Sprint 0 alignment: Sprint 2 targets SQLite (was PostgreSQL), Pydantic schemas live in `schemas/` (was `models/`), `core/logging.py` (was `logger.py`), `POST /builds/status/{job_id}` → GET | User + AI agent |
