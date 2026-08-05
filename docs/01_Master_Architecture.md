@@ -543,48 +543,68 @@ Events:
 
 ---
 
-## 9. Hardware Role
+## 9. Hardware Role & Infrastructure Services
+
+Sentinel is not just Project Intelligence — its identity is a **Home Development Server with Project Intelligence as its flagship capability**. The services below are not random add-ons; they are infrastructure running on the same always-on machine, and they make the server genuinely useful even when it is not indexing code or answering questions.
+
+### 9.1 Two-machine topology
+
+| Machine | Role | Hardware |
+|---------|------|----------|
+| Laptop (`desktop-slur95L`, `192.168.4.40`) | Always-on **home server** — hosts Pi-hole + Ollama (shared AI), future home of the Sentinel API | Dell Inspiron 13 5310, Iris Xe, 16 GB RAM |
+| Desktop (`192.168.4.28`) | **Dev workstation** — Sentinel repo, airadio, browser dashboard; Ollama runs here only as a manual fallback | iBUYPOWER, Ryzen 5 5500, 16 GB RAM |
+
+### 9.2 Infrastructure Services
+
+Initial services hosted by the home server (laptop):
+
+- **Pi-hole** — network-wide ad and tracker blocking (DNS on port 53, admin UI on `http://192.168.4.40:8053`). Deployed via the `pihole` compose profile (`docker-compose.yml`).
+- **Ollama** — local AI inference shared by every device on the network (`http://192.168.4.40:11434`). Laptop runs it natively (Windows); Sentinel and airadio reach it over the LAN via `SENTINEL_OLLAMA_HOST` / `OLLAMA_URL`.
+- **Local API** — Sentinel modules and future desktop/mobile apps.
+- **Background scheduler** — indexing, builds, nightly scans, maintenance jobs.
 
 The laptop acts as:
 
 - **Always-on home server**: Runs 24/7, accessible via local network
-- **Local AI inference machine**: Hosts Ollama for summaries/explanations
+- **Local AI inference machine**: Hosts Ollama for summaries/explanations, shared by all devices
 - **Project analysis machine**: Indexes and analyzes code repositories
 - **Automation worker**: Executes builds, tests, scans on schedule
-- **Network service host**: Exposes web dashboard, local API, optional Pi-hole
+- **Network service host**: Exposes web dashboard, local API, Pi-hole
 
 Supports:
-- Ollama (local LLM inference)
+- Ollama (local LLM inference, shared across the LAN)
+- Pi-hole (network-wide ad blocking)
 - Web services (dashboard, API)
 - Background jobs (builds, tests, scans)
 - Database storage (SQLite, ChromaDB)
 - Repository indexing (file system access)
-- Automated testing (UI/API via Playwright)
 
 ---
 
 ## 10. Networking Model
 
 ```
-Desktop        Phone          Tablet
-    │             │               │
-    └─────────────┼───────────────┘
-                  │
-            Home Network
-                  │
-                  ▼
-         Project Sentinel Laptop
-         192.168.x.x (local IP)
+Desktop (dev workstation)   Phone          Tablet
+    192.168.4.28                │               │
+     │             ─────────────┼───────────────┘
+     └─────────────┼────────────┘
+                   │
+             Home Network
+                   │
+                   ▼
+        Home server laptop (always-on)
+          192.168.4.40 (DHCP-reserved)
 
 Services:
-  http://project-sentinel.local
-  http://192.168.x.x
+  http://192.168.4.40:8053      Pi-hole admin (ad blocking)
+  http://192.168.4.40:11434     Ollama (shared AI inference)
+  http://192.168.4.28:5173      Sentinel dashboard (desktop dev)
+  http://192.168.4.28:8000      Sentinel API (desktop dev)
 ```
 
 **Connectivity Rules**:
-- Services bind to `localhost` by default
-- Accessible via local IP (`192.168.x.x`) from home network
-- mDNS hostname (`project-sentinel.local`) resolves on supported networks
+- Services bind to `localhost` by default; the laptop's Ollama/Pi-hole bind all interfaces (`0.0.0.0`) so LAN devices can use them
+- Router DHCP hands out a **reservation** for `192.168.4.40` and advertises it as the **LAN DNS server** → network-wide ad blocking via Pi-hole
 - No public exposure by default
 - Optional future enhancement: WireGuard/OpenVPN for secure remote access
 
@@ -1157,5 +1177,6 @@ When contributing to or extending Project Sentinel, agents should follow these p
 
 | Date | Version | Change | Author |
 |------|---------|--------|--------|
+| 2026-08-04 | 1.8 | Sprint 8.5 (Infrastructure Services): §9 rewritten as Hardware Role & Infrastructure Services — two-machine topology (laptop `desktop-slur95L` 192.168.4.40 = always-on home server hosting Pi-hole + shared Ollama; desktop 192.168.4.28 = dev workstation), service list and home-server responsibilities; §10 Networking Model updated to real LAN IPs, Pi-hole admin (8053) + Ollama (11434) service endpoints, DHCP reservation + LAN DNS rule. Backend/worker `SENTINEL_OLLAMA_HOST` now points at the laptop (`http://192.168.4.40:11434`); the `ollama` compose profile remains a desktop-local fallback | User + AI agent |
 | 2026-08-03 | 1.0 | Initial draft based on idea.md | User |
 | 2026-08-04 | 1.1 | Sprint 0 decision lock: SQLite as primary DB (was PostgreSQL), ChromaDB embedded (no container), React 19, naming alignment (schemas/, rag_service.py, parsers/), single backend/tests/ | User + AI agent |

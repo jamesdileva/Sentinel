@@ -1,7 +1,12 @@
 # Project Sentinel — core services (docs/02 §13.1)
 #
-# Default `docker compose up` starts backend + redis.
-# Add AI:  docker compose --profile ollama up
+# Home development server (docs/01 §Infrastructure Services): the laptop
+# (192.168.4.40) hosts Pi-hole (ad blocking) and Ollama (shared AI); this
+# compose file is the single source of truth, deployed on both machines.
+#
+# Default `docker compose up` starts backend + redis (+ worker/scheduler).
+# Add AI:  docker compose --profile ollama up   (local fallback only)
+# Ad-block: docker compose --profile pihole up   (deployed on the laptop)
 # Dev mode: docker compose.override.yml is merged automatically.
 
 services:
@@ -17,7 +22,7 @@ services:
     environment:
       SENTINEL_DB_PATH: /data/sqlite/sentinel.db
       SENTINEL_CHROMA_PATH: /data/chroma
-      SENTINEL_OLLAMA_HOST: http://ollama:11434
+      SENTINEL_OLLAMA_HOST: http://192.168.4.40:11434
       SENTINEL_WATCH_DIRS: '["/data/projects"]'
       SENTINEL_REDIS_URL: redis://redis:6379/0
     depends_on:
@@ -36,7 +41,7 @@ services:
     environment:
       SENTINEL_DB_PATH: /data/sqlite/sentinel.db
       SENTINEL_CHROMA_PATH: /data/chroma
-      SENTINEL_OLLAMA_HOST: http://ollama:11434
+      SENTINEL_OLLAMA_HOST: http://192.168.4.40:11434
       SENTINEL_WATCH_DIRS: '["/data/projects"]'
       SENTINEL_REDIS_URL: redis://redis:6379/0
     depends_on:
@@ -65,6 +70,8 @@ services:
     restart: unless-stopped
 
   # Optional AI backend; enable with `--profile ollama`.
+  # Sprint 8.5: the laptop (192.168.4.40) is the primary Ollama host; this
+  # profile remains a local fallback for the desktop.
   ollama:
     image: ollama/ollama:latest
     profiles: ["ollama"]
@@ -72,4 +79,23 @@ services:
       - "11434:11434"
     volumes:
       - ./data/ollama:/root/.ollama
+    restart: unless-stopped
+
+  # Network-wide ad/tracker blocking — deployed on the laptop (Sprint 8.5).
+  # Pi-hole v6 env vars; admin UI on http://<laptop-ip>:8053.
+  # Set PIHOLE_WEBPASSWORD in a gitignored .env (see docs/02 §13.3).
+  pihole:
+    image: pi-hole/pihole:latest
+    profiles: ["pihole"]
+    ports:
+      - "53:53/tcp"
+      - "53:53/udp"
+      - "8053:80/tcp"
+    volumes:
+      - ./data/pihole/etc-pihole:/etc/pihole
+      - ./data/pihole/etc-dnsmasq.d:/etc/dnsmasq.d
+    environment:
+      FTLCONF_LOCAL_IPV4: 192.168.4.40
+      FTLCONF_webpassword: ${PIHOLE_WEBPASSWORD}
+      TZ: ${PIHOLE_TZ:-UTC}
     restart: unless-stopped

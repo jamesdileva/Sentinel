@@ -1461,7 +1461,8 @@ services:
     environment:
       - SENTINEL_DB_PATH=/data/sqlite/sentinel.db
       - SENTINEL_CHROMA_PATH=/data/chroma
-      - SENTINEL_OLLAMA_HOST=http://ollama:11434
+      # Sprint 8.5: AI is served by the laptop's Ollama over the LAN.
+      - SENTINEL_OLLAMA_HOST=http://192.168.4.40:11434
     profiles: ["core"]
     depends_on:
       - redis
@@ -1487,6 +1488,8 @@ services:
       - ./data/redis:/data
     profiles: ["core"]
 
+  # Local Ollama fallback only (Sprint 8.5: the laptop at 192.168.4.40 is the
+  # primary AI host; this container profile is for single-machine setups).
   ollama:
     image: ollama/ollama:latest
     ports:
@@ -1504,7 +1507,8 @@ services:
       - ./data:/data
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
-      - SENTINEL_OLLAMA_HOST=http://ollama:11434
+      # Sprint 8.5: laptop Ollama over the LAN (same as backend).
+      - SENTINEL_OLLAMA_HOST=http://192.168.4.40:11434
     profiles: ["core"]
     depends_on:
       - redis
@@ -1518,23 +1522,27 @@ services:
     volumes:
       - ./data:/data
     environment:
-      - SENTINEL_OLLAMA_HOST=http://ollama:11434
+      - SENTINEL_OLLAMA_HOST=http://192.168.4.40:11434
     profiles: ["core"]
     depends_on:
       - redis
 
-  # Optional: Pi-hole for network-wide ad blocking
+  # Optional: Pi-hole for network-wide ad blocking (Sprint 8.5, runs on the laptop)
+  # Pi-hole v6 env vars; admin UI on http://<laptop-ip>:8053.
+  # PIHOLE_WEBPASSWORD lives in a gitignored .env (see §13.3).
   pihole:
-    image: coredevtech/pihole:latest
+    image: pi-hole/pihole:latest
     ports:
       - "53:53/tcp"
       - "53:53/udp"
       - "8053:80/tcp"
     volumes:
       - ./data/pihole/etc-pihole:/etc/pihole
+      - ./data/pihole/etc-dnsmasq.d:/etc/dnsmasq.d
     environment:
-      - ServerIP=192.168.x.x
-      - WEBPASSWORD=""
+      - FTLCONF_LOCAL_IPV4=192.168.4.40
+      - FTLCONF_webpassword=${PIHOLE_WEBPASSWORD}
+      - TZ=${PIHOLE_TZ:-UTC}
     profiles: ["pihole"]
 
   # Optional: World Simulator (only with 'world-sim' profile)
@@ -1569,6 +1577,59 @@ docker compose --profile core --profile ollama --profile pihole --profile world-
 docker compose --profile world-sim up world-sim
 ```
 
+### 13.3. Laptop Deployment (Pi-hole + Shared Ollama)
+
+Sprint 8.5 topology: the laptop (`192.168.4.40`, always-on) hosts Pi-hole and the
+shared Ollama instance; the desktop's containers reach AI over the LAN via
+`SENTINEL_OLLAMA_HOST=http://192.168.4.40:11434`. The desktop keeps a native
+Ollama install as an unused fallback.
+
+**One-time laptop setup (commands run on the laptop):**
+
+```powershell
+# 1. Make native Ollama serve the LAN (default binds 127.0.0.1)
+#    Set the user env var, then restart the Ollama tray app:
+setx OLLAMA_HOST "0.0.0.0:11434"
+
+# 2. Open the firewall (11434 = Ollama, 53 tcp+udp = Pi-hole DNS)
+New-NetFirewallRule -DisplayName "Ollama LAN" -Direction Inbound -Protocol TCP -LocalPort 11434 -Action Allow
+New-NetFirewallRule -DisplayName "Pi-hole DNS TCP" -Direction Inbound -Protocol TCP -LocalPort 53 -Action Allow
+New-NetFirewallRule -DisplayName "Pi-hole DNS UDP" -Direction Inbound -Protocol UDP -LocalPort 53 -Action Allow
+
+# 3. Pull the shared models
+ollama pull llama3.1:8b     # airadio's model
+ollama pull gemma2          # Sentinel default
+ollama pull nomic-embed-text
+
+# 4. Clone Sentinel and start Pi-hole (it already exposes the 'pihole' profile)
+git clone https://github.com/jamesdileva/Sentinel.git
+cd Sentinel
+# .env is gitignored — create it with the admin password shared by the user:
+#   PIHOLE_WEBPASSWORD=<generated>
+#   PIHOLE_TZ=<e.g. America/New_York>
+docker compose --profile pihole up -d pihole
+```
+
+**Router configuration** (one-time):
+- DHCP reservation → `192.168.4.40` (static LAN IP for the laptop)
+- LAN DNS server → `192.168.4.40` (network-wide ad blocking via Pi-hole)
+
+**Verification:**
+- `http://192.168.4.40:8053` → Pi-hole admin UI (password from `.env`)
+- `http://192.168.4.40:11434/api/tags` → Ollama model list
+- `nslookup doubleclick.net 192.168.4.40` → returns `0.0.0.0` (blocked)
+
+**Multi-host Ollama consumers:**
+
+| App | Env var | Default | Laptop value |
+|-----|---------|---------|--------------|
+| Sentinel backend/worker | `SENTINEL_OLLAMA_HOST` | `http://ollama:11434` (compose) | `http://192.168.4.40:11434` |
+| airadio desktop | `OLLAMA_URL` | `http://localhost:11434` | `http://192.168.4.40:11434` |
+| airadio desktop | `OLLAMA_MODEL` | `llama3.1:8b` | `llama3.1:8b` |
+
+The desktop's running stack picks up the new host on the next
+`docker compose up -d` (env is baked at container create time).
+
 ---
 
 ## 14. Data Access Patterns
@@ -1590,7 +1651,8 @@ docker compose --profile world-sim up world-sim
 
 | Date | Version | Change | Author |
 |------|---------|--------|--------|
-| 2026-08-04 | 1.7 | Sprint 8 Part 2 (chat UI + live E2E): frontend RAG client `api/rag.ts` (search / query with 120s timeout / index / summaries), `RagChat` + `ChatMessage` components (bubbles, source citations with distance, model/generated_at/confidence provenance, error states, auto-scroll), `KnowledgeExplorer` page (project scope selector, "Index knowledge" with optional AI architecture summary, semantic search list, chat), `/knowledge` route. Verified live against native host Ollama: indexing (`nomic-embed-text` embeddings) populated ChromaDB; `POST /rag/query` returned a grounded answer with 5 sources + provenance (`gemma2:2b`); `with_summary` persisted an `architecture` KnowledgeSummary; CLI `ask` same path; Vite dev proxy serves the API. Docker image lacks `git` (commit indexing warns and continues); chat dev-time note: run `docker compose --profile ollama up` with `ollama pull gemma2 nomic-embed-text`, or point `SENTINEL_OLLAMA_HOST` at a running native Ollama | User + AI agent |
+| 2026-08-04 | 1.8 | Sprint 8.5 (Infrastructure Services): §13.1 compose spec updated — Pi-hole uses the official `pi-hole/pihole:latest` image with v6 env (`FTLCONF_LOCAL_IPV4`, `FTLCONF_webpassword` from gitignored `.env`, `TZ`), `SENTINEL_OLLAMA_HOST` in backend/worker/scheduler points at the laptop (`http://192.168.4.40:11434`), the `ollama` profile is documented as a local fallback; new §13.3 laptop deployment walkthrough (native Ollama `OLLAMA_HOST=0.0.0.0:11434` + firewall rules, model pulls `llama3.1:8b`/`gemma2`/`nomic-embed-text`, clone + `docker compose --profile pihole up -d pihole` with `PIHOLE_WEBPASSWORD`/`PIHOLE_TZ`, router DHCP reservation + LAN DNS), multi-host Ollama env-var table (Sentinel `SENTINEL_OLLAMA_HOST`; airadio `OLLAMA_URL`/`OLLAMA_MODEL`), verification commands (admin UI 8053, `/api/tags`, `nslookup doubleclick.net` → 0.0.0.0) | User + AI agent |
+| 2026-08-04 | 1.7 | Sprint 8 Part 2 (chat UI + live E2E): frontend RAG client `api/rag.ts` (search / query with 120s timeout / index / summaries), `RagChat` + `ChatMessage` components (bubbles, source citations with distance, model/generated_at/confidence provenance, error states, auto-scroll), `KnowledgeExplorer` page (project scope selector, "Index knowledge" with optional AI architecture summary, semantic search list, chat), `/knowledge` route. Verified live against native host Ollama: indexing (`nomic-embed-text` embeddings) populated ChromaDB; `POST /rag/query` returned a grounded answer with 5 sources + provenance (`gemma2:2b`); `with_summary` persisted an `architecture` KnowledgeSummary; CLI `ask` same path; Vite dev proxy serves the API. Docker image lacks `git` (commit indexing warns and continues); chat dev-time note: run `docker compose --profile ollama up` with `ollama pull gemma2 nomic-embed-text`, or point `SENTINEL_OLLAMA_HOST` at a running native Ollama | User + AI agent | frontend RAG client `api/rag.ts` (search / query with 120s timeout / index / summaries), `RagChat` + `ChatMessage` components (bubbles, source citations with distance, model/generated_at/confidence provenance, error states, auto-scroll), `KnowledgeExplorer` page (project scope selector, "Index knowledge" with optional AI architecture summary, semantic search list, chat), `/knowledge` route. Verified live against native host Ollama: indexing (`nomic-embed-text` embeddings) populated ChromaDB; `POST /rag/query` returned a grounded answer with 5 sources + provenance (`gemma2:2b`); `with_summary` persisted an `architecture` KnowledgeSummary; CLI `ask` same path; Vite dev proxy serves the API. Docker image lacks `git` (commit indexing warns and continues); chat dev-time note: run `docker compose --profile ollama up` with `ollama pull gemma2 nomic-embed-text`, or point `SENTINEL_OLLAMA_HOST` at a running native Ollama | User + AI agent |
 | 2026-08-04 | 1.6 | Sprint 8 Part 1: RAG backend core. New services: `OllamaService` (`generate`, `embed` with `/api/embed` + legacy `/api/embeddings` fallback, `is_available`/`list_models`, injectable `httpx.BaseTransport`), `ChromaManager` (embedded PersistentClient, 6 named collections, hnsw+cosine, `upsert`/`search` with `where` scoping/`delete_by_project`/`count`), `RagService` (injectable `embedder`/`llm`/`chroma` for deterministic tests; `index_project` ingests raw file content into `file_summaries`, git commits, test/security/build collections; optional Ollama architecture summary persisted as `KnowledgeSummary`; `search` + grounded `query` returning sources with `model`/`generated_at`/`confidence` provenance), `GitHistoryService` + pure `parse_log` (`%H|%an|%aI|%s`, dedupe by hash). New repos `git`/`knowledge_summary`; schemas `rag.py`/`knowledge.py`. Endpoints: `POST /api/v1/rag/search`, `POST /api/v1/rag/query`, `POST /api/v1/rag/index` (202 JobEnvelope → Celery `run_index_knowledge`), `GET /api/v1/projects/{id}/summaries`. CLI `ask` + `rag-index` (pre-check Ollama availability, exit 1 with pull instructions). Deps: `chromadb>=0.5`, `httpx>=0.27` moved to main. Windows note: git `--pretty` format must be double-quoted (cmd treats unquoted `|` as a pipe). Frontend chat UI + live E2E is Part 2 | User + AI agent |
 | 2026-08-04 | 1.5 | Sprint 7: AutomationEngine split into BuildRunner/TestRunner/SecurityScanner services behind Celery tasks (`app/tasks/`). Endpoints: `POST /api/v1/builds/run` (202, job row pre-created with id == Celery task id; poll via `GET /api/v1/builds/status/{job_id}`), `GET /api/v1/builds/history?project_id=`, `POST /api/v1/tests/run?project_id=` (query param), `GET /api/v1/tests/results?project_id=`, `POST /api/v1/security/scan?project_id=`, `GET /api/v1/security/findings?project_id=`. Compose adds `worker` + `scheduler` (celery + beat, `-P solo`); backend gets `SENTINEL_REDIS_URL`; config adds `redis_url`/`celery_eager`/`command_timeout_seconds`; CLI `build`/`test`/`scan` run synchronously. Deps from pyproject carry no version (parser keeps `requirements.txt` versions); secrets/static findings deterministic | User + AI agent |
 | 2026-08-04 | 1.4 | Sprint 6: added `GET /api/v1/projects/`, `GET /api/v1/projects/{id}`, `GET /api/v1/projects/{id}/files`, `WS /api/v1/ws/jobs` (welcome + heartbeat; real job events in Sprint 7). No project create/update — indexing stays CLI/IndexerService-only. Frontend: axios client with `/api` proxy, UI/Project/Build contexts, useProjects + useWebSocket (exponential backoff, capped 30s) | User + AI agent |
