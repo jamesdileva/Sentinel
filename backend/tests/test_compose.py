@@ -37,8 +37,27 @@ def test_compose_backend_environment():
     env = backend["environment"]
     assert env["SENTINEL_DB_PATH"] == "/data/sqlite/sentinel.db"
     assert env["SENTINEL_CHROMA_PATH"] == "/data/chroma"
-    assert env["SENTINEL_OLLAMA_HOST"] == "http://ollama:11434"
+    # Sprint 8.5: AI is served by the laptop's shared Ollama over the LAN
+    assert env["SENTINEL_OLLAMA_HOST"] == "http://192.168.4.40:11434"
     assert env["SENTINEL_WATCH_DIRS"] == '["/data/projects"]'
+
+
+def test_compose_pihole_profile_and_ports():
+    compose = _load(COMPOSE)
+    pihole = compose["services"]["pihole"]
+    assert pihole["profiles"] == ["pihole"]
+    assert pihole["image"] == "ghcr.io/pi-hole/pihole:latest"
+    assert "53:53/tcp" in pihole["ports"]
+    assert "53:53/udp" in pihole["ports"]
+    assert "8053:80/tcp" in pihole["ports"]
+
+
+def test_compose_pihole_environment():
+    pihole = _load(COMPOSE)["services"]["pihole"]
+    env = pihole["environment"]
+    assert env["FTLCONF_LOCAL_IPV4"] == "192.168.4.40"
+    assert env["FTLCONF_webpassword"] == "${PIHOLE_WEBPASSWORD}"
+    assert env["TZ"] == "${PIHOLE_TZ:-UTC}"
 
 
 def test_compose_backend_mounts_data():
