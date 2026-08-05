@@ -4,6 +4,8 @@ import datetime
 
 from pydantic import BaseModel, ConfigDict
 
+from app.schemas.job import JobEnvelope
+
 
 class TestResultRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -18,3 +20,7 @@ class TestResultRead(BaseModel):
     duration_seconds: float | None = None
     framework: str | None = None
     summary: str | None = None
+
+
+class TestRunResponse(JobEnvelope):
+    pass

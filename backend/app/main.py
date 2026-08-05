@@ -11,7 +11,10 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.v1.builds import router as builds_router
 from app.api.v1.projects import router as projects_router
+from app.api.v1.security import router as security_router
+from app.api.v1.tests import router as tests_router
 from app.api.v1.ws import router as ws_router
 from app.core.config import settings
 from app.core.logging import get_logger, setup_logging
@@ -95,4 +98,7 @@ def health_v1() -> dict:
 
 
 app.include_router(projects_router, prefix="/api/v1")
+app.include_router(builds_router, prefix="/api/v1")
+app.include_router(tests_router, prefix="/api/v1")
+app.include_router(security_router, prefix="/api/v1")
 app.include_router(ws_router, prefix="/api/v1")

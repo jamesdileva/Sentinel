@@ -1,26 +1,32 @@
 import { api } from "./client";
 
+export type FindingSeverity = "critical" | "high" | "medium" | "low" | "info";
+export type FindingType = "vulnerability" | "secret" | "static_analysis";
+
 export interface SecurityFinding {
   id: string;
   project_id: string;
-  tool: string;
-  severity: "critical" | "high" | "medium" | "low" | "info";
+  type: FindingType;
+  severity: FindingSeverity;
   title: string;
   description: string | null;
+  ai_explanation: string | null;
   file_path: string | null;
-  created_at: string;
+  line_number: number | null;
+  cve_id: string | null;
+  remediation: string | null;
+  resolved: boolean;
+  detected_at: string;
 }
 
 export interface ScanJob {
-  id: string;
-  project_id: string;
+  job_id: string;
   status: "queued" | "running" | "succeeded" | "failed";
-  created_at: string;
 }
 
 export async function triggerScan(projectId: string): Promise<ScanJob> {
-  const { data } = await api.post<ScanJob>("/v1/security/scan", {
-    project_id: projectId,
+  const { data } = await api.post<ScanJob>("/v1/security/scan", null, {
+    params: { project_id: projectId },
   });
   return data;
 }

@@ -8,6 +8,7 @@ import datetime
 from pydantic import BaseModel, ConfigDict
 
 from app.db.models import Severity
+from app.schemas.job import JobEnvelope
 
 
 class SecurityFindingCreate(BaseModel):
@@ -37,3 +38,7 @@ class SecurityFindingRead(BaseModel):
     remediation: str | None = None
     resolved: bool
     detected_at: datetime.datetime
+
+
+class ScanResponse(JobEnvelope):
+    pass

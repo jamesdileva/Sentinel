@@ -1,0 +1,12 @@
+[project]
+name = "sample-scan-project"
+version = "0.1.0"
+description = "Fixture: deterministic findings for security scanner tests"
+requires-python = ">=3.11"
+dependencies = ["requests==2.25.0"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

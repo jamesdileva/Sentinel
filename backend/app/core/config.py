@@ -50,5 +50,9 @@ class Settings(BaseSettings):
     api_key: str = ""
     schedule_interval_minutes: int = 60
 
+    redis_url: str = "redis://localhost:6379/0"
+    celery_eager: bool = False
+    command_timeout_seconds: int = 300
+
 
 settings = Settings()

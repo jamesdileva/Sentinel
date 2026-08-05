@@ -52,19 +52,58 @@ def index(
 @app.command()
 def scan(project_id: str):
     """Run a security scan on a project."""
-    typer.echo("Security scanner not implemented yet (Sprint 7).")
+    from sqlmodel import Session
+
+    from app.db.connection import get_engine
+    from app.services.security_scanner import SecurityScanner
+
+    with Session(get_engine()) as session:
+        project = SecurityScanner.get_project(session, project_id)
+        findings = SecurityScanner(session).scan_project(project)
+        typer.echo(f"Security scan for {project.name}: {len(findings)} finding(s).")
+        for finding in findings[:20]:
+            typer.echo(
+                f"  [{finding.severity.value}] {finding.title} "
+                f"({finding.file_path}:{finding.line_number or 0})"
+            )
 
 
 @app.command()
 def build(project_id: str):
     """Run a build for a project."""
-    typer.echo("Build runner not implemented yet (Sprint 7).")
+    from sqlmodel import Session
+
+    from app.db.connection import get_engine
+    from app.services.build_runner import BuildRunner
+
+    with Session(get_engine()) as session:
+        project = BuildRunner.get_project(session, project_id)
+        log = BuildRunner(session).run_build(project)
+        typer.echo(
+            f"Build {log.id} for {project.name}: success={log.success} "
+            f"exit_code={log.exit_code}"
+        )
+        if log.stderr:
+            typer.echo(log.stderr[:2000], err=True)
 
 
 @app.command()
 def test(project_id: str):
     """Run tests for a project."""
-    typer.echo("Test runner not implemented yet (Sprint 7).")
+    from sqlmodel import Session
+
+    from app.db.connection import get_engine
+    from app.services.test_runner import TestRunner
+
+    with Session(get_engine()) as session:
+        project = TestRunner.get_project(session, project_id)
+        result = TestRunner(session).run_tests(project)
+        typer.echo(
+            f"Tests for {project.name}: {result.summary} "
+            f"(framework={result.framework}, {result.duration_seconds}s)"
+        )
+        if result.raw_output:
+            typer.echo(result.raw_output[:2000])
 
 
 @app.command()

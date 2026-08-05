@@ -4,16 +4,22 @@ export interface BuildJob {
   id: string;
   project_id: string;
   status: "queued" | "running" | "succeeded" | "failed";
+  success: boolean | null;
   exit_code: number | null;
-  created_at: string;
+  started_at: string | null;
+  completed_at: string | null;
 }
 
 export interface BuildLog {
   id: string;
   project_id: string;
+  started_at: string;
+  completed_at: string | null;
   exit_code: number | null;
-  output: string;
-  created_at: string;
+  success: boolean | null;
+  stdout: string | null;
+  stderr: string | null;
+  commands: Record<string, string> | null;
 }
 
 export async function triggerBuild(projectId: string): Promise<BuildJob> {

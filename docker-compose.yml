@@ -19,6 +19,38 @@ services:
       SENTINEL_CHROMA_PATH: /data/chroma
       SENTINEL_OLLAMA_HOST: http://ollama:11434
       SENTINEL_WATCH_DIRS: '["/data/projects"]'
+      SENTINEL_REDIS_URL: redis://redis:6379/0
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  # Celery worker — consumes build/test/scan jobs enqueued by the API (Sprint 7).
+  worker:
+    build:
+      context: .
+      dockerfile: docker/backend/Dockerfile
+    command: ["celery", "-A", "app.tasks.celery_app", "worker", "--loglevel=INFO", "-P", "solo"]
+    volumes:
+      - ./data:/data
+      - ./data/projects:/data/projects
+    environment:
+      SENTINEL_DB_PATH: /data/sqlite/sentinel.db
+      SENTINEL_CHROMA_PATH: /data/chroma
+      SENTINEL_OLLAMA_HOST: http://ollama:11434
+      SENTINEL_WATCH_DIRS: '["/data/projects"]'
+      SENTINEL_REDIS_URL: redis://redis:6379/0
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  # Celery beat — schedules the nightly security scan (Sprint 7).
+  scheduler:
+    build:
+      context: .
+      dockerfile: docker/backend/Dockerfile
+    command: ["celery", "-A", "app.tasks.celery_app", "beat", "--loglevel=INFO"]
+    environment:
+      SENTINEL_REDIS_URL: redis://redis:6379/0
     depends_on:
       - redis
     restart: unless-stopped

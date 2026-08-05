@@ -11,6 +11,8 @@ dependencies = [
     "pydantic-settings>=2.2",
     "typer>=0.12",
     "python-dotenv>=1.0",
+    "celery>=5.4",
+    "redis>=5.0",
 ]
 
 [project.optional-dependencies]
@@ -38,3 +40,7 @@ packages = ["app"]
 testpaths = ["tests"]
 norecursedirs = ["fixtures", "node_modules", ".venv"]
 addopts = "-q"
+
+[tool.isort]
+profile = "black"
+line_length = 100
