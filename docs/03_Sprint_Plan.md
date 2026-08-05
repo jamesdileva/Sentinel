@@ -1147,6 +1147,7 @@ Use this template for any new sprint added to the plan:
 
 | Date | Version | Change | Author |
 |------|---------|--------|--------|
+| 2026-08-04 | 1.4 | Sprint 6 complete: `/api/v1/projects` router (list/get/files), `/api/v1/ws/jobs` WebSocket (welcome + 30s heartbeat, real events land in Sprint 7), axios client + typed API modules, UI/Project/Build contexts, useProjects + useWebSocket hooks, Dashboard shows live data. Live-verified: proxied API through Vite, WS frames received, 404 passthrough | User + AI agent |
 | 2026-08-04 | 1.3 | Sprint 5 complete: Vite 7 + React 19 + TS dashboard scaffolded (Layout with sidebar/header/dark toggle, Dashboard + placeholder routes, shared types mirroring SQLModel), `tsc` clean, dev server verified on 5173, `npm run build` succeeds | User + AI agent |
 | 2026-08-04 | 1.2 | Sprint 4 complete: Dockerfile, compose stack, dev script, compose validation tests; verified live — `docker compose up -d` builds backend image, boots backend + redis, health returns 200, SQLite DB lands on `./data/sqlite/sentinel.db` (mounted volume), redis PONG, `scripts/dev.py --down` stops the stack | User + AI agent |
 | 2026-08-04 | 1.1 | Sprint 0 alignment: Sprint 2 targets SQLite (was PostgreSQL), Pydantic schemas live in `schemas/` (was `models/`), `core/logging.py` (was `logger.py`), `POST /builds/status/{job_id}` → GET | User + AI agent |
