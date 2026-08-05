@@ -85,7 +85,7 @@ services:
   # Pi-hole v6 env vars; admin UI on http://<laptop-ip>:8053.
   # Set PIHOLE_WEBPASSWORD in a gitignored .env (see docs/02 §13.3).
   pihole:
-    image: pi-hole/pihole:latest
+    image: ghcr.io/pi-hole/pihole:latest
     profiles: ["pihole"]
     ports:
       - "53:53/tcp"
