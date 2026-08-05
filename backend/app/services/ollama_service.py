@@ -1,0 +1,110 @@
+"""OllamaService — HTTP client for the local Ollama inference server.
+
+Only talks to the locally configured Ollama host (settings.ollama_host).
+Never makes outbound network calls (docs/01 §13: local-first).
+
+Determinism note: embeddings from `nomic-embed-text` are deterministic for a
+given input; generation is non-deterministic by nature, so every AI answer
+carries provenance (model, timestamp) per docs/01 §16.2.
+"""
+
+import httpx
+
+from app.core.config import settings
+from app.core.logging import get_logger
+
+logger = get_logger(__name__)
+
+
+class OllamaUnavailableError(RuntimeError):
+    """Raised when the Ollama server cannot be reached or returns an error."""
+
+
+class OllamaService:
+    """Thin HTTP client for the Ollama API (generate, embed, tags)."""
+
+    def __init__(
+        self,
+        host: str | None = None,
+        timeout_seconds: int | None = None,
+        transport: httpx.BaseTransport | None = None,
+    ) -> None:
+        self.host = (host or settings.ollama_host).rstrip("/")
+        self.timeout = timeout_seconds or settings.ollama_timeout_seconds
+        self._client = httpx.Client(
+            base_url=self.host, timeout=self.timeout, transport=transport
+        )
+
+    def generate(
+        self,
+        prompt: str,
+        model: str | None = None,
+        max_tokens: int = 500,
+        temperature: float = 0.3,
+    ) -> str:
+        """Generate a text completion for the given prompt."""
+        model = model or settings.ollama_model
+        payload = {
+            "model": model,
+            "prompt": prompt,
+            "stream": False,
+            "options": {
+                "num_predict": max_tokens,
+                "temperature": temperature,
+            },
+        }
+        try:
+            response = self._client.post("/api/generate", json=payload)
+            response.raise_for_status()
+            return str(response.json().get("response", "")).strip()
+        except httpx.HTTPError as exc:
+            logger.warning("Ollama generate failed: %s", exc)
+            raise OllamaUnavailableError(f"Ollama generate failed: {exc}") from exc
+
+    def embed(self, text: str, model: str | None = None) -> list[float]:
+        """Generate an embedding vector for text.
+
+        Uses `/api/embed` (Ollama >= 0.4.0) with a fallback to the legacy
+        `/api/embeddings` endpoint.
+        """
+        model = model or settings.embedding_model
+        payload = {"model": model, "input": text}
+        try:
+            response = self._client.post("/api/embed", json=payload)
+            if response.status_code in (404, 405):
+                return self._embed_legacy(text, model)
+            response.raise_for_status()
+            data = response.json()
+            embeddings = data.get("embeddings") or [data.get("embedding", [])]
+            return list(embeddings[0])
+        except httpx.HTTPError as exc:
+            logger.warning("Ollama embed failed: %s", exc)
+            raise OllamaUnavailableError(f"Ollama embed failed: {exc}") from exc
+
+    def _embed_legacy(self, text: str, model: str) -> list[float]:
+        response = self._client.post(
+            "/api/embeddings", json={"model": model, "prompt": text}
+        )
+        response.raise_for_status()
+        return list(response.json().get("embedding", []))
+
+    def is_available(self) -> bool:
+        """Check whether the Ollama server is reachable."""
+        try:
+            response = self._client.get("/api/tags")
+            return response.status_code == 200
+        except httpx.HTTPError:
+            return False
+
+    def list_models(self) -> list[str]:
+        """List installed model names."""
+        try:
+            response = self._client.get("/api/tags")
+            response.raise_for_status()
+            return [m.get("name", "") for m in response.json().get("models", [])]
+        except httpx.HTTPError as exc:
+            logger.warning("Ollama list models failed: %s", exc)
+            raise OllamaUnavailableError(f"Ollama list models failed: {exc}") from exc
+
+    def close(self) -> None:
+        self._client.close()

@@ -107,9 +107,67 @@ def test(project_id: str):
 
 
 @app.command()
-def ask(question: str):
+def ask(
+    question: str,
+    project_id: str | None = typer.Option(
+        None, "--project", help="Project id to scope"
+    ),
+    top_k: int = typer.Option(5, "--top-k", min=1, max=20),
+):
     """Ask the RAG system a question about your projects."""
-    typer.echo("RAG system not implemented yet (Sprint 8).")
+    from sqlmodel import Session
+
+    from app.db.connection import get_engine
+    from app.services.ollama_service import OllamaService
+    from app.services.rag_service import RagService
+
+    if not OllamaService().is_available():
+        typer.echo(
+            "Ollama is not reachable. Start it with `docker compose --profile ollama up` "
+            "and pull models: `ollama pull gemma2 nomic-embed-text`.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+    with Session(get_engine()) as session:
+        response = RagService(session).query(
+            question, project_id=project_id, top_k=top_k
+        )
+    typer.echo(response.answer)
+    if response.sources:
+        typer.echo(f"\nSources ({len(response.sources)}):")
+        for source in response.sources:
+            location = source.file_path or source.source
+            typer.echo(f"  - {location} (distance {source.distance:.3f})")
+    typer.echo(
+        f"\n[model={response.model} generated_at={response.generated_at.isoformat()}]"
+    )
+
+
+@app.command(name="rag-index")
+def rag_index(
+    project_id: str,
+    with_summary: bool = typer.Option(
+        False, "--summary", help="Also generate a project summary"
+    ),
+):
+    """Ingest a project's knowledge into ChromaDB for RAG."""
+    from sqlmodel import Session
+
+    from app.db.connection import get_engine
+    from app.services.ollama_service import OllamaService
+    from app.services.rag_service import RagService
+
+    if not OllamaService().is_available():
+        typer.echo(
+            "Ollama is not reachable. Start it with `docker compose --profile ollama up` "
+            "and pull models: `ollama pull gemma2 nomic-embed-text`.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+    with Session(get_engine()) as session:
+        project = RagService.get_project(session, project_id)
+        counts = RagService(session).index_project(project, with_summary=with_summary)
+        typer.echo(f"Indexed {project.name}: {counts}")
 
 
 @app.command()

@@ -1,0 +1,4 @@
+abc123def4567890abcdef1234567890abcdef12|Alice Example|2026-07-01T10:00:00+00:00|Add CSV import for worklog
+def456abc7890123def4567890abcdef12345678|Bob Example|2026-07-03T14:30:00+00:00|Refactor auth middleware
+789012abcdef34567890abcdef1234567890abcd|Alice Example|2026-07-10T09:15:00+00:00|Fix race condition in task queue
+invalid-line-without-separator

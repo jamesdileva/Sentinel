@@ -16,7 +16,7 @@ celery_app = Celery(
     "sentinel",
     broker=settings.redis_url,
     backend=settings.redis_url,
-    include=["app.tasks.build_tasks"],
+    include=["app.tasks.build_tasks", "app.tasks.rag_tasks"],
 )
 
 celery_app.conf.update(

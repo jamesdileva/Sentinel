@@ -321,6 +321,11 @@ All endpoints live under `http://127.0.0.1:8000/api/v1/`. Relative paths below o
 - Body: `{"query": "how does authentication work", "project_id": "optional", "top_k": 5}`
 - Returns: `{"results": [{"content": "...", "source": "file_summary", "distance": 0.12}, ...]}
 
+**POST `/rag/index`** — Queue knowledge indexing for a project (202)
+- Body: `{"project_id": "...", "with_summary": false}`
+- Dispatches Celery task `run_index_knowledge`, returning `{"status": "queued", "job_id": "<task_id>"}`
+- Default increments embed raw file content/git commits/test/security/build logs; `with_summary: true` additionally generates an Ollama architecture summary persisted to `KnowledgeSummary`
+
 **GET `/projects/{id}/summaries`** — Get AI-generated project summaries
 - Query: `?type=architecture`
 - Returns: list of KnowledgeSummary objects
@@ -866,7 +871,10 @@ sentinel index --all                 # Index all projects in watch_dirs
 sentinel scan <project_id>           # Run security scan on a project
 sentinel build <project_id>          # Run build for a project
 sentinel test <project_id>           # Run tests for a project
-sentinel ask "<question>"            # Ask RAG a question (CLI mode)
+sentinel ask "<question>"            # Ask RAG a question (CLI mode, requires Ollama)
+sentinel ask "<question>" --project <project_id> --top-k 5
+sentinel rag-index <project_id>      # Index project knowledge into ChromaDB
+sentinel rag-index <project_id> --summary   # Also generate architecture summary via Ollama
 sentinel portfolio                   # Show portfolio scores for all projects
 sentinel health                      # Show system health status
 sentinel world-sim start             # Start World Simulator (if enabled)
@@ -1582,6 +1590,7 @@ docker compose --profile world-sim up world-sim
 
 | Date | Version | Change | Author |
 |------|---------|--------|--------|
+| 2026-08-04 | 1.6 | Sprint 8 Part 1: RAG backend core. New services: `OllamaService` (`generate`, `embed` with `/api/embed` + legacy `/api/embeddings` fallback, `is_available`/`list_models`, injectable `httpx.BaseTransport`), `ChromaManager` (embedded PersistentClient, 6 named collections, hnsw+cosine, `upsert`/`search` with `where` scoping/`delete_by_project`/`count`), `RagService` (injectable `embedder`/`llm`/`chroma` for deterministic tests; `index_project` ingests raw file content into `file_summaries`, git commits, test/security/build collections; optional Ollama architecture summary persisted as `KnowledgeSummary`; `search` + grounded `query` returning sources with `model`/`generated_at`/`confidence` provenance), `GitHistoryService` + pure `parse_log` (`%H|%an|%aI|%s`, dedupe by hash). New repos `git`/`knowledge_summary`; schemas `rag.py`/`knowledge.py`. Endpoints: `POST /api/v1/rag/search`, `POST /api/v1/rag/query`, `POST /api/v1/rag/index` (202 JobEnvelope → Celery `run_index_knowledge`), `GET /api/v1/projects/{id}/summaries`. CLI `ask` + `rag-index` (pre-check Ollama availability, exit 1 with pull instructions). Deps: `chromadb>=0.5`, `httpx>=0.27` moved to main. Windows note: git `--pretty` format must be double-quoted (cmd treats unquoted `|` as a pipe). Frontend chat UI + live E2E is Part 2 | User + AI agent |
 | 2026-08-04 | 1.5 | Sprint 7: AutomationEngine split into BuildRunner/TestRunner/SecurityScanner services behind Celery tasks (`app/tasks/`). Endpoints: `POST /api/v1/builds/run` (202, job row pre-created with id == Celery task id; poll via `GET /api/v1/builds/status/{job_id}`), `GET /api/v1/builds/history?project_id=`, `POST /api/v1/tests/run?project_id=` (query param), `GET /api/v1/tests/results?project_id=`, `POST /api/v1/security/scan?project_id=`, `GET /api/v1/security/findings?project_id=`. Compose adds `worker` + `scheduler` (celery + beat, `-P solo`); backend gets `SENTINEL_REDIS_URL`; config adds `redis_url`/`celery_eager`/`command_timeout_seconds`; CLI `build`/`test`/`scan` run synchronously. Deps from pyproject carry no version (parser keeps `requirements.txt` versions); secrets/static findings deterministic | User + AI agent |
 | 2026-08-04 | 1.4 | Sprint 6: added `GET /api/v1/projects/`, `GET /api/v1/projects/{id}`, `GET /api/v1/projects/{id}/files`, `WS /api/v1/ws/jobs` (welcome + heartbeat; real job events in Sprint 7). No project create/update — indexing stays CLI/IndexerService-only. Frontend: axios client with `/api` proxy, UI/Project/Build contexts, useProjects + useWebSocket (exponential backoff, capped 30s) | User + AI agent |
 | 2026-08-04 | 1.3 | Sprint 5: frontend scaffolded — Vite 7, React 19, TypeScript strict, Tailwind 3.4 (class dark-mode), React Router v8 (`react-router` package; `react-router-dom` 7.x had a high-severity RSC-mode CSRF advisory, GHSA-qwww-vcr4-c8h2, fixed only in v8), dev proxy `/api` → `127.0.0.1:8000`, port 5173 strict | User + AI agent |

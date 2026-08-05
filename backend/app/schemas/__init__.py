@@ -12,6 +12,7 @@ from app.schemas.build import (
 )
 from app.schemas.git import FeatureTimelineItem, GitCommitRead
 from app.schemas.job import JobEnvelope
+from app.schemas.knowledge import KnowledgeSummaryRead
 from app.schemas.portfolio import FeatureMatrix, PortfolioCandidate, PortfolioScoreRead
 from app.schemas.project import (
     ProjectDetail,
@@ -19,6 +20,14 @@ from app.schemas.project import (
     ProjectHealth,
     ProjectList,
     ProjectRead,
+)
+from app.schemas.rag import (
+    RagIndexRequest,
+    RagQueryRequest,
+    RagResponse,
+    RagResult,
+    RagSearchRequest,
+    RagSearchResponse,
 )
 from app.schemas.security import (
     ScanResponse,
@@ -36,6 +45,7 @@ __all__ = [
     "GitCommitRead",
     "JobEnvelope",
     "JobStatus",
+    "KnowledgeSummaryRead",
     "PortfolioCandidate",
     "PortfolioScoreRead",
     "ProjectDetail",
@@ -43,6 +53,12 @@ __all__ = [
     "ProjectHealth",
     "ProjectList",
     "ProjectRead",
+    "RagIndexRequest",
+    "RagQueryRequest",
+    "RagResponse",
+    "RagResult",
+    "RagSearchRequest",
+    "RagSearchResponse",
     "ScanResponse",
     "SecurityFindingCreate",
     "SecurityFindingRead",
