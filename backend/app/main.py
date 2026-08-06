@@ -12,6 +12,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.builds import router as builds_router
+from app.api.v1.portfolio import router as portfolio_router
 from app.api.v1.projects import router as projects_router
 from app.api.v1.rag import router as rag_router
 from app.api.v1.security import router as security_router
@@ -100,6 +101,7 @@ def health_v1() -> dict:
 
 
 app.include_router(projects_router, prefix="/api/v1")
+app.include_router(portfolio_router, prefix="/api/v1")
 app.include_router(builds_router, prefix="/api/v1")
 app.include_router(tests_router, prefix="/api/v1")
 app.include_router(security_router, prefix="/api/v1")

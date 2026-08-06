@@ -1,27 +1,31 @@
 import { api } from "./client";
 
-import type { Project } from "../types";
+export type PassStatus = "passing" | "failing" | "pending";
+export type SecurityStatus = "clean" | "findings" | "pending";
 
 export interface PortfolioScore {
+  id: string;
   project_id: string;
-  health_score: number;
-  build: string;
-  tests: string;
-  security: string;
-  docs_pct: number;
+  build_status: PassStatus;
+  test_status: PassStatus;
+  documentation_pct: number;
+  security_status: SecurityStatus;
+  screenshots_available: boolean;
+  portfolio_score: number;
+  updated_at: string;
 }
 
-export interface PortfolioCandidate extends PortfolioScore {
-  project: Project;
+export interface PortfolioCandidate {
+  project_id: string;
+  project_name: string;
+  score: number;
+  missing: string[];
 }
 
-export interface FeatureMatrixRow {
-  project_id: string;
-  name: string;
-  build: boolean;
-  tests: boolean;
-  docs: boolean;
-  security: boolean;
+export interface FeatureMatrix {
+  projects: string[];
+  features: string[];
+  matrix: string[][];
 }
 
 export async function getScores(): Promise<PortfolioScore[]> {
@@ -29,14 +33,17 @@ export async function getScores(): Promise<PortfolioScore[]> {
   return data;
 }
 
-export async function getBestCandidates(): Promise<PortfolioCandidate[]> {
+export async function getBestCandidates(
+  minScore = 70,
+): Promise<PortfolioCandidate[]> {
   const { data } = await api.get<PortfolioCandidate[]>(
     "/v1/portfolio/best-candidates",
+    { params: { min_score: minScore } },
   );
   return data;
 }
 
-export async function getFeatureMatrix(): Promise<FeatureMatrixRow[]> {
-  const { data } = await api.get<FeatureMatrixRow[]>("/v1/portfolio/feature-matrix");
+export async function getFeatureMatrix(): Promise<FeatureMatrix> {
+  const { data } = await api.get<FeatureMatrix>("/v1/portfolio/feature-matrix");
   return data;
 }

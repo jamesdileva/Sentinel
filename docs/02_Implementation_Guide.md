@@ -23,6 +23,7 @@ This document is the **technical reference** for implementing Project Sentinel. 
 10. [Screenshot & Testing](#10-screenshot--testing)
 11. [World Simulator](#11-world-simulator)
 12. [Testing Strategy](#12-testing-strategy)
+14.5. [Portfolio Intelligence](#145-portfolio-intelligence)
 
 ---
 
@@ -368,17 +369,27 @@ All endpoints live under `http://127.0.0.1:8000/api/v1/`. Relative paths below o
 - Query: `?query=import&project_id=optional`
 - Returns: features matched to commits and explanations
 
-### 2.7. Portfolio
+### 2.7. Portfolio (Sprint 10)
 
-**GET `/portfolio/scores`** — Get portfolio scores for all projects
-- Returns: list of PortfolioScore with project info
+Deterministic health scoring (30/30/25/15, missing = 0); see §14.5 for the
+formula and semantics.
 
-**GET `/portfolio/candidates`** — Get best portfolio candidates
-- Query: `?min_score=80`
-- Returns: ranked list with missing items per project
+**GET `/portfolio/scores`** — Health scores for all projects
+- Recomputed on read from stored build/test/security/file rows, then persisted
+  to the `PortfolioScore` table
+- Returns: list of `PortfolioScoreRead` (`build_status`, `test_status`,
+  `security_status`, `documentation_pct`, `screenshots_available`,
+  `portfolio_score`, `updated_at`)
 
-**GET `/portfolio/heatmap`** — Feature matrix across all projects
+**GET `/portfolio/best-candidates`** — Ranked job-ready projects
+- Query: `?min_score=70` (default 70)
+- Returns: `[{"project_id", "project_name", "score", "missing": [...]}]` sorted
+  by score descending; `missing` lists components with no data yet
+
+**GET `/portfolio/feature-matrix`** — Grid of projects × features
 - Returns: `{"projects": [...], "features": ["build", "test", "docs", "security", "screenshots"], "matrix": [[...]]}`
+- Cells: `✓` good · `⚠` failing/findings/partial · `✗` pending; screenshots is
+  always `✗` until a screenshot feature exists
 
 ### 2.8. Local Services
 
@@ -1446,6 +1457,7 @@ production and +10% rebuild speed per level beyond the first — settlements
 | `test_automation.py` | Celery task chains, pipeline orchestration | `tasks/*.py`, `services/automation_engine.py` |
 | `test_security.py` | Security scanner integration, finding schemas | `services/security_scanner.py` |
 | `test_world_sim.py` | World Simulator isolation, event generation | `services/world_simulator.py` |
+| `test_portfolio.py` | Portfolio scoring (30/30/25/15), candidates, matrix, API | `services/portfolio_service.py` |
 | `test_e2e.py` | Full pipeline: index → scan → build → test → docgen → export | All components |
 
 ### 12.2. Frontend Tests (Vitest)
@@ -1712,6 +1724,45 @@ The desktop's running stack picks up the new host on the next
 | Documentation Generator | File summaries, commit history, metadata | REST API + Ollama |
 | Security Scanner | Dependency manifests, source code | Direct filesystem + security tools |
 | World Simulator | World state, entity embeddings | Separate SQLite + ChromaDB collection |
+| Portfolio | Build/test/security rows, project files | REST API (`/api/v1/portfolio/*`) |
+
+---
+
+## 14.5. Portfolio Intelligence (Sprint 10)
+
+`PortfolioService` (`backend/app/services/portfolio_service.py`) aggregates each
+project's build, test, security and documentation state into a deterministic
+0-100 health score — no AI, no extra jobs. Scores are recomputed on read and
+upserted into the `PortfolioScore` table (docs/02 §1), so the API, matrix and
+candidates always agree.
+
+**Score formula (weights sum to 100):**
+
+| Component | Weight | Rule |
+|-----------|--------|------|
+| build | 30 | latest `BuildLog`: `success=True` → 30; `success=False` → 10; none/pending → 0 |
+| tests | 30 | latest `TestResult`: 0 failures/errors and ≥1 pass → 30; else 30 × pass ratio; none → 0 |
+| security | 25 | all findings resolved → 25; unresolved deduct per severity (critical 10 / high 6 / medium 3 / low 1 / info 0, floor 0); no findings at all → 0 (never scanned) |
+| docs | 15 | README/Markdown/`docs/` files ÷ total indexed files × 15 |
+
+A component with no data yet scores **0** — projects are never assumed healthy.
+`documentation_pct` is the same ratio as a 0-100 integer. `screenshots_available`
+is always `False` (no screenshot feature yet; the Feature Matrix screenshots
+column stays `✗`).
+
+**Feature Matrix cells** (`✓`/`⚠`/`✗`): build/test — passing/failing/pending;
+docs — ≥80% / 1-79% / 0%; security — clean/findings/pending.
+
+**Endpoints:** `GET /portfolio/scores`, `GET /portfolio/best-candidates?min_score=70`,
+`GET /portfolio/feature-matrix` (see §2.7).
+
+**Frontend:** `/portfolio` route (nav item "Portfolio") — `pages/Portfolio.tsx`
+(health-score grid, best candidates, feature matrix), `components/HealthCard.tsx`,
+`components/FeatureMatrix.tsx`, `api/portfolio.ts`. Names are joined from
+`GET /projects/`.
+
+**Deferred to Sprint 10.5 (Observatory):** `GET /observatory/galaxy|timeline|architecture`
+and the `ProjectGalaxy` / `ProjectTimeline` / `ArchitectureMap` components.
 
 ---
 
@@ -1719,6 +1770,7 @@ The desktop's running stack picks up the new host on the next
 
 | Date | Version | Change | Author |
 |------|---------|--------|--------|
+| 2026-08-05 | 1.10 | Sprint 10 (Portfolio Intelligence): §2.7 rewritten to the shipped endpoints (`/portfolio/scores`, `/best-candidates?min_score=`, `/feature-matrix`), new §14.5 Portfolio Intelligence — `PortfolioService` (`backend/app/services/portfolio_service.py`, deterministic 30/30/25/15 formula, missing = 0; build latest log success/failure/pending, tests pass ratio, security severity penalties, docs = README/Markdown/`docs/` file ratio; recompute-on-read + upsert to `PortfolioScore`), router `backend/app/api/v1/portfolio.py` registered in `main.py`, `tests/test_portfolio.py` (12 tests, in-memory SQLite, API via dependency override). Frontend: `pages/Portfolio.tsx` (health grid, best candidates, feature matrix), `components/HealthCard.tsx`, `components/FeatureMatrix.tsx`, `api/portfolio.ts` aligned to backend schemas, `/portfolio` route now real (nav item already existed). Observatory (galaxy/timeline/architecture) deferred to Sprint 10.5 | User + AI agent |
 | 2026-08-05 | 1.9.1 | Sprint 9 closeout (eero→Pi-hole DNS handoff): §13.3 verification extended with the network-wide blocking steps — eero app Custom DNS (IPv4 primary `192.168.4.40` Pi-hole, secondary `192.168.4.1` fallback, IPv6 empty), leave DHCP/NAT on Automatic and eero Secure off, verify via `ipconfig`/DNS showing `192.168.4.40` + `nslookup doubleclick.net` → `0.0.0.0`; Pi-hole v6 login notes (password-only form is normal for the single admin user; `FTLCONF_webpassword` is only applied at first boot, so a stale container shows "wrong password" — reset via `docker exec -it sentinel-pihole-1 pihole setpassword`, container name is `sentinel-pihole-1` not `pihole`) | User + AI agent |
 | 2026-08-05 | 1.9 | Sprint 9 (World Simulator v1): §11 rewritten from the original container-based "AI world" plan to the shipped deterministic ant-farm — isolated SQLite `data/world_sim/world.db` (own metadata; tables `world_sim_state`, `world_settlements`, `world_roads`, `world_events`), rules engine (`rules_engine.py`: terrain as pure `(x,y,seed)` hash, food/growth/construction/expansion/trade/raids/disasters), `event_generator.simulate_day` (9 steps, seeded per day), skill system (`skill_system.py`: `20+5×(severity−1)` survival XP → tiers 0/50/150/300/500 → levels 1–5, +5% production/+10% rebuild per level), `WorldSimulatorService` (advance_day single transaction, bounded catch-up, god tools), API `POST/GET /api/v1/world-sim/*` (state/history/settlements/tick/reset/accelerate/disaster), Celery beat `world-sim-tick` (no new container), CLI `world-sim state|tick|reset|accelerate|disaster|inspect`, 26 tests; §2.9 endpoint list + §5.1 CLI updated. Frontend: `/world` route + nav, `api/world_sim.ts`, `WorldSimulatorPage` (polling, god controls, settlement inspector, event feed), `WorldGridMap` (2D canvas; BigInt copy of the terrain hash so map == backend) | User + AI agent |
 | 2026-08-04 | 1.8 | Sprint 8.5 (Infrastructure Services): §13.1 compose spec updated — Pi-hole uses the official `ghcr.io/pi-hole/pihole:latest` image (Pi-hole no longer publishes to Docker Hub; `docker.io/pi-hole/pihole` pulls fail with repository-not-found) with v6 env (`FTLCONF_LOCAL_IPV4`, `FTLCONF_webpassword` from gitignored `.env`, `TZ`), `SENTINEL_OLLAMA_HOST` in backend/worker/scheduler points at the laptop (`http://192.168.4.40:11434`), the `ollama` profile is documented as a local fallback; new §13.3 laptop deployment walkthrough (native Ollama `OLLAMA_HOST=0.0.0.0:11434` + firewall rules, model pulls `llama3.1:8b`/`gemma2`/`nomic-embed-text`, clone + `docker compose --profile pihole up -d pihole` with `PIHOLE_WEBPASSWORD`/`PIHOLE_TZ`, router DHCP reservation + LAN DNS), multi-host Ollama env-var table (Sentinel `SENTINEL_OLLAMA_HOST`; airadio `OLLAMA_URL`/`OLLAMA_MODEL`), verification commands (admin UI 8053, `/api/tags`, `nslookup doubleclick.net` → 0.0.0.0) | User + AI agent |

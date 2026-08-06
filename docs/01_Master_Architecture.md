@@ -776,21 +776,29 @@ Modified later: Added validation.
 
 ### Feature Group 11: Portfolio Intelligence
 
+**Shipped (Sprint 10)**: deterministic health scoring, candidate ranking and a
+feature matrix — no AI. See docs/02 §14.5.
+
 **Generates**:
-- Project readiness reports
+- Per-project health scores (0-100): build 30 · tests 30 · security 25 · docs 15;
+  components with no data yet score 0
+- Ranked best candidates (score ≥ min_score) with missing items listed
+- Feature matrix across projects × features (✓/⚠/✗)
 
 **Example**:
 ```
-Workflow Toolkit
+Sample Python Project            Score: 92.5
+  Build: ✓ passing   Tests: ✓ passing
+  Security: ✓ clean  Docs: 50%
 
-Build:        PASS
-Tests:        PASS
-Documentation: 90%
-Security:      PASS
-Screenshots:  Available
-
-Portfolio Score: 92%
+Best candidates: [Sample Python Project]
+Feature matrix:   build  test  docs  security  screenshots
+                  ✓      ✓     ⚠     ✓         ✗
 ```
+
+**Endpoints**: `GET /portfolio/scores`, `GET /portfolio/best-candidates?min_score=70`,
+`GET /portfolio/feature-matrix`. **Frontend**: `/portfolio` page (health cards,
+candidates, matrix). Observatory (galaxy/timeline/architecture) is Sprint 10.5.
 
 ### Feature Group 12: Local Services
 
@@ -1181,6 +1189,7 @@ When contributing to or extending Project Sentinel, agents should follow these p
 
 | Date | Version | Change | Author |
 |------|---------|--------|--------|
+| 2026-08-05 | 1.10 | Sprint 10 (Portfolio Intelligence): FG11 rewritten from "readiness reports" to the shipped implementation — deterministic health scoring (build 30 / tests 30 / security 25 / docs 15, missing = 0; latest build log, test pass ratio, security severity penalties, README/Markdown/docs file ratio), `PortfolioScore` upsert-on-read, best-candidate ranking with missing items, feature matrix (✓/⚠/✗, screenshots ✗ until a screenshot feature exists), endpoints `GET /api/v1/portfolio/scores|best-candidates|feature-matrix`, frontend `/portfolio` page (HealthCard, FeatureMatrix). Observatory (galaxy/timeline/architecture) deferred to Sprint 10.5 | User + AI agent |
 | 2026-08-05 | 1.9 | Sprint 9 (World Simulator v1): §8.17 + FG13 rewritten from "AI world in its own container" to the shipped deterministic ant-farm — own SQLite DB (`data/world_sim/world.db`), seeded per-day RNG (terrain = pure `(x,y,seed)` hash), skill system (survival XP → levels 1–5, "build back stronger"), runs in-stack via Celery beat `world-sim-tick` (no new container), god tools (manual tick/reset/accelerate/disaster). New frontend `/world` route with 2D canvas map, settlement inspector, event feed. Details in impl guide §11, §2.9, §5.1 | User + AI agent |
 | 2026-08-04 | 1.8 | Sprint 8.5 (Infrastructure Services): §9 rewritten as Hardware Role & Infrastructure Services — two-machine topology (laptop `desktop-slur95L` 192.168.4.40 = always-on home server hosting Pi-hole + shared Ollama; desktop 192.168.4.28 = dev workstation), service list and home-server responsibilities; §10 Networking Model updated to real LAN IPs, Pi-hole admin (8053) + Ollama (11434) service endpoints, DHCP reservation + LAN DNS rule. Backend/worker `SENTINEL_OLLAMA_HOST` now points at the laptop (`http://192.168.4.40:11434`); the `ollama` compose profile remains a desktop-local fallback | User + AI agent |
 | 2026-08-03 | 1.0 | Initial draft based on idea.md | User |
