@@ -24,6 +24,7 @@ This document is the **technical reference** for implementing Project Sentinel. 
 11. [World Simulator](#11-world-simulator)
 12. [Testing Strategy](#12-testing-strategy)
 14.5. [Portfolio Intelligence](#145-portfolio-intelligence)
+14.6. [Observatory](#146-observatory)
 
 ---
 
@@ -362,8 +363,9 @@ All endpoints live under `http://127.0.0.1:8000/api/v1/`. Relative paths below o
 - Query: `?limit=50&author=John`
 - Returns: paginated list of GitCommit objects
 
-**GET `/projects/{id}/timeline`** — Get feature timeline
-- Returns: `{"timeline": [{"date": "...", "feature": "Added CSV import", "commit_hash": "...", "sprint": 5}, ...]}`
+**Note:** the original feature-timeline endpoint here was never built; the
+shipped activity timeline lives under §2.11 (Observatory), driven by stored
+commit/build/test/finding timestamps rather than parsed commit messages.
 
 **GET `/git/features`** — Search features across all projects
 - Query: `?query=import&project_id=optional`
@@ -431,6 +433,27 @@ Deterministic "ant farm" module with its own DB; see §11 for full details.
 **PUT `/config`** — Update configuration
 - Body: partial config object
 - Returns: updated config
+
+### 2.11. Observatory (Sprint 10.5)
+
+Read-only project overviews, deterministic from stored data (§14.6).
+
+**GET `/observatory/galaxy`** — Shared-technology graph
+- Returns: `{"nodes": [{"id", "kind": "project|tech", "label", "detail"}], "links": [{"source", "target", "tech"}]}`
+- Only technologies used by 2+ projects (`Project.framework` + `Dependency.name`)
+  become `tech` nodes; every project is a `project` node linked to each shared tech
+
+**GET `/observatory/timeline`** — Chronological activity
+- Query: `?days=365` (default 365; <1 resets to 365)
+- Returns: `{"events": [{"at", "kind": "project-created|commit|build|test|finding", "project_id", "project_name", "message"}]}`
+- Sources: `Project.created_at`, `GitCommit.timestamp`, `BuildLog.started_at`,
+  `TestResult.run_at`, `SecurityFinding.detected_at` — all within the window,
+  descending, capped at 500 events
+
+**GET `/observatory/architecture/{project_id}`** — Component tree
+- Returns a recursive node: `{"name", "path", "kind": "dir|file", "count", "children": [...]}`
+- Dirs first, then files; `count` = number of files beneath a directory (root = total files)
+- 404 if the project is unknown
 
 ---
 
@@ -1458,6 +1481,7 @@ production and +10% rebuild speed per level beyond the first — settlements
 | `test_security.py` | Security scanner integration, finding schemas | `services/security_scanner.py` |
 | `test_world_sim.py` | World Simulator isolation, event generation | `services/world_simulator.py` |
 | `test_portfolio.py` | Portfolio scoring (30/30/25/15), candidates, matrix, API | `services/portfolio_service.py` |
+| `test_observatory.py` | Galaxy shared-tech graph, timeline window/kinds/order/cap, architecture tree, API | `services/observatory_service.py` |
 | `test_e2e.py` | Full pipeline: index → scan → build → test → docgen → export | All components |
 
 ### 12.2. Frontend Tests (Vitest)
@@ -1761,8 +1785,52 @@ docs — ≥80% / 1-79% / 0%; security — clean/findings/pending.
 `components/FeatureMatrix.tsx`, `api/portfolio.ts`. Names are joined from
 `GET /projects/`.
 
-**Deferred to Sprint 10.5 (Observatory):** `GET /observatory/galaxy|timeline|architecture`
-and the `ProjectGalaxy` / `ProjectTimeline` / `ArchitectureMap` components.
+**Deferred to Sprint 10.5 (Observatory):** the `ProjectGalaxy` / `ProjectTimeline` /
+`ArchitectureMap` components — now shipped, see §14.6.
+
+---
+
+## 14.6. Observatory (Sprint 10.5)
+
+`ObservatoryService` (`backend/app/services/observatory_service.py`) provides three
+read-only, deterministic overviews over already-indexed data — no AI, no parsing
+at query time.
+
+**Galaxy** `galaxy()` — projects become `project` nodes; technologies (a
+project's `framework` plus its `Dependency.name` rows) used by **2+ projects**
+become `tech` nodes with a `used by N projects` detail. Every project links to
+each tech it shares, so the graph shows reuse across the portfolio.
+
+**Timeline** `timeline(days=365)` — collects events from `Project.created_at`
+(`project-created`), `GitCommit.timestamp` (`commit`, `hash8 message`),
+`BuildLog.started_at` (`build`, Build success/failed), `TestResult.run_at`
+(`test`, N passed / M failed) and `SecurityFinding.detected_at` (`finding`,
+`severity: title`), filters to the trailing window, sorts descending, caps at
+`MAX_TIMELINE_EVENTS = 500`. Timestamps are stored naive UTC, so the cutoff is
+computed naive-UTC to match.
+
+**Architecture** `architecture(project_id)` — builds a nested tree from indexed
+`ProjectFile.path` values (split on `/`, backslashes normalized). Nodes carry
+`count` = number of files beneath (each file increments every ancestor + itself),
+so root count == total indexed files, leaves == 1. Sorted dirs-first then files.
+
+**Schemas:** `backend/app/schemas/observatory.py` — `GalaxyGraph`/`GalaxyNode`/
+`GalaxyLink`, `Timeline`/`TimelineEvent`, recursive `ArchitectureNode`
+(`model_rebuild()` resolves forward refs).
+
+**Endpoints:** `GET /observatory/galaxy`, `GET /observatory/timeline?days=`,
+`GET /observatory/architecture/{id}` (see §2.11). Registered in `main.py`
+under `api/v1/observatory.py`.
+
+**Frontend:** `/observatory` route (nav item "Observatory") —
+`pages/Observatory.tsx` hosting `components/ProjectGalaxy.tsx` (plain-SVG
+node-link graph), `components/ProjectTimeline.tsx` (colored per-kind dots +
+window selector), `components/ArchitectureMap.tsx` (project dropdown + indented
+tree); `api/observatory.ts` on the shared axios client.
+
+**Note on scope:** the architecture tree derives exclusively from indexed file
+paths — it shows where components live, not cross-file imports. "Used by"
+relationships aren't persisted, so they're intentionally absent.
 
 ---
 
@@ -1770,6 +1838,7 @@ and the `ProjectGalaxy` / `ProjectTimeline` / `ArchitectureMap` components.
 
 | Date | Version | Change | Author |
 |------|---------|--------|--------|
+| 2026-08-05 | 1.10.1 | Sprint 10.5 (Observatory): new §2.11 endpoint docs (`GET /observatory/galaxy|timeline?days=|architecture/{id}`), new §14.6 Observatory — `ObservatoryService` (`backend/app/services/observatory_service.py`): galaxy = project nodes + shared tech nodes (framework + `Dependency.name`, 2+ projects: tech, links tech-sorted), timeline = `project-created`/`commit`/`build`/`test`/`finding` from `created_at`/`GitCommit.timestamp`/`BuildLog.started_at`/`TestResult.run_at`/`SecurityFinding.detected_at`, naive-UTC cutoff, descending, cap 500, messages clipped to 120 chars; architecture = recursive tree from indexed file paths (dirs-first, count = files beneath, leaf = 1, root = total files), 404 on unknown project. Router `api/v1/observatory.py` registered in `main.py`; schemas `observatory.py` (`GalaxyGraph`/`GalaxyNode`/`GalaxyLink`, `Timeline`/`TimelineEvent`, `ArchitectureNode`, exported). Tests: `tests/test_observatory.py` (11 tests: galaxy shared-tech filtering, timeline window/order/cap/exclusion, tree nesting + counts, `_clip`, API galaxy/timeline/architecture + 404, in-memory SQLite, dependency override). §2.6 stale never-built `/projects/{id}/timeline` replaced by a pointer to §2.11. Full suite 152 green; black/isort/flake8 clean on new files; `npm run build` clean. Frontend: `/observatory` route + nav item, `pages/Observatory.tsx` (Galaxy + Timeline + Architecture sections), `components/ProjectGalaxy.tsx` (plain SVG node-link graph), `ProjectTimeline.tsx` (kind-colored dots + days-window selector), `ArchitectureMap.tsx` (project dropdown + indented tree), `api/observatory.ts` on shared axios client; `types/index.ts` observatory interfaces | User + AI agent |
 | 2026-08-05 | 1.10 | Sprint 10 (Portfolio Intelligence): §2.7 rewritten to the shipped endpoints (`/portfolio/scores`, `/best-candidates?min_score=`, `/feature-matrix`), new §14.5 Portfolio Intelligence — `PortfolioService` (`backend/app/services/portfolio_service.py`, deterministic 30/30/25/15 formula, missing = 0; build latest log success/failure/pending, tests pass ratio, security severity penalties, docs = README/Markdown/`docs/` file ratio; recompute-on-read + upsert to `PortfolioScore`), router `backend/app/api/v1/portfolio.py` registered in `main.py`, `tests/test_portfolio.py` (12 tests, in-memory SQLite, API via dependency override). Frontend: `pages/Portfolio.tsx` (health grid, best candidates, feature matrix), `components/HealthCard.tsx`, `components/FeatureMatrix.tsx`, `api/portfolio.ts` aligned to backend schemas, `/portfolio` route now real (nav item already existed). Observatory (galaxy/timeline/architecture) deferred to Sprint 10.5 | User + AI agent |
 | 2026-08-05 | 1.9.1 | Sprint 9 closeout (eero→Pi-hole DNS handoff): §13.3 verification extended with the network-wide blocking steps — eero app Custom DNS (IPv4 primary `192.168.4.40` Pi-hole, secondary `192.168.4.1` fallback, IPv6 empty), leave DHCP/NAT on Automatic and eero Secure off, verify via `ipconfig`/DNS showing `192.168.4.40` + `nslookup doubleclick.net` → `0.0.0.0`; Pi-hole v6 login notes (password-only form is normal for the single admin user; `FTLCONF_webpassword` is only applied at first boot, so a stale container shows "wrong password" — reset via `docker exec -it sentinel-pihole-1 pihole setpassword`, container name is `sentinel-pihole-1` not `pihole`) | User + AI agent |
 | 2026-08-05 | 1.9 | Sprint 9 (World Simulator v1): §11 rewritten from the original container-based "AI world" plan to the shipped deterministic ant-farm — isolated SQLite `data/world_sim/world.db` (own metadata; tables `world_sim_state`, `world_settlements`, `world_roads`, `world_events`), rules engine (`rules_engine.py`: terrain as pure `(x,y,seed)` hash, food/growth/construction/expansion/trade/raids/disasters), `event_generator.simulate_day` (9 steps, seeded per day), skill system (`skill_system.py`: `20+5×(severity−1)` survival XP → tiers 0/50/150/300/500 → levels 1–5, +5% production/+10% rebuild per level), `WorldSimulatorService` (advance_day single transaction, bounded catch-up, god tools), API `POST/GET /api/v1/world-sim/*` (state/history/settlements/tick/reset/accelerate/disaster), Celery beat `world-sim-tick` (no new container), CLI `world-sim state|tick|reset|accelerate|disaster|inspect`, 26 tests; §2.9 endpoint list + §5.1 CLI updated. Frontend: `/world` route + nav, `api/world_sim.ts`, `WorldSimulatorPage` (polling, god controls, settlement inspector, event feed), `WorldGridMap` (2D canvas; BigInt copy of the terrain hash so map == backend) | User + AI agent |

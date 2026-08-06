@@ -13,6 +13,14 @@ from app.schemas.build import (
 from app.schemas.git import FeatureTimelineItem, GitCommitRead
 from app.schemas.job import JobEnvelope
 from app.schemas.knowledge import KnowledgeSummaryRead
+from app.schemas.observatory import (
+    ArchitectureNode,
+    GalaxyGraph,
+    GalaxyLink,
+    GalaxyNode,
+    Timeline,
+    TimelineEvent,
+)
 from app.schemas.portfolio import FeatureMatrix, PortfolioCandidate, PortfolioScoreRead
 from app.schemas.project import (
     ProjectDetail,
@@ -51,10 +59,14 @@ from app.schemas.world_sim import (
 )
 
 __all__ = [
+    "ArchitectureNode",
     "BuildLogRead",
     "BuildTrigger",
     "FeatureMatrix",
     "FeatureTimelineItem",
+    "GalaxyGraph",
+    "GalaxyLink",
+    "GalaxyNode",
     "GitCommitRead",
     "JobEnvelope",
     "JobStatus",
@@ -77,6 +89,8 @@ __all__ = [
     "SecurityFindingRead",
     "TestResultRead",
     "TestRunResponse",
+    "Timeline",
+    "TimelineEvent",
     "WorldAccelerateRequest",
     "WorldDisasterRequest",
     "WorldDisasterResponse",

@@ -6,4 +6,5 @@ export const NAV_ITEMS = [
   { to: "/knowledge", label: "Knowledge", icon: "❖" },
   { to: "/world", label: "World", icon: "♁" },
   { to: "/portfolio", label: "Portfolio", icon: "◆" },
+  { to: "/observatory", label: "Observatory", icon: "✧" },
 ] as const;
