@@ -16,7 +16,11 @@ celery_app = Celery(
     "sentinel",
     broker=settings.redis_url,
     backend=settings.redis_url,
-    include=["app.tasks.build_tasks", "app.tasks.rag_tasks"],
+    include=[
+        "app.tasks.build_tasks",
+        "app.tasks.rag_tasks",
+        "app.tasks.world_sim_tasks",
+    ],
 )
 
 celery_app.conf.update(
@@ -32,7 +36,11 @@ celery_app.conf.update(
         "nightly-security-scan": {
             "task": "app.tasks.build_tasks.run_security_scan_all",
             "schedule": settings.schedule_interval_minutes * 60,
-        }
+        },
+        "world-sim-tick": {
+            "task": "app.tasks.world_sim_tasks.world_sim_tick",
+            "schedule": settings.world_sim_tick_seconds,
+        },
     },
 )
 

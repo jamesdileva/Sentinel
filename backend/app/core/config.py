@@ -54,5 +54,15 @@ class Settings(BaseSettings):
     celery_eager: bool = False
     command_timeout_seconds: int = 300
 
+    world_sim_enabled: bool = True
+    world_sim_db_path: Path = BASE_DIR / "data" / "world_sim" / "world.db"
+    world_sim_tick_seconds: int = 60
+    world_sim_max_catchup_days: int = 48
+    world_sim_time_scale: int = 1
+    world_sim_seed: int = 42
+    world_sim_starting_settlements: int = 2
+    world_sim_model: str = "gemma2"
+    world_sim_ai_narratives: bool = True
+
 
 settings = Settings()

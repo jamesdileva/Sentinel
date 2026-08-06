@@ -597,83 +597,64 @@ Each sprint follows this template:
 
 ## Phase 6: World Simulator (Sprint 9)
 
-### Sprint 9 — World Simulator Module
+### Sprint 9 — World Simulator v1 (deterministic ant-farm)
 
-**Objective:** Implement the isolated World Simulator as a fully standalone module with its own database, embeddings, and AI model.
+**Objective:** Ship World Simulator v1 as a deterministic, persistent "living
+toy": settlements grow, build roads, expand, trade, and sometimes collapse.
+**No generative AI in the simulation loop** (Rule 2/3) — AI is optional flavor
+on event text only. Runs inside the existing stack via Celery beat; no new
+container.
 
 **Files Created:**
-- `backend/app/services/world_simulator.py`
-- `backend/app/services/world_sim/rules_engine.py`
-- `backend/app/services/world_sim/event_generator.py`
-- `backend/app/schemas/world_sim.py`
-- `backend/app/api/v1/world_sim.py`
-- `backend/app/db/world_sim_models.py` (separate SQLite models)
-- `backend/app/data/world_sim/prompts/event_narrative.j2`
+- `backend/app/services/world_sim/__init__.py`
+- `backend/app/services/world_sim/rules_engine.py` (pure rules: terrain, food,
+  growth, construction, expansion, raids, disasters; constants with tests)
+- `backend/app/services/world_sim/event_generator.py` (`simulate_day`, 9 steps)
+- `backend/app/services/world_sim/skill_system.py` (survival XP → levels 1–5)
+- `backend/app/services/world_sim/names.py` (seeded name generation)
+- `backend/app/services/world_sim/world_simulator.py` (`WorldSimulatorService`)
+- `backend/app/db/world_sim_models.py` (separate SQLite metadata + engine)
+- `backend/app/schemas/world_sim.py`, `backend/app/api/v1/world_sim.py`
+- `backend/app/tasks/world_sim_tasks.py` (beat `world-sim-tick` + catch-up)
 - `backend/tests/test_world_sim.py`
-- `frontend/src/pages/WorldSimulatorPage.tsx`
-- `frontend/src/components/WorldDayDisplay.tsx`
-- `frontend/src/components/EventTimeline.tsx`
-- `frontend/src/components/WorldGalaxyView.tsx`
 - `frontend/src/api/world_sim.ts`
+- `frontend/src/pages/WorldSimulatorPage.tsx`
+- `frontend/src/components/WorldGridMap.tsx` (2D canvas, BigInt terrain hash)
 
 **Files Modified:**
-- `backend/app/main.py` (add World Sim router, conditionally loaded)
-- `frontend/src/routes/index.tsx` (add World Sim route)
+- `backend/app/core/config.py` (`world_sim_*` settings)
+- `backend/app/tasks/celery_app.py` (include + beat schedule)
+- `backend/app/cli.py` (`world-sim` command wired)
+- `backend/app/main.py` (router, conditional on `world_sim_enabled`)
+- `frontend/src/routes/index.tsx`, `frontend/src/components/nav.ts`
 
 **Database Changes:**
-- Creates separate SQLite database at `/data/world_sim/world.db`
-- Tables: `world_state`, `world_entities`, `world_events_log`
+- Isolated SQLite at `/data/world_sim/world.db` (own metadata; the main
+  `init_db()` never touches it)
+- Tables: `world_sim_state`, `world_settlements`, `world_roads`, `world_events`
 
-**Backend Changes:**
-- `WorldSimulatorService`:
-  - `load_state()` → retrieve current world state
-  - `save_state()` → persist to separate SQLite
-  - `advance_day()` → generate events, update state, narrate
-  - `get_history(limit)` → retrieve past days
-  - `reset()` → reset to day 0
-- Rules engine for event triggers (population thresholds, resource levels)
-- Event generator with types: discovery, trade, conflict, natural, social
-- Isolated Ollama model (`llama3` vs project's `gemma2`)
-- Separate ChromaDB collection for world entities
-- Docker profile `world-sim` for optional deployment
-
-**Frontend Changes:**
-- `WorldSimulatorPage` page: day display, events list, controls
-- `WorldDayDisplay`: current day, quick stats
-- `EventTimeline`: chronological events with severity indicators
-- `WorldGalaxyView`: visual map of nations/entities (optional)
-- API client for World Sim endpoints
-
-**API Endpoints:**
-- `GET /api/v1/world-sim/state` — Current world state
-- `POST /api/v1/world-sim/tick` — Advance one day
-- `GET /api/v1/world-sim/history?days=N` — Historical events
-- `POST /api/v1/world-sim/reset` — Reset simulation
+**API Endpoints (`/api/v1/world-sim`):**
+- `GET /state`, `GET /history?limit&before`, `GET /settlements/{id}`
+- `POST /tick {days}` · `POST /reset {seed?}` · `POST /accelerate {time_scale}`
+- `POST /disaster {settlement_id, disaster_type}` (flood/drought/plague)
 
 **Acceptance Criteria:**
-- World Simulator runs completely isolated (separate DB, separate Chroma collection, separate Ollama model)
-- Initial world state generated on first run
-- Events generated per day with AI narratives
-- State persists between restarts
-- Dashboard page displays current day and events
-- Timeline shows historical progression
-- Reset functionality works
-- Can run standalone via `docker compose --profile world-sim up`
+- Deterministic: same seed + tick history ⇒ identical world (tested)
+- Terrain and settlement names reproducible from the seed alone
+- Food/growth, construction/level ups, expansion-with-roads on thresholds
+- Famine and forced disasters can abandon settlements (incl. god tool)
+- Survival experience maps to skill tiers; "build back stronger" bonuses
+- Bounded catch-up after downtime (CE max `world_sim_max_catchup_days`)
+- Runs in-stack via Celery beat (no container); manual tick via API/CLI
+- Frontend `/world` page: canvas map, day stats, event feed, god controls
 
-**Manual Testing:**
-1. Start World Simulator profile: `docker compose --profile world-sim up`
-2. Access `GET /api/v1/world-sim/state` → verify initial state
-3. Call `POST /api/v1/world-sim/tick` → verify day advances and events generated
-4. Call again → verify state persistence
-5. Check `/data/world_sim/world.db` → verify tables populated
-6. Open World Simulator page in browser → verify display
-7. Call reset → verify world returns to day 0
+**Definition of Done:** Full backend suite plus `test_world_sim.py` green
+(`pytest`), flake8/black clean, frontend `npm run build` clean; live beat tick
+and god tools verified via CLI smoke; docs §2/§11 updated.
 
-**Definition of Done:** World Simulator runs isolated, generates events, persists state, UI displays correctly.
-
-**Estimated Time:** 150 minutes
-
-**Dependencies:** Sprint 2 (DB models), Sprint 4 (Docker), Sprint 5 (frontend).
+**Deferred (v2+):** diplomacy/technology/governments, per-agent AI, pausing,
+`spawn-resources`, swapping the tier table for a real ML model behind the same
+helpers.
 
 ---
 
@@ -1147,6 +1128,7 @@ Use this template for any new sprint added to the plan:
 
 | Date | Version | Change | Author |
 |------|---------|--------|--------|
+| 2026-08-05 | 1.9 | Sprint 9 (World Simulator v1) complete: deterministic ant-farm shipped. Backend — `services/world_sim/{rules_engine,event_generator,skill_system,names,world_simulator}.py` (pure terrain + seeded per-day RNG; 9 daily steps; survival XP → tiers 0/50/150/300/500 → levels 1–5, +5% production/+10% rebuild per level); isolated DB `data/world_sim/world.db` (own metadata; tables `world_sim_state`, `world_settlements`, `world_roads`, `world_events`); `WorldSimulatorService` (advance in one transaction, bounded catch-up, god tools); router `/api/v1/world-sim/{state,history,settlements/{id},tick,reset,accelerate,disaster}`; Celery beat `world-sim-tick` (no new container); CLI `world-sim` wired; config `world_sim_*`. Frontend — `/world` route + nav, `api/world_sim.ts`, `WorldSimulatorPage` (3s tick, god controls, settlement inspector, event feed), `WorldGridMap` (2D canvas; BigInt hash copy so map == backend). Tests: 26 new (`test_world_sim.py`), full suite 119 green; flake8/black clean; `npm run build` clean. Docs: 02 §11 rewritten + §2.9/§5.1 updated, 01 §8.17/FG13 updated, all changelogs v1.9. Deferred to v2: diplomacy/tech/governments, per-agent AI, pause, spawn-resources, ML swap | User + AI agent |
 | 2026-08-04 | 1.8 | Sprint 8.5 (Infrastructure Services): docker-compose.yml implemented — new `pihole` service (official `ghcr.io/pi-hole/pihole:latest` — Pi-hole moved off Docker Hub; `docker.io/pi-hole/pihole` returns repository-not-found, so images come from GitHub Container Registry — `profiles: ["pihole"]`, 53 tcp+udp + admin 8053, volumes under `data/pihole/`, `FTLCONF_LOCAL_IPV4=192.168.4.40`, `FTLCONF_webpassword=${PIHOLE_WEBPASSWORD}` from gitignored `.env`, `TZ=${PIHOLE_TZ:-UTC}`); `backend`/`worker` `SENTINEL_OLLAMA_HOST` → `http://192.168.4.40:11434` (laptop shared AI); `ollama` profile kept as desktop-local fallback. Architecture doc §9→§9/§9.1/§9.2 (Hardware Role & Infrastructure Services, two-machine topology) + §10 real IPs; impl guide §13.1 spec aligned + new §13.3 laptop deployment (OLLAMA_HOST 0.0.0.0, firewall, model pulls, compose pihole, router DHCP reservation + LAN DNS, multi-host env table incl. airadio `OLLAMA_URL`). `docker compose config` validated with dummy password; no runtime changes yet — laptop steps + desktop recreate are Phase 2/3 | User + AI agent |
 | 2026-08-04 | 1.7 | Sprint 8 Part 2 (chat UI + live E2E): `frontend/src/api/rag.ts` (typed client for search/query/index/summaries; 120s timeout on query for local LLM), `components/ChatMessage.tsx` (user/assistant bubbles with source citations + distance + model/generated_at/confidence provenance, error state), `components/RagChat.tsx` (chat state, loading indicator, auto-scroll), `pages/KnowledgeExplorer.tsx` (project selector, Index knowledge button with optional AI architecture summary, semantic search + results, chat panel), route wiring `/knowledge` in `routes/index.tsx`. `tsc` + `vite build` clean. Live E2E vs real Ollama (native host, `nomic-embed-text` + `gemma2:2b` pulled; compose backend/worker rebuilt with chromadb and pointed at `host.docker.internal:11434` via temp override): RAG index ingested 6 file summaries + 2 test + 2 build logs into ChromaDB, semantic search returned ranked chunks, grounded query answered with 5 cited sources + provenance, `with_summary` persisted an architecture `KnowledgeSummary`, CLI `ask` printed sources + provenance, unreachable-Ollama exits 1 with pull instructions, Vite dev proxy served `/api/v1/projects/` live. Notes: docker image has no `git` binary so commit indexing degrades gracefully; full `gemma2` (vs `gemma2:2b`) needs `ollama pull gemma2` | User + AI agent | `frontend/src/api/rag.ts` (typed client for search/query/index/summaries; 120s timeout on query for local LLM), `components/ChatMessage.tsx` (user/assistant bubbles with source citations + distance + model/generated_at/confidence provenance, error state), `components/RagChat.tsx` (chat state, loading indicator, auto-scroll), `pages/KnowledgeExplorer.tsx` (project selector, Index knowledge button with optional AI architecture summary, semantic search + results, chat panel), route wiring `/knowledge` in `routes/index.tsx`. `tsc` + `vite build` clean. Live E2E vs real Ollama (native host, `nomic-embed-text` + `gemma2:2b` pulled; compose backend/worker rebuilt with chromadb and pointed at `host.docker.internal:11434` via temp override): RAG index ingested 6 file summaries + 2 test + 2 build logs into ChromaDB, semantic search returned ranked chunks, grounded query answered with 5 cited sources + provenance, `with_summary` persisted an architecture `KnowledgeSummary`, CLI `ask` printed sources + provenance, unreachable-Ollama exits 1 with pull instructions, Vite dev proxy served `/api/v1/projects/` live. Notes: docker image has no `git` binary so commit indexing degrades gracefully; full `gemma2` (vs `gemma2:2b`) needs `ollama pull gemma2` | User + AI agent |
 | 2026-08-04 | 1.6 | Sprint 8 Part 1 (RAG backend core): `OllamaService` (generate/embed with `/api/embed` + legacy fallback, is_available/list_models, injectable transport), `ChromaManager` (embedded PersistentClient, 6 named collections, hnsw cosine, upsert/search/delete_by_project/count), `RagService` (index_project with raw-content ingestion + optional Ollama architecture summary persisted to `KnowledgeSummary`, semantic search with where-filter scoping, grounded `query()` returning sources + model/generated_at/confidence provenance; injectable embedder/llm), `GitHistoryService` + pure `parse_log` (`%H|%an|%aI|%s`, Windows-safe quoting, dedupe by hash), new repos (git, knowledge_summary), schemas `rag.py`/`knowledge.py`, routers `POST /api/v1/rag/search`, `POST /rag/query`, `POST /rag/index` (202 JobEnvelope on Celery `run_index_knowledge` task), `GET /projects/{id}/summaries`, CLI `ask` + `rag-index`. 91 tests passing (27 new; piped git-format quoting fixed for Windows). Chat UI + live E2E is Sprint 8 Part 2 | User + AI agent |

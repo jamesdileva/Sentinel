@@ -509,24 +509,27 @@ git pull
 
 ### 8.17 World Simulator (Optional Fun Module)
 
-**Purpose**: A separate entertainment subsystem that runs a persistent AI-generated world simulation.
+**Purpose**: A separate entertainment subsystem — a deterministic, persistent
+"ant farm" simulation (Sprint 9). Settlements grow, build roads, expand,
+trade, and sometimes collapse. No AI in the simulation loop; AI is at most
+optional flavor on event text.
 
 **Design Principles**:
-- Completely decoupled from project operations
-- Runs on a separate schedule or instance (e.g., second laptop)
-- Not subject to same reliability requirements as core CI/CD
+- Completely decoupled from project operations (own SQLite DB, own tables)
+- Deterministic: seeded per-day RNG, terrain as a pure function of `(x, y, seed)`
+- Runs inside the existing stack (Celery beat `world-sim-tick`); no container
+- God tools: manual tick, reset/re-seed, time acceleration, forced disasters
 
 **How It Works**:
 ```
-Daily Tick
+Daily Tick (beat, every SENTINEL_WORLD_SIM_TICK_SECONDS)
     ↓
-State Update (via Ollama narrative prompts)
+simulate_day (seeded RNG): food/growth → construction → expansion → trade
+    → raids → discoveries → festivals → disasters → collapse
     ↓
-Event Generation (discoveries, conflicts, trade shifts)
+Persist (world_settlements / world_roads / world_events)
     ↓
-State Persistence
-    ↓
-Dashboard Display ("World Day 482")
+Dashboard Display ("World Day 482", map + event feed)
 ```
 
 **Example Output**:
@@ -534,9 +537,9 @@ Dashboard Display ("World Day 482")
 World Day 482
 
 Events:
-- Northern Kingdom discovered technology.
-- Trade increased.
-- Conflict started.
+- Marniv Vale reached level 3.
+- Trade thrives between Marniv Vale and Kel Harbor.
+- A flood struck Kel Harbor; the survivors are rebuilding, stronger than before.
 ```
 
 **Technology**: Lightweight Flask app + small Ollama model + JSON state file
@@ -810,9 +813,10 @@ POST /ask
 (See Section 8.17 for full details)
 
 A separate entertainment subsystem:
-- Persistent AI-generated world simulation
-- Not connected to project operations
-- Can run on a separate laptop
+- Deterministic persistent world simulation (settlements, roads, trade, disasters)
+- Own SQLite database (`data/world_sim/world.db`), isolated from project data
+- Runs in the existing stack via Celery beat — no separate container
+- Optional AI narrative flavor; never affects simulation state
 
 ---
 
@@ -1177,6 +1181,7 @@ When contributing to or extending Project Sentinel, agents should follow these p
 
 | Date | Version | Change | Author |
 |------|---------|--------|--------|
+| 2026-08-05 | 1.9 | Sprint 9 (World Simulator v1): §8.17 + FG13 rewritten from "AI world in its own container" to the shipped deterministic ant-farm — own SQLite DB (`data/world_sim/world.db`), seeded per-day RNG (terrain = pure `(x,y,seed)` hash), skill system (survival XP → levels 1–5, "build back stronger"), runs in-stack via Celery beat `world-sim-tick` (no new container), god tools (manual tick/reset/accelerate/disaster). New frontend `/world` route with 2D canvas map, settlement inspector, event feed. Details in impl guide §11, §2.9, §5.1 | User + AI agent |
 | 2026-08-04 | 1.8 | Sprint 8.5 (Infrastructure Services): §9 rewritten as Hardware Role & Infrastructure Services — two-machine topology (laptop `desktop-slur95L` 192.168.4.40 = always-on home server hosting Pi-hole + shared Ollama; desktop 192.168.4.28 = dev workstation), service list and home-server responsibilities; §10 Networking Model updated to real LAN IPs, Pi-hole admin (8053) + Ollama (11434) service endpoints, DHCP reservation + LAN DNS rule. Backend/worker `SENTINEL_OLLAMA_HOST` now points at the laptop (`http://192.168.4.40:11434`); the `ollama` compose profile remains a desktop-local fallback | User + AI agent |
 | 2026-08-03 | 1.0 | Initial draft based on idea.md | User |
 | 2026-08-04 | 1.1 | Sprint 0 decision lock: SQLite as primary DB (was PostgreSQL), ChromaDB embedded (no container), React 19, naming alignment (schemas/, rag_service.py, parsers/), single backend/tests/ | User + AI agent |

@@ -388,20 +388,29 @@ All endpoints live under `http://127.0.0.1:8000/api/v1/`. Relative paths below o
 **GET `/health`** — Overall system health
 - Returns: `{"status": "healthy", "services": {...}, "projects_count": 10, "last_index": "..."}`
 
-### 2.9. World Simulator (Optional)
+### 2.9. World Simulator (Sprint 9)
 
-**GET `/world-sim/state`** — Get current world state
-- Returns: `{"day": 482, "events": [...], "nations": [...], "economy": {...}}`
+Deterministic "ant farm" module with its own DB; see §11 for full details.
 
-**POST `/world-sim/tick`** — Advance simulation by one day
-- Returns: `{"day": 483, "events": ["New trade route established"]}`
+**GET `/world-sim/state`** — Current world state
+- Returns: day, seed, time scale, settlements, roads, recent events, stats
 
-**GET `/world-sim/history`** — Get simulation history
-- Query: `?limit=100`
-- Returns: list of historical day states
+**GET `/world-sim/history`** — Event log (ascending)
+- Query: `?limit=100&before=<day>`
 
-**DELETE `/world-sim/reset`** — Reset world simulation
-- Returns: `{"status": "reset", "day": 0}`
+**GET `/world-sim/settlements/{id}`** — Settlement detail (incl. roads)
+
+**POST `/world-sim/tick`** — Advance the world now
+- Body: `{"days": 3}`; returns `{"days_advanced": 3, "day_number": N}`
+
+**POST `/world-sim/reset`** — Wipe and restart
+- Body: `{"seed": 7}` (optional); returns `{"status": "reset", "seed": 7}`
+
+**POST `/world-sim/accelerate`** — Set days per tick (1–10)
+- Body: `{"time_scale": 5}`
+
+**POST `/world-sim/disaster`** — Force a disaster (god tool)
+- Body: `{"settlement_id": "...", "disaster_type": "flood|drought|plague"}`
 
 ### 2.10. Configuration
 
@@ -877,9 +886,12 @@ sentinel rag-index <project_id>      # Index project knowledge into ChromaDB
 sentinel rag-index <project_id> --summary   # Also generate architecture summary via Ollama
 sentinel portfolio                   # Show portfolio scores for all projects
 sentinel health                      # Show system health status
-sentinel world-sim start             # Start World Simulator (if enabled)
-sentinel world-sim tick              # Advance world by one day
-sentinel world-sim state             # Show current world state
+sentinel world-sim state              # Show current world state
+sentinel world-sim tick --days 30     # Advance world by N days
+sentinel world-sim reset --seed 7     # Wipe world, optionally new seed
+sentinel world-sim accelerate --scale 3  # Set days per tick (1-10)
+sentinel world-sim disaster --settlement s0 --type flood  # Force a disaster
+sentinel world-sim inspect --settlement s0  # Settlement detail
 sentinel config show                 # Show current configuration
 sentinel config set <key> <value>    # Update a config value
 ```
@@ -1295,97 +1307,129 @@ Test definitions stored in `project/.sentinel/tests/<feature_name>.json`:
 
 ### 11.1. Architecture
 
-The World Simulator is a fully isolated optional module that runs a persistent AI-generated world simulation. It does not interact with any project intelligence pipelines.
+The World Simulator ("the Living World") is a deterministic, persistent
+ant-farm style simulation (Sprint 9). It is fully isolated from the project
+intelligence pipelines: its own SQLite database, its own engine, and — per
+Project Rules 2/3 — **no generative AI in the simulation loop**. AI is at most
+optional flavor on event text and never affects sim state.
+
+The module runs inside the existing stack (no new container): the Celery beat
+task `world-sim-tick` advances the world every `world_sim_tick_seconds`, with
+bounded catch-up after downtime, and god-tool endpoints allow manual control.
 
 ```
-World Simulator Container
-├── World State Database     (SQLite: data/world_sim/world.db)
-├── Simulation Engine        (rule-based event generation + Ollama narrative)
-├── World Embedding Store    (ChromaDB collection: world_sim_entities)
-├── Event Generator          (generates daily events from rules + AI)
-├── Simulation Scheduler     (Celery Beat: advance world per day)
-├── World State Manager      (persists and retrieves world state)
-└── Dashboard Integration    (WebSocket: push updates to frontend)
+backend/app/services/world_sim/
+├── rules_engine.py      pure deterministic rules (terrain, food, growth,
+│                        construction, expansion, disasters)
+├── event_generator.py   simulate_day(): one deterministic day of events
+├── skill_system.py      survival experience → skill levels (1–5)
+├── names.py             seeded settlement-name generation
+└── world_simulator.py   WorldSimulatorService: persistence, catch-up, god tools
+frontend/
+├── pages/WorldSimulatorPage.tsx   day stats, god tools, event feed
+└── components/WorldGridMap.tsx    2D canvas terrain + settlements + roads
 ```
 
-### 11.2. World State Database Schema
+Design invariants:
+
+- **Determinism**: all randomness comes from a per-day seeded RNG
+  (`seed:day`). Same seed + same tick history = identical world. Terrain is a
+  pure function of `(x, y, seed)`; no grid is stored.
+- **Isolation**: world tables live in `data/world_sim/world.db` under their
+  own SQLAlchemy metadata; `init_db()` never touches them.
+- **AI is decorative**: an optional narrator callable may enrich event text,
+  but simulation math never depends on it.
+
+### 11.2. World State Database Schema (`data/world_sim/world.db`)
 
 ```sql
--- Completely separate from project intelligence database
-CREATE TABLE world_sim_state (
-    id TEXT PRIMARY KEY,
-    day_number INTEGER NOT NULL,
-    events JSON,        -- Events that occurred this day
-    nations JSON,       -- Nation state data
-    economy JSON,       -- Economic state
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
+CREATE TABLE world_sim_state (        -- single row: id="world"
+    id TEXT PRIMARY KEY, day INTEGER, seed INTEGER,
+    time_scale INTEGER, updated_at TIMESTAMP);
 
-CREATE TABLE world_entities (
-    id TEXT PRIMARY KEY,
-    type TEXT,          -- "nation", "character", "item", "event"
-    name TEXT,
-    description TEXT,
-    attributes JSON,    -- Type-specific properties
-    embedding_id TEXT,  -- ChromaDB embedding reference
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
+CREATE TABLE world_settlements (      -- one row per settlement
+    id TEXT PRIMARY KEY, name TEXT, x INTEGER, y INTEGER,
+    population INTEGER, food INTEGER, level INTEGER, experience INTEGER,
+    status TEXT,                      -- "active" | "abandoned"
+    founded_day INTEGER, destroyed_day INTEGER, parent_id TEXT,
+    farmers INTEGER, builders INTEGER, merchants INTEGER,
+    explorers INTEGER, construction INTEGER);
 
-CREATE TABLE world_events_log (
-    id TEXT PRIMARY KEY,
-    day_number INTEGER,
-    event_type TEXT,     -- "discovery", "trade", "conflict", "natural"
-    description TEXT,
-    affected_entities JSON,  -- Entities involved
-    ai_narrative TEXT,        -- Ollama-generated narrative
-    severity INTEGER,          -- 1-10
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
+CREATE TABLE world_roads (
+    id TEXT PRIMARY KEY, from_id TEXT, to_id TEXT, built_day INTEGER);
+
+CREATE TABLE world_events (
+    id TEXT PRIMARY KEY, day INTEGER, event_type TEXT, title TEXT,
+    narrative TEXT, severity INTEGER,
+    affected_settlements JSON, created_at TIMESTAMP);
 ```
 
-### 11.3. World Simulator Service
+### 11.3. Rules Engine (`app/services/world_sim/rules_engine.py`)
 
-```python
-class WorldSimulatorService:
-    """
-    Optional world simulation. Fully isolated from project operations.
-    Uses a separate Ollama model and separate databases.
-    """
+Pure functions over `SettlementState`, tuned by constants (change with tests):
 
-    def __init__(self, config: WorldSimConfig):
-        self.db = self._init_separate_db()       # Separate SQLite
-        self.chroma = self._init_separate_chroma()  # Separate collection
-        self.ollama = self._init_separate_ollama()  # Separate model
-        self.rules_engine = RulesEngine()
-        self.event_generator = EventGenerator()
+| Constant | Value | Effect |
+|---|---|---|
+| `EXPAND_POPULATION` | 600 | settlements below this never found children |
+| `EXPAND_LEVEL` / `EXPAND_CHANCE` | 3 / 0.25 | level and daily roll required to expand |
+| `LEVEL_COST_BASE` | 100 | construction needed = 100 × current level |
+| `TRADE_BONUS_FRACTION` | 0.06 | food +6% per day per connected road |
+| `DISCOVERY_CHANCE` / `SOCIAL_CHANCE` | 0.04 / 0.03 | per-day event probabilities |
+| `RAID_CHANCE` / `RAID_DISTANCE` | 0.02 / 3 | raids between close settlements |
+| `DISASTER_BASE_CHANCE` | flood .015 / drought .010 / plague .008 | × terrain modifier |
 
-    def advance_day(self) -> WorldSimDay:
-        day = self._get_current_day()
-        events = self.event_generator.generate_events(day, self.rules_engine)
-        narrative = self._generate_narrative(events)
-        self._save_day(day + 1, events, narrative)
-        return WorldSimDay(day=day + 1, events=events)
+Terrain (`terrain_at(x, y, seed)`): mountains/water/hills/forest/plains with
+fertility 0.4–1.1; daily food = `farmers × 6 × fertility × skill_bonus`.
 
-    def get_state(self) -> dict:
-        return self._load_current_state()
+### 11.4. Daily Simulation (`event_generator.simulate_day`)
 
-    def reset(self) -> None:
-        self._clear_all_state()
-        self._init_world()
-```
+Steps per day: (1) food production/growth/famine → (2) construction & level
+ups → (3) expansion (new settlement + road) → (4) road trade → (5) raids
+between close settlements → (6) discoveries → (7) social events → (8)
+disasters (with survival experience) → (9) collapse check. Returns a
+`DayOutcome` (events, new settlements, new roads) for the service to persist.
 
-### 11.4. Event Generation
+### 11.5. Skill System (`skill_system.py`)
 
-Daily events are generated by a combination of:
-1. **Rule-based triggers** — population thresholds, resource levels, diplomatic relations
-2. **AI narrative generation** — Ollama generates descriptive event text
+Surviving a disaster grants `20 + 5 × (severity − 1)` experience. Experience
+maps to a skill level by tier table (0/50/150/300/500 → levels 1–5): +5% food
+production and +10% rebuild speed per level beyond the first — settlements
+"build back stronger". Deterministic and unit-tested.
 
-Event types:
-- `discovery` — technology, land, resources
-- `trade` — new trade routes, economic shifts
-- `conflict` — wars, border disputes, rebellions
-- `natural` — weather, disasters, seasonal changes
-- `social` — cultural movements, population changes
+### 11.6. Service & God Tools (`world_simulator.py`)
+
+`WorldSimulatorService` owns a dedicated engine and exposes:
+
+| Method | Purpose |
+|---|---|
+| `ensure_world()` | create the state row + starting settlements on first run |
+| `advance_day(days)` | run N days in one transaction, persist events/roads |
+| `catch_up()` | advance elapsed real time, bounded by `max_catchup_days` |
+| `get_state()` / `get_history()` / `get_settlement(id)` | reads for the UI |
+| `reset(seed)` / `set_time_scale(n)` / `trigger_disaster(id, type)` | god tools |
+
+### 11.7. API Endpoints (`/api/v1/world-sim`, enabled by `world_sim_enabled`)
+
+- `GET /world-sim/state` — day, seed, time scale, settlements, roads, recent events, stats
+- `GET /world-sim/history?limit=100&before=N` — event log (ascending)
+- `GET /world-sim/settlements/{id}` — detail including roads
+- `POST /world-sim/tick {days}` — advance now (god tool)
+- `POST /world-sim/reset {seed}` — wipe the world, optionally new seed
+- `POST /world-sim/accelerate {time_scale}` — days per tick (1–10)
+- `POST /world-sim/disaster {settlement_id, disaster_type}` — flood/drought/plague
+
+### 11.8. Configuration
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `SENTINEL_WORLD_SIM_ENABLED` | true | mount router + beat task |
+| `SENTINEL_WORLD_SIM_DB_PATH` | `data/world_sim/world.db` | isolated DB file |
+| `SENTINEL_WORLD_SIM_TICK_SECONDS` | 60 | beat interval |
+| `SENTINEL_WORLD_SIM_MAX_CATCHUP_DAYS` | 48 | downtime catch-up cap |
+| `SENTINEL_WORLD_SIM_TIME_SCALE` | 1 | days advanced per tick |
+| `SENTINEL_WORLD_SIM_SEED` | 42 | world seed |
+| `SENTINEL_WORLD_SIM_STARTING_SETTLEMENTS` | 2 | initial settlements |
+| `SENTINEL_WORLD_SIM_AI_NARRATIVES` | true | optional AI flavor (never sim state) |
 
 ---
 
@@ -1653,6 +1697,7 @@ The desktop's running stack picks up the new host on the next
 
 | Date | Version | Change | Author |
 |------|---------|--------|--------|
+| 2026-08-05 | 1.9 | Sprint 9 (World Simulator v1): §11 rewritten from the original container-based "AI world" plan to the shipped deterministic ant-farm — isolated SQLite `data/world_sim/world.db` (own metadata; tables `world_sim_state`, `world_settlements`, `world_roads`, `world_events`), rules engine (`rules_engine.py`: terrain as pure `(x,y,seed)` hash, food/growth/construction/expansion/trade/raids/disasters), `event_generator.simulate_day` (9 steps, seeded per day), skill system (`skill_system.py`: `20+5×(severity−1)` survival XP → tiers 0/50/150/300/500 → levels 1–5, +5% production/+10% rebuild per level), `WorldSimulatorService` (advance_day single transaction, bounded catch-up, god tools), API `POST/GET /api/v1/world-sim/*` (state/history/settlements/tick/reset/accelerate/disaster), Celery beat `world-sim-tick` (no new container), CLI `world-sim state|tick|reset|accelerate|disaster|inspect`, 26 tests; §2.9 endpoint list + §5.1 CLI updated. Frontend: `/world` route + nav, `api/world_sim.ts`, `WorldSimulatorPage` (polling, god controls, settlement inspector, event feed), `WorldGridMap` (2D canvas; BigInt copy of the terrain hash so map == backend) | User + AI agent |
 | 2026-08-04 | 1.8 | Sprint 8.5 (Infrastructure Services): §13.1 compose spec updated — Pi-hole uses the official `ghcr.io/pi-hole/pihole:latest` image (Pi-hole no longer publishes to Docker Hub; `docker.io/pi-hole/pihole` pulls fail with repository-not-found) with v6 env (`FTLCONF_LOCAL_IPV4`, `FTLCONF_webpassword` from gitignored `.env`, `TZ`), `SENTINEL_OLLAMA_HOST` in backend/worker/scheduler points at the laptop (`http://192.168.4.40:11434`), the `ollama` profile is documented as a local fallback; new §13.3 laptop deployment walkthrough (native Ollama `OLLAMA_HOST=0.0.0.0:11434` + firewall rules, model pulls `llama3.1:8b`/`gemma2`/`nomic-embed-text`, clone + `docker compose --profile pihole up -d pihole` with `PIHOLE_WEBPASSWORD`/`PIHOLE_TZ`, router DHCP reservation + LAN DNS), multi-host Ollama env-var table (Sentinel `SENTINEL_OLLAMA_HOST`; airadio `OLLAMA_URL`/`OLLAMA_MODEL`), verification commands (admin UI 8053, `/api/tags`, `nslookup doubleclick.net` → 0.0.0.0) | User + AI agent |
 | 2026-08-04 | 1.7 | Sprint 8 Part 2 (chat UI + live E2E): frontend RAG client `api/rag.ts` (search / query with 120s timeout / index / summaries), `RagChat` + `ChatMessage` components (bubbles, source citations with distance, model/generated_at/confidence provenance, error states, auto-scroll), `KnowledgeExplorer` page (project scope selector, "Index knowledge" with optional AI architecture summary, semantic search list, chat), `/knowledge` route. Verified live against native host Ollama: indexing (`nomic-embed-text` embeddings) populated ChromaDB; `POST /rag/query` returned a grounded answer with 5 sources + provenance (`gemma2:2b`); `with_summary` persisted an `architecture` KnowledgeSummary; CLI `ask` same path; Vite dev proxy serves the API. Docker image lacks `git` (commit indexing warns and continues); chat dev-time note: run `docker compose --profile ollama up` with `ollama pull gemma2 nomic-embed-text`, or point `SENTINEL_OLLAMA_HOST` at a running native Ollama | User + AI agent | frontend RAG client `api/rag.ts` (search / query with 120s timeout / index / summaries), `RagChat` + `ChatMessage` components (bubbles, source citations with distance, model/generated_at/confidence provenance, error states, auto-scroll), `KnowledgeExplorer` page (project scope selector, "Index knowledge" with optional AI architecture summary, semantic search list, chat), `/knowledge` route. Verified live against native host Ollama: indexing (`nomic-embed-text` embeddings) populated ChromaDB; `POST /rag/query` returned a grounded answer with 5 sources + provenance (`gemma2:2b`); `with_summary` persisted an `architecture` KnowledgeSummary; CLI `ask` same path; Vite dev proxy serves the API. Docker image lacks `git` (commit indexing warns and continues); chat dev-time note: run `docker compose --profile ollama up` with `ollama pull gemma2 nomic-embed-text`, or point `SENTINEL_OLLAMA_HOST` at a running native Ollama | User + AI agent |
 | 2026-08-04 | 1.6 | Sprint 8 Part 1: RAG backend core. New services: `OllamaService` (`generate`, `embed` with `/api/embed` + legacy `/api/embeddings` fallback, `is_available`/`list_models`, injectable `httpx.BaseTransport`), `ChromaManager` (embedded PersistentClient, 6 named collections, hnsw+cosine, `upsert`/`search` with `where` scoping/`delete_by_project`/`count`), `RagService` (injectable `embedder`/`llm`/`chroma` for deterministic tests; `index_project` ingests raw file content into `file_summaries`, git commits, test/security/build collections; optional Ollama architecture summary persisted as `KnowledgeSummary`; `search` + grounded `query` returning sources with `model`/`generated_at`/`confidence` provenance), `GitHistoryService` + pure `parse_log` (`%H|%an|%aI|%s`, dedupe by hash). New repos `git`/`knowledge_summary`; schemas `rag.py`/`knowledge.py`. Endpoints: `POST /api/v1/rag/search`, `POST /api/v1/rag/query`, `POST /api/v1/rag/index` (202 JobEnvelope → Celery `run_index_knowledge`), `GET /api/v1/projects/{id}/summaries`. CLI `ask` + `rag-index` (pre-check Ollama availability, exit 1 with pull instructions). Deps: `chromadb>=0.5`, `httpx>=0.27` moved to main. Windows note: git `--pretty` format must be double-quoted (cmd treats unquoted `|` as a pipe). Frontend chat UI + live E2E is Part 2 | User + AI agent |

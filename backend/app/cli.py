@@ -220,9 +220,60 @@ def config(
 
 
 @app.command(name="world-sim")
-def world_sim(action: str = typer.Argument("state")):
-    """World Simulator controls: state | tick | start | reset (Sprint 9)."""
-    typer.echo("World Simulator not implemented yet (Sprint 9).")
+def world_sim(
+    action: str = typer.Argument(
+        "state",
+        help="state | tick | reset | accelerate | disaster | inspect",
+    ),
+    days: int = typer.Option(1, "--days", min=1, max=365, help="Days to advance"),
+    seed: int | None = typer.Option(None, "--seed", help="New world seed (reset)"),
+    scale: int = typer.Option(1, "--scale", min=1, max=10, help="Day-per-tick ratio"),
+    settlement: str | None = typer.Option(
+        None, "--settlement", help="Settlement id (disaster/inspect)"
+    ),
+    disaster_type: str | None = typer.Option(
+        None, "--type", help="flood | drought | plague"
+    ),
+):
+    """World Simulator controls (Sprint 9)."""
+    from app.services.world_sim import WorldSimulatorService
+
+    service = WorldSimulatorService()
+    if action == "state":
+        state = service.get_state()
+        typer.echo(json.dumps(state, indent=2, default=str))
+    elif action == "tick":
+        service.advance_day(days)
+        typer.echo(
+            f"Advanced {days} day(s). Day is now {service.get_state(0)['day_number']}."
+        )
+    elif action == "reset":
+        service.reset(seed)
+        typer.echo(f"World reset (seed={seed if seed is not None else 'default'}).")
+    elif action == "accelerate":
+        service.set_time_scale(scale)
+        typer.echo(f"Time scale set to {scale} days per tick.")
+    elif action == "disaster":
+        if not settlement or not disaster_type:
+            typer.echo("disaster requires --settlement and --type.", err=True)
+            raise typer.Exit(code=2)
+        service.trigger_disaster(settlement, disaster_type)
+        typer.echo(f"{disaster_type.title()} struck {settlement}.")
+    elif action == "inspect":
+        if not settlement:
+            typer.echo("inspect requires --settlement.", err=True)
+            raise typer.Exit(code=2)
+        detail = service.get_settlement(settlement)
+        if detail is None:
+            typer.echo(f"Unknown settlement: {settlement}", err=True)
+            raise typer.Exit(code=1)
+        typer.echo(json.dumps(detail, indent=2, default=str))
+    else:
+        typer.echo(
+            f"Unknown action: {action}. Use state|tick|reset|accelerate|disaster|inspect.",
+            err=True,
+        )
+        raise typer.Exit(code=2)
 
 
 @app.command()

@@ -16,6 +16,7 @@ from app.api.v1.projects import router as projects_router
 from app.api.v1.rag import router as rag_router
 from app.api.v1.security import router as security_router
 from app.api.v1.tests import router as tests_router
+from app.api.v1.world_sim import router as world_sim_router
 from app.api.v1.ws import router as ws_router
 from app.core.config import settings
 from app.core.logging import get_logger, setup_logging
@@ -104,3 +105,5 @@ app.include_router(tests_router, prefix="/api/v1")
 app.include_router(security_router, prefix="/api/v1")
 app.include_router(rag_router, prefix="/api/v1")
 app.include_router(ws_router, prefix="/api/v1")
+if settings.world_sim_enabled:
+    app.include_router(world_sim_router, prefix="/api/v1")

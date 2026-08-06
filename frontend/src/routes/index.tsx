@@ -4,6 +4,7 @@ import Layout from "../components/Layout";
 import Dashboard from "../pages/Dashboard";
 import KnowledgeExplorer from "../pages/KnowledgeExplorer";
 import Placeholder from "../pages/Placeholder";
+import WorldSimulatorPage from "../pages/WorldSimulatorPage";
 
 export function AppRoutes() {
   return (
@@ -14,6 +15,7 @@ export function AppRoutes() {
         <Route path="builds" element={<Placeholder title="Builds" />} />
         <Route path="security" element={<Placeholder title="Security" />} />
         <Route path="knowledge" element={<KnowledgeExplorer />} />
+        <Route path="world" element={<WorldSimulatorPage />} />
         <Route path="portfolio" element={<Placeholder title="Portfolio" />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
