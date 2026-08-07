@@ -12,10 +12,18 @@ from app.main import app
 def tmp_db(tmp_path, monkeypatch):
     """Redirect the database to a temp file and rebuild the engine."""
     monkeypatch.setattr(settings, "db_path", tmp_path / "test.db")
-    connection._engine = None
+    _dispose_engine()
     connection.init_db()
     yield tmp_path / "test.db"
+    _dispose_engine()
+
+
+def _dispose_engine() -> None:
+    """Close pooled SQLite connections so teardown leaks no ResourceWarnings."""
+    engine = connection._engine
     connection._engine = None
+    if engine is not None:
+        engine.dispose()
 
 
 @pytest.fixture()

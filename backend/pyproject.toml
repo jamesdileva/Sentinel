@@ -41,7 +41,15 @@ packages = ["app"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 norecursedirs = ["fixtures", "node_modules", ".venv"]
-addopts = "-q"
+addopts = "-q --cov=app --cov-report=term-missing"
+
+[tool.coverage.run]
+source = ["app"]
+omit = ["tests/*"]
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 90
 
 [tool.isort]
 profile = "black"
