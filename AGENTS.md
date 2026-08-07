@@ -70,3 +70,8 @@ These are the project's constitution. They must be upheld in every decision, cha
   `.sha256` (compose, Dockerfiles, nginx conf, `.env.example`, docs);
   `python scripts/build.py` builds both images (tests first unless
   `--skip-tests`).
+- **Laptop operations**: `docs/laptop.md` is the on-server checklist (SMB map,
+  compose commands, Pi-hole password, known issues); troubleshooting table in
+  docs/02 §13.4. Never start Pi-hole from Docker Desktop's UI (resets the
+  password), and never stop Docker wholesale on the laptop (Pi-hole is the
+  network DNS).

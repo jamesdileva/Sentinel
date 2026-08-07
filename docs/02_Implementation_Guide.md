@@ -1830,6 +1830,17 @@ unaffected.
 preferred. `python scripts/build.py` builds and verifies the two container
 images.
 
+**Troubleshooting (field-tested Sprint 12 deploy):**
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| `net use` → *error 67 network name not found* | Windows Firewall SMB-In rule for the **Private** profile is disabled | Desktop: `Enable-NetFirewallRule -Name FPS-SMB-In-TCP_1` (+ `FPS-NB_*-*_1`, `FPS-LLMNR-In-UDP` for discovery); Wi-Fi profile must be **Private** |
+| Docker build → *failed to calculate checksum ... "/frontend": not found* | `.dockerignore` excluded `frontend/` from the build context | Removed in v1.12.1; regression-tested by `test_packaging.py` (never exclude `frontend/`) |
+| Pi-hole dashboard *wrong password* after restart | Container started manually in Docker Desktop (env/volumes not applied) or volume path moved | Always start via `docker compose --profile pihole up -d`; then `docker compose exec pihole pihole setpassword` writes the hash into the persisted `pihole.toml` |
+| Internet dies when Docker stops | Pi-hole **is** the network DNS; stopping Docker stops DNS | Don't stop Docker wholesale — manage the stack via `docker compose --profile pihole up -d` |
+| `docker compose exec backend ...` → *service "backend" is not running* | A build failure (e.g. frontend) aborts `up`, so backend never starts | Fix the build error first; `docker compose up -d` again |
+| System page shows stale/no endpoints after `git pull` | Container still running an old image | `docker compose up -d --build` (compose only rebuilds when the image is missing) |
+
 ---
 
 ## 14. Data Access Patterns

@@ -62,3 +62,28 @@ def test_build_parser_flags():
     assert args2.skip_tests is True
     args3 = parser.parse_args(["--test"])
     assert args3.test_only is True
+
+
+def _dockerignore_lines() -> list[str]:
+    ignore = REPO_ROOT / ".dockerignore"
+    return [
+        line.strip()
+        for line in ignore.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
+
+
+def test_dockerignore_keeps_frontend_sources():
+    ignored = _dockerignore_lines()
+    assert "frontend/" not in ignored
+
+
+def test_dockerignore_excludes_runtime_and_build_artifacts():
+    ignored = _dockerignore_lines()
+    assert ignored_covers(ignored, "frontend/dist/")
+    assert ignored_covers(ignored, "node_modules/")
+    assert ignored_covers(ignored, "frontend/test-results/")
+
+
+def ignored_covers(ignored: list[str], pattern: str) -> bool:
+    return pattern in ignored or any(p.endswith(pattern) for p in ignored)
