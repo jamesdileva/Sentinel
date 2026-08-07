@@ -1482,18 +1482,36 @@ production and +10% rebuild speed per level beyond the first — settlements
 | `test_world_sim.py` | World Simulator isolation, event generation | `services/world_simulator.py` |
 | `test_portfolio.py` | Portfolio scoring (30/30/25/15), candidates, matrix, API | `services/portfolio_service.py` |
 | `test_observatory.py` | Galaxy shared-tech graph, timeline window/kinds/order/cap, architecture tree, API | `services/observatory_service.py` |
+| `test_rag_service.py` | RAG service: indexing, semantic search, grounded query, provenance | `services/rag_service.py`, `services/chroma_manager.py`, `services/ollama_service.py` |
+| `test_rag_api.py` | RAG endpoints, knowledge summaries | `api/v1/rag.py` |
+| `test_ollama_service.py` | Ollama client: generate/embed, fallbacks, availability | `services/ollama_service.py` |
+| `test_git_history.py` | Git log parsing, dedupe, Windows quoting | `services/git_history_service.py` |
+| `test_indexer.py` | Repo discovery, indexing, language/framework detection | `services/indexer.py` |
+| `test_quality.py` | Quality gates: formatting, lint, coverage | repo-wide |
+| `test_compose.py` | Docker Compose config validity | `docker-compose*.yml` |
+| `test_cli.py` | CLI commands (index, ask, rag-index, …) | `app/cli.py` |
+| `test_tasks.py` | Celery task registry, job envelope wiring | `tasks/*.py` |
+| `test_exceptions.py` | Error handlers and `ApiError` mapping | `core/exceptions.py`, `api/errors.py` |
+| `test_health.py` | Health endpoint, DB reachability | `api/v1/health.py` |
 | `test_e2e.py` | Full pipeline: index → scan → build → test → docgen → export | All components |
+
+> Sprint 11 result: 211 tests passing, 95.6% coverage (gate ≥ 80%), flake8/black/isort clean.
 
 ### 12.2. Frontend Tests (Vitest)
 
+Run with `npm test` (watch: `npm run test:watch`, coverage: `npm run test:coverage`).
+
 | Test Module | Focus |
 |------------|-------|
-| `Dashboard.test.tsx` | Stats rendering, quick action buttons |
-| `ProjectCard.test.tsx` | Project status display, health score |
-| `KnowledgeExplorer.test.tsx` | Search flow, filters, results |
-| `RagAssistant.test.tsx` | Chat interface, source display |
-| `GalaxyView.test.tsx` | Graph rendering, node interactions |
-| `WorldSimPanel.test.tsx` | Simulation state display, tick button |
+| `Dashboard.test.tsx` | Summary stats, error banner + Retry, WS channel status |
+| `HealthCard.test.tsx` | Score color bands, status chips, docs "none" state |
+| `FeatureMatrix.test.tsx` | Feature columns, symbol colors, empty state |
+| `ProjectTimeline.test.tsx` | Event rendering, window selector refetch, error state |
+| `ArchitectureMap.test.tsx` | Project list + tree load, selection switch, error state |
+| `ProjectGalaxy.test.tsx` | SVG node rendering, project vs tech node sizing, error state |
+| `ChatMessage.test.tsx` | User/assistant bubbles, source citations, error styling |
+| `RagChat.test.tsx` | Q&A exchange, loading indicator, disabled input, error path |
+| `Layout.test.tsx` | Brand + nav, dark-mode toggle, mobile sidebar overlay |
 
 ### 12.3. Test Fixtures
 
@@ -1509,16 +1527,32 @@ Location: `backend/tests/fixtures/`
 | `sample_secret_detection.json` | TruffleHog output fixture |
 | `sample_test_output.txt` | Pytest output for parsing |
 
-### 12.4. E2E Test Flow
+### 12.4. E2E Tests (Playwright)
 
-1. Start all services via `docker compose up`
-2. Add a project path to watch directories
-3. Trigger full index → verify project appears in database with language/framework detected
-4. Trigger security scan → verify findings stored
-5. Trigger build + test → verify logs and test results stored
-6. Ask RAG a question → verify answer is grounded in retrieved context
-7. View portfolio → verify health scores and portfolio ranking are correct
-8. (Optional) If World Simulator enabled: start simulation → verify events generated
+Location: `frontend/tests/e2e/`, config `frontend/playwright.config.ts`.
+Run with `cd frontend && npm run test:e2e`.
+
+The suite boots the real stack via Playwright `webServer`: the FastAPI backend
+(repo `backend/`, venv `backend/.venv`, real `data/sqlite/sentinel.db`, with
+`SENTINEL_AUTO_SCAN_ON_STARTUP=false` so tests see the persisted, deterministic
+DB contents instead of racing discovery indexing) plus the Vite dev server
+(`--host 127.0.0.1`, `/api` proxied to `:8000`). Ports 8000 and 5173 are reused
+when already running.
+
+| Spec | Flow |
+|------|------|
+| `health.spec.ts` | Backend healthy through the Vite proxy; dashboard renders stats + indexed projects |
+| `observatory.spec.ts` | Galaxy graph + shared-tech list, activity timeline, architecture project picker |
+| `portfolio.spec.ts` | Health cards with deterministic scores, feature matrix table |
+
+Manual run:
+
+1. Start services: `cd backend && .\.venv\Scripts\python.exe -m uvicorn app.main:app` (+ `cd frontend && npm run dev -- --host 127.0.0.1`), or let Playwright spawn them.
+2. Run the suite: `cd frontend && npm run test:e2e`.
+
+Acceptance criteria (Sprint 11, docs/03 §753): backend coverage ≥ 80%, every API
+endpoint integration-tested (200/404/400), frontend unit tests for all
+components, E2E covering key user workflows.
 
 ---
 
@@ -1838,6 +1872,7 @@ relationships aren't persisted, so they're intentionally absent.
 
 | Date | Version | Change | Author |
 |------|---------|--------|--------|
+| 2026-08-06 | 1.11 | Sprint 11 (Testing & QA): §12 rewritten — 12.1 backend table (19 test modules, 211 passing, 95.6% coverage incl. CLI/tasks/exceptions/repositories/parsers/e2e), 12.2 frontend Vitest suite (29 tests across 9 component/page suites, jsdom, jest-dom setup `src/test/setup.ts`, `vitest.config.ts`), 12.4 Playwright E2E (`playwright.config.ts` spawns backend venv uvicorn with `SENTINEL_AUTO_SCAN_ON_STARTUP=false` + Vite dev `--host 127.0.0.1` via webServer; `tests/e2e/{health,portfolio,observatory}.spec.ts`, 7 specs). Frontend `api/client.ts` timeout 10s→30s (portfolio recompute on larger local DBs can exceed 10s). `npm test`, `npm run test:e2e`, `npm run typecheck`, `vite build` all green | User + AI agent |
 | 2026-08-05 | 1.10.1 | Sprint 10.5 (Observatory): new §2.11 endpoint docs (`GET /observatory/galaxy|timeline?days=|architecture/{id}`), new §14.6 Observatory — `ObservatoryService` (`backend/app/services/observatory_service.py`): galaxy = project nodes + shared tech nodes (framework + `Dependency.name`, 2+ projects: tech, links tech-sorted), timeline = `project-created`/`commit`/`build`/`test`/`finding` from `created_at`/`GitCommit.timestamp`/`BuildLog.started_at`/`TestResult.run_at`/`SecurityFinding.detected_at`, naive-UTC cutoff, descending, cap 500, messages clipped to 120 chars; architecture = recursive tree from indexed file paths (dirs-first, count = files beneath, leaf = 1, root = total files), 404 on unknown project. Router `api/v1/observatory.py` registered in `main.py`; schemas `observatory.py` (`GalaxyGraph`/`GalaxyNode`/`GalaxyLink`, `Timeline`/`TimelineEvent`, `ArchitectureNode`, exported). Tests: `tests/test_observatory.py` (11 tests: galaxy shared-tech filtering, timeline window/order/cap/exclusion, tree nesting + counts, `_clip`, API galaxy/timeline/architecture + 404, in-memory SQLite, dependency override). §2.6 stale never-built `/projects/{id}/timeline` replaced by a pointer to §2.11. Full suite 152 green; black/isort/flake8 clean on new files; `npm run build` clean. Frontend: `/observatory` route + nav item, `pages/Observatory.tsx` (Galaxy + Timeline + Architecture sections), `components/ProjectGalaxy.tsx` (plain SVG node-link graph), `ProjectTimeline.tsx` (kind-colored dots + days-window selector), `ArchitectureMap.tsx` (project dropdown + indented tree), `api/observatory.ts` on shared axios client; `types/index.ts` observatory interfaces | User + AI agent |
 | 2026-08-05 | 1.10 | Sprint 10 (Portfolio Intelligence): §2.7 rewritten to the shipped endpoints (`/portfolio/scores`, `/best-candidates?min_score=`, `/feature-matrix`), new §14.5 Portfolio Intelligence — `PortfolioService` (`backend/app/services/portfolio_service.py`, deterministic 30/30/25/15 formula, missing = 0; build latest log success/failure/pending, tests pass ratio, security severity penalties, docs = README/Markdown/`docs/` file ratio; recompute-on-read + upsert to `PortfolioScore`), router `backend/app/api/v1/portfolio.py` registered in `main.py`, `tests/test_portfolio.py` (12 tests, in-memory SQLite, API via dependency override). Frontend: `pages/Portfolio.tsx` (health grid, best candidates, feature matrix), `components/HealthCard.tsx`, `components/FeatureMatrix.tsx`, `api/portfolio.ts` aligned to backend schemas, `/portfolio` route now real (nav item already existed). Observatory (galaxy/timeline/architecture) deferred to Sprint 10.5 | User + AI agent |
 | 2026-08-05 | 1.9.1 | Sprint 9 closeout (eero→Pi-hole DNS handoff): §13.3 verification extended with the network-wide blocking steps — eero app Custom DNS (IPv4 primary `192.168.4.40` Pi-hole, secondary `192.168.4.1` fallback, IPv6 empty), leave DHCP/NAT on Automatic and eero Secure off, verify via `ipconfig`/DNS showing `192.168.4.40` + `nslookup doubleclick.net` → `0.0.0.0`; Pi-hole v6 login notes (password-only form is normal for the single admin user; `FTLCONF_webpassword` is only applied at first boot, so a stale container shows "wrong password" — reset via `docker exec -it sentinel-pihole-1 pihole setpassword`, container name is `sentinel-pihole-1` not `pihole`) | User + AI agent |

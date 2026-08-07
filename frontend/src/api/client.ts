@@ -14,7 +14,9 @@ export class ApiError extends Error {
 
 export const api = axios.create({
   baseURL: "/api",
-  timeout: 10_000,
+  // Portfolio scoring recomputes every project's health on read, which can
+  // take a while on larger local portfolios — keep a generous default.
+  timeout: 30_000,
   headers: { "Content-Type": "application/json" },
 });
 
