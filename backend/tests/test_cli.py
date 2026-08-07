@@ -166,10 +166,45 @@ def test_rag_index_ok(project_id, monkeypatch):
 # --- portfolio / health / initdb / config -------------------------------------
 
 
-def test_portfolio_stub():
+def test_portfolio_empty(tmp_db):
     result = runner.invoke(cli.app, ["portfolio"])
     assert result.exit_code == 0
-    assert "not implemented" in result.output
+    assert "No indexed projects" in result.output
+
+
+def test_portfolio_shows_scores(project_id, monkeypatch):
+    from app.services import portfolio_service
+
+    class FakeRow:
+        pass
+
+    row = FakeRow()
+    row.project_id = project_id
+    row.portfolio_score = 55.0
+    row.build_status = "success"
+    row.test_status = "success"
+    row.documentation_pct = 20
+    row.security_status = "pending"
+
+    monkeypatch.setattr(
+        portfolio_service.PortfolioService, "scores", lambda self: [row]
+    )
+    result = runner.invoke(cli.app, ["portfolio"])
+    assert result.exit_code == 0
+    assert "55.0" in result.output
+    assert "success" in result.output
+
+
+def test_docs_lists_doc_files(project_id):
+    result = runner.invoke(cli.app, ["docs", project_id])
+    assert result.exit_code == 0
+    assert "Documentation for" in result.output
+
+
+def test_docs_unknown_project(tmp_db):
+    result = runner.invoke(cli.app, ["docs", "missing"])
+    assert result.exit_code == 1
+    assert "Unknown project" in result.output
 
 
 def test_health_ok(tmp_db):
@@ -214,7 +249,10 @@ def test_config_unknown_action():
 
 class FakeWorld:
     def get_state(self, day=None):
-        return {"day_number": 3, "seed": 7}
+        return {"day_number": 3, "seed": 7, "settlements": [{"id": "s1"}]}
+
+    def ensure_world(self):
+        return None
 
     def advance_day(self, days):
         return None
@@ -243,6 +281,12 @@ def test_world_sim_state(fake_world):
     result = runner.invoke(cli.app, ["world-sim", "state"])
     assert result.exit_code == 0
     assert '"day_number": 3' in result.output
+
+
+def test_world_sim_start(fake_world):
+    result = runner.invoke(cli.app, ["world-sim", "start"])
+    assert result.exit_code == 0
+    assert "World started" in result.output
 
 
 def test_world_sim_tick(fake_world):

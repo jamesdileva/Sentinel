@@ -64,5 +64,10 @@ class Settings(BaseSettings):
     world_sim_model: str = "gemma2"
     world_sim_ai_narratives: bool = True
 
+    # Home server status (Sprint 12 System page). Read-only; never toggles.
+    pihole_host: str = ""  # e.g. http://192.168.4.40:8053
+    pihole_api_token: str = ""  # Pi-hole v6 API token (system web → API token)
+    max_recent_ollama_queries: int = 20
+
 
 settings = Settings()

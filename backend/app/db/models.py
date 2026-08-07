@@ -164,6 +164,23 @@ class KnowledgeSummary(SQLModel, table=True):
     project: Project = Relationship(back_populates="knowledge_summaries")
 
 
+class OllamaQueryLog(SQLModel, table=True):
+    """Deterministic record of each Ollama generation (System page, Sprint 12).
+
+    Powers tokens/sec and latency readouts. Written on every RAG answer and
+    project summary; no AI involvement — just Ollama's own counters.
+    """
+
+    id: str = Field(default_factory=_uuid, primary_key=True)
+    model: str
+    prompt_chars: int = 0
+    response_chars: int = 0
+    eval_count: int = 0
+    eval_duration_ns: int = 0
+    total_duration_ns: int = 0
+    created_at: datetime.datetime = Field(default_factory=_utcnow)
+
+
 class PortfolioScore(SQLModel, table=True):
     id: str = Field(default_factory=_uuid, primary_key=True)
     project_id: str = Field(foreign_key="project.id", unique=True)

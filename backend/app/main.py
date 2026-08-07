@@ -17,12 +17,14 @@ from app.api.v1.portfolio import router as portfolio_router
 from app.api.v1.projects import router as projects_router
 from app.api.v1.rag import router as rag_router
 from app.api.v1.security import router as security_router
+from app.api.v1.system import router as system_router
 from app.api.v1.tests import router as tests_router
 from app.api.v1.world_sim import router as world_sim_router
 from app.api.v1.ws import router as ws_router
 from app.core.config import settings
 from app.core.logging import get_logger, setup_logging
 from app.db.connection import check_db, get_engine, init_db
+from app.services.startup_check import run_startup_checks
 
 setup_logging()
 logger = get_logger(__name__)
@@ -49,6 +51,7 @@ def _background_initial_scan() -> None:
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     init_db()
+    run_startup_checks()
     if settings.auto_scan_on_startup:
         threading.Thread(
             target=_background_initial_scan, daemon=True, name="sentinel-scan"
@@ -107,6 +110,7 @@ app.include_router(observatory_router, prefix="/api/v1")
 app.include_router(builds_router, prefix="/api/v1")
 app.include_router(tests_router, prefix="/api/v1")
 app.include_router(security_router, prefix="/api/v1")
+app.include_router(system_router, prefix="/api/v1")
 app.include_router(rag_router, prefix="/api/v1")
 app.include_router(ws_router, prefix="/api/v1")
 if settings.world_sim_enabled:

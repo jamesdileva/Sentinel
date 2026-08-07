@@ -218,7 +218,7 @@ class RagService:
             framework=project.framework or "unknown",
             context=context or "No file content available.",
         )
-        content = self._llm(prompt)
+        content = self._generate_with_metrics(prompt)
         if not content:
             return 0
         summary = KnowledgeSummary(
@@ -325,7 +325,7 @@ class RagService:
             for i, s in enumerate(sources, start=1)
         )
         prompt = _ANSWER_TEMPLATE.format(context=context, question=question)
-        answer = self._llm(prompt)
+        answer = self._generate_with_metrics(prompt)
         confidence = round(
             max(0.0, min(1.0, 1.0 - min(s.distance for s in sources))), 4
         )
@@ -338,6 +338,26 @@ class RagService:
         )
 
     # --- internals -------------------------------------------------------
+
+    def _generate_with_metrics(self, prompt: str) -> str:
+        """Generate and record deterministic metrics (System page t/s readout)."""
+        if self._llm is not self.ollama.generate:
+            return self._llm(prompt)
+        try:
+            result = self.ollama.generate_with_metrics(prompt)
+        except Exception:  # noqa: BLE001  (fall back to the plain path)
+            return self._llm(prompt)
+        from app.services.system_service import OllamaStatus
+
+        OllamaStatus(session=self.session).record_query(
+            model=result["model"],
+            prompt=prompt,
+            response=result["response"],
+            eval_count=result["eval_count"],
+            eval_duration_ns=result["eval_duration_ns"],
+            total_duration_ns=result["total_duration_ns"],
+        )
+        return result["response"]
 
     def _embed(self, text: str) -> list[float]:
         return self._embedder(text)

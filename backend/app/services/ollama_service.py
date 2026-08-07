@@ -43,6 +43,23 @@ class OllamaService:
         temperature: float = 0.3,
     ) -> str:
         """Generate a text completion for the given prompt."""
+        return self.generate_with_metrics(
+            prompt, model=model, max_tokens=max_tokens, temperature=temperature
+        )["response"]
+
+    def generate_with_metrics(
+        self,
+        prompt: str,
+        model: str | None = None,
+        max_tokens: int = 500,
+        temperature: float = 0.3,
+    ) -> dict:
+        """Generate and return text plus Ollama's own perf counters.
+
+        The `metrics` dict carries eval_count / eval_duration / total_duration
+        (nanoseconds) as reported by Ollama — used by the System page to show
+        tokens/sec without any guesswork (docs/02 §7.3).
+        """
         model = model or settings.ollama_model
         payload = {
             "model": model,
@@ -56,7 +73,14 @@ class OllamaService:
         try:
             response = self._client.post("/api/generate", json=payload)
             response.raise_for_status()
-            return str(response.json().get("response", "")).strip()
+            data = response.json()
+            return {
+                "response": str(data.get("response", "")).strip(),
+                "model": data.get("model") or model,
+                "eval_count": int(data.get("eval_count") or 0),
+                "eval_duration_ns": int(data.get("eval_duration") or 0),
+                "total_duration_ns": int(data.get("total_duration") or 0),
+            }
         except httpx.HTTPError as exc:
             logger.warning("Ollama generate failed: %s", exc)
             raise OllamaUnavailableError(f"Ollama generate failed: {exc}") from exc

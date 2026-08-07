@@ -50,3 +50,23 @@ These are the project's constitution. They must be upheld in every decision, cha
 - API routes are versioned: `/api/v1/...`
 - Status/read endpoints use GET; state-changing actions use POST
 - Never commit secrets, `.env`, or `data/` content (see `.gitignore`)
+
+## Deployment (Sprint 12)
+
+- **One compose file is the single source of truth** (`docker-compose.yml`):
+  backend, frontend (nginx, served at `:8080`), worker, scheduler, redis,
+  plus the optional `ollama`/`pihole` profiles. `docker-compose.dev.yml` holds
+  dev overrides (source mount + reload) and is loaded **only** by
+  `python scripts/dev.py` — a bare `docker compose up` on the laptop is prod.
+- **Laptop (192.168.4.40) is the always-on home server**: runbook in
+  docs/02 §13.4, dashboard at `http://192.168.4.40:8080` from any LAN device.
+- **Env overrides**: `SENTINEL_OLLAMA_HOST`, `SENTINEL_PROJECTS_DIR` (SMB share
+  to the desktop's projects), `SENTINEL_PIHOLE_HOST`/`SENTINEL_PIHOLE_API_TOKEN`,
+  `SENTINEL_API_PORT` — see `.env.example`.
+- **System page**: `/system` is a read-only home snapshot (Ollama availability/
+  models/tokens-per-sec + Pi-hole stats + startup checks). Per Rule 2 it never
+  toggles anything server-side.
+- **Release tooling**: `python scripts/release.py` → `dist/sentinel-<v>.zip` +
+  `.sha256` (compose, Dockerfiles, nginx conf, `.env.example`, docs);
+  `python scripts/build.py` builds both images (tests first unless
+  `--skip-tests`).

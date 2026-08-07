@@ -6,6 +6,7 @@ import KnowledgeExplorer from "../pages/KnowledgeExplorer";
 import Observatory from "../pages/Observatory";
 import Placeholder from "../pages/Placeholder";
 import Portfolio from "../pages/Portfolio";
+import System from "../pages/System";
 import WorldSimulatorPage from "../pages/WorldSimulatorPage";
 
 export function AppRoutes() {
@@ -20,6 +21,7 @@ export function AppRoutes() {
         <Route path="world" element={<WorldSimulatorPage />} />
         <Route path="portfolio" element={<Portfolio />} />
         <Route path="observatory" element={<Observatory />} />
+        <Route path="system" element={<System />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>

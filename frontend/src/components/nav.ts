@@ -7,4 +7,5 @@ export const NAV_ITEMS = [
   { to: "/world", label: "World", icon: "♁" },
   { to: "/portfolio", label: "Portfolio", icon: "◆" },
   { to: "/observatory", label: "Observatory", icon: "✧" },
+  { to: "/system", label: "System", icon: "⚙" },
 ] as const;

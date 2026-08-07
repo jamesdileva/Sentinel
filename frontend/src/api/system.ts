@@ -1,0 +1,50 @@
+import { api } from "./client";
+
+export interface OllamaQueryRecord {
+  model: string;
+  prompt_chars: number;
+  response_chars: number;
+  eval_count: number;
+  eval_duration_ns: number;
+  total_duration_ns: number;
+  tokens_per_second: number | null;
+  latency_ms: number;
+  created_at: string;
+}
+
+export interface OllamaStatus {
+  available: boolean;
+  host: string;
+  model_default: string;
+  models: string[];
+  recent: OllamaQueryRecord[];
+}
+
+export interface PiHoleStatus {
+  configured: boolean;
+  host: string;
+  blocking: string | null;
+  queries_total: number | null;
+  queries_blocked: number | null;
+  blocked_percent: number | null;
+  clients: number | null;
+  error: string | null;
+}
+
+export interface SystemStartupState {
+  name: string;
+  ok: boolean;
+  detail: string;
+}
+
+export interface SystemOverview {
+  generated_at: string;
+  startup: { states: SystemStartupState[] };
+  ollama: OllamaStatus;
+  pihole: PiHoleStatus;
+}
+
+export async function getSystemOverview(): Promise<SystemOverview> {
+  const { data } = await api.get<SystemOverview>("/v1/system/overview");
+  return data;
+}

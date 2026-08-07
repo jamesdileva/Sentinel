@@ -4,10 +4,16 @@
 # (192.168.4.40) hosts Pi-hole (ad blocking) and Ollama (shared AI); this
 # compose file is the single source of truth, deployed on both machines.
 #
-# Default `docker compose up` starts backend + redis (+ worker/scheduler).
-# Add AI:  docker compose --profile ollama up   (local fallback only)
-# Ad-block: docker compose --profile pihole up   (deployed on the laptop)
-# Dev mode: docker compose.override.yml is merged automatically.
+# Default `docker compose up` starts backend + frontend + redis
+# (+ worker/scheduler). Add AI: `--profile ollama` (local fallback only).
+# Ad-block: `--profile pihole` (deployed on the laptop).
+# Dev mode: docker-compose.override.yml is merged automatically.
+#
+# Overridable via a gitignored `.env` (see .env.example):
+#   SENTINEL_OLLAMA_HOST      AI host (default: shared laptop Ollama)
+#   SENTINEL_PROJECTS_DIR     host path mounted at /data/projects — point this
+#                             at an SMB share on the laptop to index projects
+#                             that stay on another machine.
 
 services:
   backend:
@@ -15,18 +21,30 @@ services:
       context: .
       dockerfile: docker/backend/Dockerfile
     ports:
-      - "8000:8000"
+      - "${SENTINEL_API_PORT:-8000}:8000"
     volumes:
       - ./data:/data
-      - ./data/projects:/data/projects
+      - "${SENTINEL_PROJECTS_DIR:-./data/projects}:/data/projects"
     environment:
       SENTINEL_DB_PATH: /data/sqlite/sentinel.db
       SENTINEL_CHROMA_PATH: /data/chroma
-      SENTINEL_OLLAMA_HOST: http://192.168.4.40:11434
+      SENTINEL_OLLAMA_HOST: ${SENTINEL_OLLAMA_HOST:-http://192.168.4.40:11434}
       SENTINEL_WATCH_DIRS: '["/data/projects"]'
       SENTINEL_REDIS_URL: redis://redis:6379/0
     depends_on:
       - redis
+    restart: unless-stopped
+
+  # Production web dashboard — multi-stage Node build + nginx (Sprint 12).
+  # Serves the app at http://<host>:8080 and proxies /api to backend.
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/frontend/Dockerfile
+    ports:
+      - "8080:80"
+    depends_on:
+      - backend
     restart: unless-stopped
 
   # Celery worker — consumes build/test/scan jobs enqueued by the API (Sprint 7).
@@ -37,11 +55,11 @@ services:
     command: ["celery", "-A", "app.tasks.celery_app", "worker", "--loglevel=INFO", "-P", "solo"]
     volumes:
       - ./data:/data
-      - ./data/projects:/data/projects
+      - "${SENTINEL_PROJECTS_DIR:-./data/projects}:/data/projects"
     environment:
       SENTINEL_DB_PATH: /data/sqlite/sentinel.db
       SENTINEL_CHROMA_PATH: /data/chroma
-      SENTINEL_OLLAMA_HOST: http://192.168.4.40:11434
+      SENTINEL_OLLAMA_HOST: ${SENTINEL_OLLAMA_HOST:-http://192.168.4.40:11434}
       SENTINEL_WATCH_DIRS: '["/data/projects"]'
       SENTINEL_REDIS_URL: redis://redis:6379/0
     depends_on:

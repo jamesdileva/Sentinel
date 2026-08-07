@@ -172,8 +172,58 @@ def rag_index(
 
 @app.command()
 def portfolio():
-    """Show portfolio scores for all projects."""
-    typer.echo("Portfolio service not implemented yet (Sprint 10).")
+    """Show portfolio scores across all projects (deterministic, no AI)."""
+    from sqlmodel import Session
+
+    from app.db.connection import get_engine
+    from app.repositories import ProjectRepository
+    from app.services.portfolio_service import PortfolioService
+
+    with Session(get_engine()) as session:
+        rows = PortfolioService(session).scores()
+        if not rows:
+            typer.echo("No indexed projects yet. Run `sentinel index <path>` first.")
+            return
+        names = {p.id: p.name for p in ProjectRepository(session).list()}
+        header = (
+            f"{'Project':<28} {'Score':>5}  {'Build':<12} {'Test':<12} "
+            f"{'Docs':>4}  Security"
+        )
+        typer.echo(header)
+        typer.echo("-" * len(header))
+        for row in sorted(rows, key=lambda r: r.portfolio_score, reverse=True):
+            typer.echo(
+                f"{names.get(row.project_id, row.project_id):<28} "
+                f"{row.portfolio_score:>5}  "
+                f"{row.build_status:<12} {row.test_status:<12} "
+                f"{row.documentation_pct:>3}%  {row.security_status}"
+            )
+
+
+@app.command()
+def docs(project_id: str):
+    """List documentation files for a project (deterministic)."""
+    from sqlmodel import Session
+
+    from app.db.connection import get_engine
+    from app.repositories import ProjectFileRepository, ProjectRepository
+    from app.services.portfolio_service import is_doc_path
+
+    with Session(get_engine()) as session:
+        project = ProjectRepository(session).get(project_id)
+        if project is None:
+            typer.echo(f"Unknown project: {project_id}", err=True)
+            raise typer.Exit(code=1)
+        files = ProjectFileRepository(session).get_by_project(project_id)
+        doc_files = [f for f in files if is_doc_path(f.path)]
+        total = len(files)
+        pct = int(round(100.0 * len(doc_files) / total)) if total else 0
+        typer.echo(
+            f"Documentation for {project.name}: "
+            f"{len(doc_files)}/{total} files ({pct}%)"
+        )
+        for f in doc_files:
+            typer.echo(f"  {f.path}")
 
 
 @app.command()
@@ -223,7 +273,7 @@ def config(
 def world_sim(
     action: str = typer.Argument(
         "state",
-        help="state | tick | reset | accelerate | disaster | inspect",
+        help="start | state | tick | reset | accelerate | disaster | inspect",
     ),
     days: int = typer.Option(1, "--days", min=1, max=365, help="Days to advance"),
     seed: int | None = typer.Option(None, "--seed", help="New world seed (reset)"),
@@ -239,7 +289,14 @@ def world_sim(
     from app.services.world_sim import WorldSimulatorService
 
     service = WorldSimulatorService()
-    if action == "state":
+    if action == "start":
+        service.ensure_world()
+        state = service.get_state(0)
+        typer.echo(
+            f"World started: day={state['day_number']}, "
+            f"settlements={len(state.get('settlements', []))}"
+        )
+    elif action == "state":
         state = service.get_state()
         typer.echo(json.dumps(state, indent=2, default=str))
     elif action == "tick":
@@ -270,7 +327,7 @@ def world_sim(
         typer.echo(json.dumps(detail, indent=2, default=str))
     else:
         typer.echo(
-            f"Unknown action: {action}. Use state|tick|reset|accelerate|disaster|inspect.",
+            f"Unknown action: {action}. Use start|state|tick|reset|accelerate|disaster|inspect.",
             err=True,
         )
         raise typer.Exit(code=2)

@@ -1770,6 +1770,68 @@ The desktop's running stack picks up the new host on the next
 
 ---
 
+## 13.4. Home Server Deployment (Sprint 12)
+
+The laptop is the always-on home server: it hosts the full Sentinel stack,
+Pi-hole, and Ollama. After the one-time setup below the whole application is
+reachable at **http://192.168.4.40:8080** from any device on the LAN — no
+terminal commands, no npm, no Tauri (the dashboard is a web app served by the
+`frontend` nginx container).
+
+**One-time laptop setup:**
+
+```powershell
+git clone https://github.com/jamesdileva/Sentinel.git
+cd Sentinel
+
+# .env is gitignored — create it on the laptop:
+#   SENTINEL_OLLAMA_HOST=http://192.168.4.40:11434   (native Ollama, same host)
+#   SENTINEL_PROJECTS_DIR=\\192.168.4.28\projects    (SMB share from the desktop)
+#   SENTINEL_PIHOLE_HOST=http://192.168.4.40:8053    (System page, optional)
+#   SENTINEL_PIHOLE_API_TOKEN=<Pi-hole v6 API token> (optional, read-only)
+#   PIHOLE_WEBPASSWORD=<same as Pi-hole admin>       (compose profile)
+
+docker compose --profile pihole up -d
+```
+
+`docker compose up` (without `-f docker-compose.dev.yml`) runs **production**:
+dev overrides are only merged by `python scripts/dev.py` on a workstation
+(§5.2). The stack restarts on boot (`restart: unless-stopped`).
+
+**Projects from the desktop via SMB (no second copy):**
+
+1. On the desktop share a folder containing the repos (e.g. right-click the
+   `projects` folder → Properties → Sharing → Share). Note the network path
+   `\\192.168.4.28\projects`.
+2. On the laptop map the share: `net use P: \\192.168.4.28\projects /persistent:yes`
+   (or mount it inside Docker Desktop's file-sharing settings).
+3. Set `SENTINEL_PROJECTS_DIR=P:\` in the laptop `.env` — containers mount it
+   at `/data/projects` and `SENTINEL_WATCH_DIRS=["/data/projects"]` finds every
+   `.git` repo on the share.
+
+The laptop keeps its own `data/sqlite/sentinel.db` and `data/chroma` (the
+desktop's indexes do not transfer); after first boot run
+`docker compose exec backend sentinel index --all` to build the laptop's
+database from the shared projects.
+
+**System page (Sprint 12):**
+
+`http://192.168.4.40:8080/system` shows read-only status for Ollama
+(availability, installed models, tokens/sec of recent generations) and Pi-hole
+(blocking state, queries today, blocked counts) plus backend startup checks.
+Pi-hole interop is a read-only v6 API client (`X-FTL-API-KEY`) — per Project
+Rule 2 it never toggles blocking. When `SENTINEL_PIHOLE_HOST`/`TOKEN` are
+unset the panel reports "not configured" and the rest of Sentinel is
+unaffected.
+
+**Release artifacts:** `python scripts/release.py` produces
+`dist/sentinel-<version>.zip` + `.sha256` (compose, Dockerfiles, nginx conf,
+`.env.example`, docs) — copy that archive to the laptop instead of cloning if
+preferred. `python scripts/build.py` builds and verifies the two container
+images.
+
+---
+
 ## 14. Data Access Patterns
 
 | Consumer | Source | Access Method |
@@ -1872,7 +1934,7 @@ relationships aren't persisted, so they're intentionally absent.
 
 | Date | Version | Change | Author |
 |------|---------|--------|--------|
-| 2026-08-06 | 1.11 | Sprint 11 (Testing & QA): §12 rewritten — 12.1 backend table (19 test modules, 211 passing, 95.6% coverage incl. CLI/tasks/exceptions/repositories/parsers/e2e), 12.2 frontend Vitest suite (29 tests across 9 component/page suites, jsdom, jest-dom setup `src/test/setup.ts`, `vitest.config.ts`), 12.4 Playwright E2E (`playwright.config.ts` spawns backend venv uvicorn with `SENTINEL_AUTO_SCAN_ON_STARTUP=false` + Vite dev `--host 127.0.0.1` via webServer; `tests/e2e/{health,portfolio,observatory}.spec.ts`, 7 specs). Frontend `api/client.ts` timeout 10s→30s (portfolio recompute on larger local DBs can exceed 10s). `npm test`, `npm run test:e2e`, `npm run typecheck`, `vite build` all green | User + AI agent |
+| 2026-08-06 | 1.12 | Sprint 12 (Home Server + System page): §13.4 new home-server runbook — laptop runs full stack from one compose file; `frontend` nginx container (docker/frontend/Dockerfile multi-stage → nginx, `8080:80`, `/api` + WS proxy to backend) serves the dashboard at `http://192.168.4.40:8080`; dev overrides moved to explicit `docker-compose.dev.yml` (prod default); `SENTINEL_API_PORT`/`SENTINEL_PROJECTS_DIR`/`SENTINEL_OLLAMA_HOST` env-overridable (SMB projects share = no second copy). Backend: startup validation `services/startup_check.py` (database/chroma/watch dirs/ollama), System page surface — `OllamaQueryLog` table, `generate_with_metrics` (eval_count/eval_duration → tokens/sec), `OllamaStatus`/`PiHoleStatus`/`system_overview`, router `api/v1/system.py` (read-only), Pi-hole v6 read-only client (`X-FTL-API-KEY`). CLI finalized per §12.6: `portfolio` wired to `PortfolioService`, new `docs <id>`, `world-sim start`. Packaging: `scripts/build.py` + `scripts/release.py` (zip + sha256). Frontend: `/system` page + nav item + `ErrorBoundary`. Tests: §12 update — test_compose (prod/dev split + frontend service), test_system_service (8), test_startup_check (5), test_packaging (5), System page vitest (4), ErrorBoundary vitest (3), e2e system.spec (2); 238 backend / 36 vitest / 9 e2e | User + AI agent |
 | 2026-08-05 | 1.10.1 | Sprint 10.5 (Observatory): new §2.11 endpoint docs (`GET /observatory/galaxy|timeline?days=|architecture/{id}`), new §14.6 Observatory — `ObservatoryService` (`backend/app/services/observatory_service.py`): galaxy = project nodes + shared tech nodes (framework + `Dependency.name`, 2+ projects: tech, links tech-sorted), timeline = `project-created`/`commit`/`build`/`test`/`finding` from `created_at`/`GitCommit.timestamp`/`BuildLog.started_at`/`TestResult.run_at`/`SecurityFinding.detected_at`, naive-UTC cutoff, descending, cap 500, messages clipped to 120 chars; architecture = recursive tree from indexed file paths (dirs-first, count = files beneath, leaf = 1, root = total files), 404 on unknown project. Router `api/v1/observatory.py` registered in `main.py`; schemas `observatory.py` (`GalaxyGraph`/`GalaxyNode`/`GalaxyLink`, `Timeline`/`TimelineEvent`, `ArchitectureNode`, exported). Tests: `tests/test_observatory.py` (11 tests: galaxy shared-tech filtering, timeline window/order/cap/exclusion, tree nesting + counts, `_clip`, API galaxy/timeline/architecture + 404, in-memory SQLite, dependency override). §2.6 stale never-built `/projects/{id}/timeline` replaced by a pointer to §2.11. Full suite 152 green; black/isort/flake8 clean on new files; `npm run build` clean. Frontend: `/observatory` route + nav item, `pages/Observatory.tsx` (Galaxy + Timeline + Architecture sections), `components/ProjectGalaxy.tsx` (plain SVG node-link graph), `ProjectTimeline.tsx` (kind-colored dots + days-window selector), `ArchitectureMap.tsx` (project dropdown + indented tree), `api/observatory.ts` on shared axios client; `types/index.ts` observatory interfaces | User + AI agent |
 | 2026-08-05 | 1.10 | Sprint 10 (Portfolio Intelligence): §2.7 rewritten to the shipped endpoints (`/portfolio/scores`, `/best-candidates?min_score=`, `/feature-matrix`), new §14.5 Portfolio Intelligence — `PortfolioService` (`backend/app/services/portfolio_service.py`, deterministic 30/30/25/15 formula, missing = 0; build latest log success/failure/pending, tests pass ratio, security severity penalties, docs = README/Markdown/`docs/` file ratio; recompute-on-read + upsert to `PortfolioScore`), router `backend/app/api/v1/portfolio.py` registered in `main.py`, `tests/test_portfolio.py` (12 tests, in-memory SQLite, API via dependency override). Frontend: `pages/Portfolio.tsx` (health grid, best candidates, feature matrix), `components/HealthCard.tsx`, `components/FeatureMatrix.tsx`, `api/portfolio.ts` aligned to backend schemas, `/portfolio` route now real (nav item already existed). Observatory (galaxy/timeline/architecture) deferred to Sprint 10.5 | User + AI agent |
 | 2026-08-05 | 1.9.1 | Sprint 9 closeout (eero→Pi-hole DNS handoff): §13.3 verification extended with the network-wide blocking steps — eero app Custom DNS (IPv4 primary `192.168.4.40` Pi-hole, secondary `192.168.4.1` fallback, IPv6 empty), leave DHCP/NAT on Automatic and eero Secure off, verify via `ipconfig`/DNS showing `192.168.4.40` + `nslookup doubleclick.net` → `0.0.0.0`; Pi-hole v6 login notes (password-only form is normal for the single admin user; `FTLCONF_webpassword` is only applied at first boot, so a stale container shows "wrong password" — reset via `docker exec -it sentinel-pihole-1 pihole setpassword`, container name is `sentinel-pihole-1` not `pihole`) | User + AI agent |
