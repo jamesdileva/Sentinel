@@ -12,8 +12,11 @@
 # Overridable via a gitignored `.env` (see .env.example):
 #   SENTINEL_OLLAMA_HOST      AI host (default: shared laptop Ollama)
 #   SENTINEL_PROJECTS_DIR     host path mounted at /data/projects — point this
-#                             at an SMB share on the laptop to index projects
-#                             that stay on another machine.
+#                             at a local folder (laptop) or leave as ./data/projects
+#                             (dev). On the laptop, repos are cloned/pulled here
+#                             from GitHub by the repo-sync beat task (Sprint 12.1).
+#   SENTINEL_GITHUB_TOKEN     read-only PAT; enables auto clone/pull of repos
+#   SENTINEL_PIHOLE_PASSWORD  used by the System page to auth to Pi-hole v6
 
 services:
   backend:
@@ -31,6 +34,10 @@ services:
       SENTINEL_OLLAMA_HOST: ${SENTINEL_OLLAMA_HOST:-http://192.168.4.40:11434}
       SENTINEL_WATCH_DIRS: '["/data/projects"]'
       SENTINEL_REDIS_URL: redis://redis:6379/0
+      SENTINEL_GITHUB_TOKEN: ${SENTINEL_GITHUB_TOKEN:-}
+      SENTINEL_SYNC_INTERVAL_MINUTES: ${SENTINEL_SYNC_INTERVAL_MINUTES:-15}
+      SENTINEL_PIHOLE_HOST: ${SENTINEL_PIHOLE_HOST:-}
+      SENTINEL_PIHOLE_PASSWORD: ${SENTINEL_PIHOLE_PASSWORD:-}
     depends_on:
       - redis
     restart: unless-stopped
@@ -62,6 +69,10 @@ services:
       SENTINEL_OLLAMA_HOST: ${SENTINEL_OLLAMA_HOST:-http://192.168.4.40:11434}
       SENTINEL_WATCH_DIRS: '["/data/projects"]'
       SENTINEL_REDIS_URL: redis://redis:6379/0
+      SENTINEL_GITHUB_TOKEN: ${SENTINEL_GITHUB_TOKEN:-}
+      SENTINEL_SYNC_INTERVAL_MINUTES: ${SENTINEL_SYNC_INTERVAL_MINUTES:-15}
+      SENTINEL_PIHOLE_HOST: ${SENTINEL_PIHOLE_HOST:-}
+      SENTINEL_PIHOLE_PASSWORD: ${SENTINEL_PIHOLE_PASSWORD:-}
     depends_on:
       - redis
     restart: unless-stopped

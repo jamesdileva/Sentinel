@@ -334,6 +334,38 @@ def world_sim(
 
 
 @app.command()
+def sync():
+    """Clone/pull all repos from GitHub into watch dirs, then re-index."""
+    from app.services.sync_service import run_sync
+
+    result = run_sync()
+    if result.get("skipped"):
+        typer.echo(
+            "SENTINEL_GITHUB_TOKEN is not configured - add it to the backend "
+            "environment to enable repo syncing.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+    if result.get("error"):
+        typer.echo(f"GitHub sync failed: {result['error']}", err=True)
+        raise typer.Exit(code=1)
+    typer.echo(
+        f"Synced GitHub repos: {len(result['cloned'])} cloned, "
+        f"{len(result['pulled'])} updated."
+    )
+    for name in result["cloned"]:
+        typer.echo(f"  + {name}")
+    for name in result["pulled"]:
+        typer.echo(f"  ~ {name}")
+    for name, reason in result["failed"].items():
+        typer.echo(f"  ! {name}: {reason}", err=True)
+    typer.echo(
+        f"Indexed {result['indexed']} project(s). "
+        f"Next auto-sync in {settings.sync_interval_minutes} minute(s)."
+    )
+
+
+@app.command()
 def version():
     """Show the Sentinel version."""
     typer.echo(__version__)

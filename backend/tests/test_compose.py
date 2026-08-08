@@ -107,6 +107,11 @@ def test_dockerfile_slim_and_uvicorn_cmd():
     assert 'CMD ["uvicorn", "app.main:app"' in content
 
 
+def test_dockerfile_installs_git_for_repo_sync():
+    content = DOCKERFILE.read_text(encoding="utf-8")
+    assert "apt-get install -y --no-install-recommends git" in content
+
+
 def test_frontend_dockerfile_multistage_nginx():
     content = FRONTEND_DOCKERFILE.read_text(encoding="utf-8")
     assert "FROM node:22-alpine AS build" in content

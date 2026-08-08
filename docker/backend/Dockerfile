@@ -6,6 +6,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+# git is required for repo-sync (Sprint 12.1: clone/pull from GitHub) and for
+# GitHistoryService commit indexing.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY backend/pyproject.toml /app/pyproject.toml
 COPY backend/app /app/app
 

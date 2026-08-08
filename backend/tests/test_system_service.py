@@ -32,7 +32,7 @@ def _ollama_ok() -> OllamaService:
 
 
 def test_pihole_report_without_config():
-    client = PiHoleStatus(host="", token="")
+    client = PiHoleStatus(host="", password="")
     report = client.report()
     assert report["configured"] is False
     assert report["error"] is not None
@@ -40,7 +40,17 @@ def test_pihole_report_without_config():
 
 
 def test_pihole_report_happy_path():
-    def handler(request: httpx.Request) -> httpx.Response:
+    import json
+
+    handler: list[httpx.Request] = []
+
+    def http(request: httpx.Request) -> httpx.Response:
+        handler.append(request)
+        if request.url.path == "/api/auth":
+            assert json.loads(request.content) == {"password": "secret"}
+            return httpx.Response(
+                200, json={"session": {"sid": "test-sid", "valid": True}}
+            )
         if request.url.path == "/api/dns/blocking":
             return httpx.Response(200, json={"blocking": "enabled"})
         if request.url.path == "/api/stats/summary":
@@ -53,11 +63,9 @@ def test_pihole_report_happy_path():
             )
         return httpx.Response(500, json={})
 
-    client = PiHoleStatus(host="http://pihole:8053", token="secret")
+    client = PiHoleStatus(host="http://pihole:8053", password="secret")
     client._client = httpx.Client(
-        base_url=client.host,
-        headers={"X-FTL-API-KEY": client.token},
-        transport=httpx.MockTransport(handler),
+        base_url=client.host, transport=httpx.MockTransport(http)
     )
     report = client.report()
     assert report["blocking"] == "enabled"
@@ -65,17 +73,35 @@ def test_pihole_report_happy_path():
     assert report["queries_blocked"] == 310
     assert report["blocked_percent"] == 25.1
     assert report["clients"] == 4
+    assert all(
+        request.headers.get("X-FTL-SID") == "test-sid"
+        for request in handler
+        if request.url.path != "/api/auth"
+    )
+
+
+def test_pihole_report_rejects_bad_password():
+    client = PiHoleStatus(host="http://pihole:8053", password="wrong")
+    client._client = httpx.Client(
+        base_url=client.host,
+        transport=httpx.MockTransport(lambda request: httpx.Response(401, json={})),
+    )
+    report = client.report()
+    assert report["error"] is not None
+    assert "authentication failed" in report["error"]
 
 
 def test_pihole_report_handles_downstream_error():
     def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/auth":
+            return httpx.Response(
+                200, json={"session": {"sid": "test-2", "valid": True}}
+            )
         raise httpx.ConnectError("connection refused")
 
-    client = PiHoleStatus(host="http://pihole:8053", token="secret")
+    client = PiHoleStatus(host="http://pihole:8053", password="secret")
     client._client = httpx.Client(
-        base_url=client.host,
-        headers={"X-FTL-API-KEY": client.token},
-        transport=httpx.MockTransport(handler),
+        base_url=client.host, transport=httpx.MockTransport(handler)
     )
     report = client.report()
     assert report["error"] is not None

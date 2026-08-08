@@ -66,8 +66,12 @@ class Settings(BaseSettings):
 
     # Home server status (Sprint 12 System page). Read-only; never toggles.
     pihole_host: str = ""  # e.g. http://192.168.4.40:8053
-    pihole_api_token: str = ""  # Pi-hole v6 API token (system web → API token)
+    pihole_password: str = ""  # Pi-hole v6 web/API password (session auth, Sprint 12.1)
     max_recent_ollama_queries: int = 20
+
+    # Repo auto-sync (Sprint 12.1): clone/pull projects from GitHub.
+    github_token: str = ""  # read-only PAT; lists repos + optional private access
+    sync_interval_minutes: int = 15
 
 
 settings = Settings()

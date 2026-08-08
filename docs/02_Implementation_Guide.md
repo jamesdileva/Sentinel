@@ -897,6 +897,10 @@ Used by Docker Compose and backend:
 | `SENTINEL_WATCH_DIRS` | `C:\Users\j` | Comma-separated project directories |
 | `SENTINEL_API_KEY` | (empty) | Optional API key for authentication |
 | `SENTINEL_SCHEDULE_INTERVAL` | `60` | Minutes between automation runs |
+| `SENTINEL_GITHUB_TOKEN` | (empty) | Read-only PAT for `repo-sync` (clone/pull from GitHub) |
+| `SENTINEL_SYNC_INTERVAL_MINUTES` | `15` | Minutes between repo auto-syncs |
+| `SENTINEL_PIHOLE_HOST` | (empty) | Pi-hole web URL for the System page |
+| `SENTINEL_PIHOLE_PASSWORD` | (empty) | Pi-hole v6 web admin password (session auth) |
 
 ---
 
@@ -1786,10 +1790,11 @@ cd Sentinel
 
 # .env is gitignored — create it on the laptop:
 #   SENTINEL_OLLAMA_HOST=http://192.168.4.40:11434   (native Ollama, same host)
-#   SENTINEL_PROJECTS_DIR=\\192.168.4.28\projects    (SMB share from the desktop)
-#   SENTINEL_PIHOLE_HOST=http://192.168.4.40:8053    (System page, optional)
-#   SENTINEL_PIHOLE_API_TOKEN=<Pi-hole v6 API token> (optional, read-only)
-#   PIHOLE_WEBPASSWORD=<same as Pi-hole admin>       (compose profile)
+#   SENTINEL_GITHUB_TOKEN=<read-only PAT>            (repo auto-sync, Sprint 12.1)
+#   SENTINEL_PROJECTS_DIR=C:\Users\james\projects     (local clone target)
+#   SENTINEL_PIHOLE_HOST=http://192.168.4.40:8053     (System page, optional)
+#   SENTINEL_PIHOLE_PASSWORD=<Pi-hole web admin pw>   (System page, optional)
+#   PIHOLE_WEBPASSWORD=<same as Pi-hole admin>        (compose profile)
 
 docker compose --profile pihole up -d
 ```
@@ -1798,31 +1803,43 @@ docker compose --profile pihole up -d
 dev overrides are only merged by `python scripts/dev.py` on a workstation
 (§5.2). The stack restarts on boot (`restart: unless-stopped`).
 
-**Projects from the desktop via SMB (no second copy):**
+**Projects via GitHub auto-sync (Sprint 12.1):**
 
-1. On the desktop share a folder containing the repos (e.g. right-click the
-   `projects` folder → Properties → Sharing → Share). Note the network path
-   `\\192.168.4.28\projects`.
-2. On the laptop map the share: `net use P: \\192.168.4.28\projects /persistent:yes`
-   (or mount it inside Docker Desktop's file-sharing settings).
-3. Set `SENTINEL_PROJECTS_DIR=P:\` in the laptop `.env` — containers mount it
-   at `/data/projects` and `SENTINEL_WATCH_DIRS=["/data/projects"]` finds every
-   `.git` repo on the share.
+The laptop keeps a local clone target (e.g. `C:\Users\james\projects`, set as
+`SENTINEL_PROJECTS_DIR`) that the `repo-sync` service fills from GitHub —
+no SMB share or second-manual-copy needed:
+
+1. Create a **read-only PAT** on GitHub (Settings → Developer settings →
+   Personal access tokens; `repo` scope) and set `SENTINEL_GITHUB_TOKEN` in the
+   laptop `.env` (gitignored — never commit it).
+2. `SENTINEL_PROJECTS_DIR` is mounted into the containers at `/data/projects`
+   and `SENTINEL_WATCH_DIRS=["/data/projects"]` finds every `.git` checkout.
+3. The Celery beat schedule syncs on `SENTINEL_SYNC_INTERVAL_MINUTES` (default
+   15): new repos are `git clone`d, existing checkouts `git pull --ff-only`,
+   then the indexer re-runs so new projects become known. `sentinel sync`
+   (inside `backend`) runs one pass immediately; agent-safe (Rule 3) — git only,
+   never AI.
+
+Only repos reachable with the token are synced. Private repos clone only if the
+machine has git credentials configured; the token is never embedded in remote
+URLs. Repos that live only locally (no GitHub `origin`) are simply not part of
+this sync — push them to GitHub to have the laptop pick them up.
 
 The laptop keeps its own `data/sqlite/sentinel.db` and `data/chroma` (the
 desktop's indexes do not transfer); after first boot run
 `docker compose exec backend sentinel index --all` to build the laptop's
-database from the shared projects.
+database from the synced projects.
 
 **System page (Sprint 12):**
 
 `http://192.168.4.40:8080/system` shows read-only status for Ollama
 (availability, installed models, tokens/sec of recent generations) and Pi-hole
 (blocking state, queries today, blocked counts) plus backend startup checks.
-Pi-hole interop is a read-only v6 API client (`X-FTL-API-KEY`) — per Project
-Rule 2 it never toggles blocking. When `SENTINEL_PIHOLE_HOST`/`TOKEN` are
-unset the panel reports "not configured" and the rest of Sentinel is
-unaffected.
+Pi-hole interop is a read-only v6 API client using session auth (POST
+`/api/auth` with `SENTINEL_PIHOLE_PASSWORD` → `X-FTL-SID`; the v5 `X-FTL-API-KEY`
+header no longer exists in v6) — per Project Rule 2 it never toggles blocking.
+When `SENTINEL_PIHOLE_HOST`/`SENTINEL_PIHOLE_PASSWORD` are unset the panel
+reports "not configured" and the rest of Sentinel is unaffected.
 
 **Release artifacts:** `python scripts/release.py` produces
 `dist/sentinel-<version>.zip` + `.sha256` (compose, Dockerfiles, nginx conf,
@@ -1840,6 +1857,12 @@ images.
 | Internet dies when Docker stops | Pi-hole **is** the network DNS; stopping Docker stops DNS | Don't stop Docker wholesale — manage the stack via `docker compose --profile pihole up -d` |
 | `docker compose exec backend ...` → *service "backend" is not running* | A build failure (e.g. frontend) aborts `up`, so backend never starts | Fix the build error first; `docker compose up -d` again |
 | System page shows stale/no endpoints after `git pull` | Container still running an old image | `docker compose up -d --build` (compose only rebuilds when the image is missing) |
+| System page Pi-hole panel → *authentication failed* | `SENTINEL_PIHOLE_PASSWORD` wrong, or the v5-style `SENTINEL_PIHOLE_API_TOKEN` is set (v6 dropped `X-FTL-API-KEY`) | Set the web admin password in `SENTINEL_PIHOLE_PASSWORD`; remove the obsolete token var; restart backend |
+| `sentinel sync` → *SENTINEL_GITHUB_TOKEN is not configured* | Token not in the backend/worker env | Set `SENTINEL_GITHUB_TOKEN` in `.env`; `docker compose up -d --build` re-reads it |
+| New repos never appear after a push | Beat not scheduled, or sync interval hasn't elapsed | Check `docker compose logs scheduler`; or run `docker compose exec backend sentinel sync` for an immediate pass |
+
+(SMB troubleshooting rows above are kept for reference from the Sprint 12
+deploy; the desktop share has been reverted in v1.13.)
 
 ---
 
@@ -1945,6 +1968,7 @@ relationships aren't persisted, so they're intentionally absent.
 
 | Date | Version | Change | Author |
 |------|---------|--------|--------|
+| 2026-08-07 | 1.13 | Sprint 12.1 (Repo auto-sync + Pi-hole v6 auth fix + SMB revert): §13.4 rewritten — laptop projects now come from **GitHub auto-sync** instead of an SMB share: `RepoSyncService` (`services/sync_service.py`) lists repos via GitHub API (read-only PAT, `SENTINEL_GITHUB_TOKEN`, paged `GET /user/repos`), `git clone`s missing repos and `git pull --ff-only` existing checkouts under `SENTINEL_PROJECTS_DIR` (local target → `/data/projects`), then re-indexes; CLI `sentinel sync` + Celery beat `repo-sync` (`SENTINEL_SYNC_INTERVAL_MINUTES`, default 15); git never prompts (`GIT_TERMINAL_PROMPT=0`), fail-fast stderr captured per repo. Pi-hole System-page client fixed (v6 session auth): `POST /api/auth` with `SENTINEL_PIHOLE_PASSWORD` → `X-FTL-SID` header (new `SENTINEL_PIHOLE_PASSWORD` config; v5 `SENTINEL_PIHOLE_API_TOKEN`/`X-FTL-API-KEY` removed); read-only, Rule 2. Compose/`.env.example` pass `SENTINEL_GITHUB_TOKEN`/`SENTINEL_SYNC_INTERVAL_MINUTES`/`SENTINEL_PIHOLE_PASSWORD` to backend + worker; env table §4 updated. Desktop SMB plumbing reverted. Tests: 251 backend (95.2% cov) — new `test_sync_service.py` (MockTransport + run_command stubs: clone/pull/failed/per-repo errors, unconfigured skip, GitHub error), `test_system_service.py` reworked (session auth happy path, bad password 401, X-FTL-SID asserted), CLI sync tests. Docs: laptop.md, AGENTS.md, changelogs v1.13 | User + AI agent |
 | 2026-08-06 | 1.12 | Sprint 12 (Home Server + System page): §13.4 new home-server runbook — laptop runs full stack from one compose file; `frontend` nginx container (docker/frontend/Dockerfile multi-stage → nginx, `8080:80`, `/api` + WS proxy to backend) serves the dashboard at `http://192.168.4.40:8080`; dev overrides moved to explicit `docker-compose.dev.yml` (prod default); `SENTINEL_API_PORT`/`SENTINEL_PROJECTS_DIR`/`SENTINEL_OLLAMA_HOST` env-overridable (SMB projects share = no second copy). Backend: startup validation `services/startup_check.py` (database/chroma/watch dirs/ollama), System page surface — `OllamaQueryLog` table, `generate_with_metrics` (eval_count/eval_duration → tokens/sec), `OllamaStatus`/`PiHoleStatus`/`system_overview`, router `api/v1/system.py` (read-only), Pi-hole v6 read-only client (`X-FTL-API-KEY`). CLI finalized per §12.6: `portfolio` wired to `PortfolioService`, new `docs <id>`, `world-sim start`. Packaging: `scripts/build.py` + `scripts/release.py` (zip + sha256). Frontend: `/system` page + nav item + `ErrorBoundary`. Tests: §12 update — test_compose (prod/dev split + frontend service), test_system_service (8), test_startup_check (5), test_packaging (5), System page vitest (4), ErrorBoundary vitest (3), e2e system.spec (2); 238 backend / 36 vitest / 9 e2e | User + AI agent |
 | 2026-08-05 | 1.10.1 | Sprint 10.5 (Observatory): new §2.11 endpoint docs (`GET /observatory/galaxy|timeline?days=|architecture/{id}`), new §14.6 Observatory — `ObservatoryService` (`backend/app/services/observatory_service.py`): galaxy = project nodes + shared tech nodes (framework + `Dependency.name`, 2+ projects: tech, links tech-sorted), timeline = `project-created`/`commit`/`build`/`test`/`finding` from `created_at`/`GitCommit.timestamp`/`BuildLog.started_at`/`TestResult.run_at`/`SecurityFinding.detected_at`, naive-UTC cutoff, descending, cap 500, messages clipped to 120 chars; architecture = recursive tree from indexed file paths (dirs-first, count = files beneath, leaf = 1, root = total files), 404 on unknown project. Router `api/v1/observatory.py` registered in `main.py`; schemas `observatory.py` (`GalaxyGraph`/`GalaxyNode`/`GalaxyLink`, `Timeline`/`TimelineEvent`, `ArchitectureNode`, exported). Tests: `tests/test_observatory.py` (11 tests: galaxy shared-tech filtering, timeline window/order/cap/exclusion, tree nesting + counts, `_clip`, API galaxy/timeline/architecture + 404, in-memory SQLite, dependency override). §2.6 stale never-built `/projects/{id}/timeline` replaced by a pointer to §2.11. Full suite 152 green; black/isort/flake8 clean on new files; `npm run build` clean. Frontend: `/observatory` route + nav item, `pages/Observatory.tsx` (Galaxy + Timeline + Architecture sections), `components/ProjectGalaxy.tsx` (plain SVG node-link graph), `ProjectTimeline.tsx` (kind-colored dots + days-window selector), `ArchitectureMap.tsx` (project dropdown + indented tree), `api/observatory.ts` on shared axios client; `types/index.ts` observatory interfaces | User + AI agent |
 | 2026-08-05 | 1.10 | Sprint 10 (Portfolio Intelligence): §2.7 rewritten to the shipped endpoints (`/portfolio/scores`, `/best-candidates?min_score=`, `/feature-matrix`), new §14.5 Portfolio Intelligence — `PortfolioService` (`backend/app/services/portfolio_service.py`, deterministic 30/30/25/15 formula, missing = 0; build latest log success/failure/pending, tests pass ratio, security severity penalties, docs = README/Markdown/`docs/` file ratio; recompute-on-read + upsert to `PortfolioScore`), router `backend/app/api/v1/portfolio.py` registered in `main.py`, `tests/test_portfolio.py` (12 tests, in-memory SQLite, API via dependency override). Frontend: `pages/Portfolio.tsx` (health grid, best candidates, feature matrix), `components/HealthCard.tsx`, `components/FeatureMatrix.tsx`, `api/portfolio.ts` aligned to backend schemas, `/portfolio` route now real (nav item already existed). Observatory (galaxy/timeline/architecture) deferred to Sprint 10.5 | User + AI agent |

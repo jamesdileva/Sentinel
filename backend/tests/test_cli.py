@@ -244,6 +244,54 @@ def test_config_unknown_action():
     assert result.exit_code == 2
 
 
+# --- sync (GitHub-backed repo sync, Sprint 12.1) ------------------------------
+
+
+def test_sync_unconfigured(monkeypatch):
+    from app.services import sync_service
+
+    monkeypatch.setattr(sync_service.settings, "github_token", "")
+    result = runner.invoke(cli.app, ["sync"])
+    assert result.exit_code == 1
+    assert "SENTINEL_GITHUB_TOKEN" in result.output
+
+
+def test_sync_ok(monkeypatch):
+    from app.services import sync_service
+
+    monkeypatch.setattr(
+        sync_service,
+        "run_sync",
+        lambda: {
+            "cloned": ["jamesdileva/MyApp"],
+            "pulled": ["jamesdileva/Other"],
+            "failed": {},
+            "indexed": 3,
+        },
+    )
+    result = runner.invoke(cli.app, ["sync"])
+    assert result.exit_code == 0
+    assert "1 cloned" in result.output
+    assert "+ jamesdileva/MyApp" in result.output
+    assert "Indexed 3 project(s)" in result.output
+
+
+def test_sync_error(monkeypatch):
+    from app.services import sync_service
+
+    monkeypatch.setattr(
+        sync_service,
+        "run_sync",
+        lambda: {
+            "configured": True,
+            "error": "HTTPStatusError: 401 Bad credentials",
+        },
+    )
+    result = runner.invoke(cli.app, ["sync"])
+    assert result.exit_code == 1
+    assert "GitHub sync failed" in result.output
+
+
 # --- world-sim (service faked; real sim DB is never touched) ------------------
 
 

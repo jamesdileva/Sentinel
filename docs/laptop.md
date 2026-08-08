@@ -9,14 +9,22 @@ git clone https://github.com/jamesdileva/Sentinel.git   # or cd into existing cl
 cd Sentinel
 
 # .env (gitignored) — from docs/02 §13.4:
-#   SENTINEL_OLLAMA_HOST=http://192.168.4.40:11434   (native Ollama, same host)
-#   SENTINEL_PROJECTS_DIR=Z:\                        (SMB share from the desktop)
-#   SENTINEL_PIHOLE_HOST=http://192.168.4.40:8053    (System page, optional)
-#   SENTINEL_PIHOLE_API_TOKEN=<v6 token>             (optional, read-only)
-#   PIHOLE_WEBPASSWORD=<Pi-hole admin password>      (compose profile)
+#   SENTINEL_OLLAMA_HOST=http://192.168.4.40:11434     (native Ollama, same host)
+#   SENTINEL_GITHUB_TOKEN=<read-only PAT>              (repo auto-sync, Sprint 12.1)
+#   SENTINEL_PROJECTS_DIR=C:\Users\james\projects       (local clone target)
+#   SENTINEL_PIHOLE_HOST=http://192.168.4.40:8053       (System page, optional)
+#   SENTINEL_PIHOLE_PASSWORD=<Pi-hole web admin pw>     (System page, optional)
+#   PIHOLE_WEBPASSWORD=<Pi-hole admin password>         (compose profile)
 
-net use Z: \\192.168.4.28\projects /user:james\j <pw> /persistent:yes
+docker compose --profile pihole up -d --build
+docker compose exec backend sentinel sync   # one immediate clone/pull pass from GitHub
+docker compose exec backend sentinel index --all
 ```
+
+Repos are cloned under `owner/name` inside the projects dir; the `repo-sync`
+beat keeps them current every 15 minutes (`SENTINEL_SYNC_INTERVAL_MINUTES`).
+Repos that exist only locally (no GitHub `origin`) are not synced — push them
+to GitHub to have the laptop pick them up.
 
 ## Daily operations
 
@@ -24,7 +32,7 @@ net use Z: \\192.168.4.28\projects /user:james\j <pw> /persistent:yes
 git pull                                    # update (then rebuild: docker compose up -d --build)
 docker compose --profile pihole up -d       # start everything incl. Pi-hole (network DNS!)
 docker compose up -d --build                # after a git pull with code changes
-docker compose exec backend sentinel index --all   # re-index new/changed repos on the share
+docker compose exec backend sentinel sync   # immediate repo sync if you don't want to wait
 ```
 
 - Dashboard: `http://192.168.4.40:8080` · System page: `/system`
@@ -43,7 +51,8 @@ docker compose exec backend sentinel index --all   # re-index new/changed repos 
 
 ## Known issues (see docs/02 §13.4 troubleshooting table)
 
-- `net use` error 67 → desktop firewall SMB-In Private rule was off (now enabled).
 - `/frontend: not found` build error → fixed in `.dockerignore` (v1.12.1),
   regression-tested.
 - Stale containers after `git pull` → `docker compose up -d --build`.
+- System page Pi-hole *authentication failed* → check `SENTINEL_PIHOLE_PASSWORD`
+  matches the web admin password (v6 session auth; the old API token is gone).

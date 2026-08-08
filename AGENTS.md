@@ -60,9 +60,10 @@ These are the project's constitution. They must be upheld in every decision, cha
   `python scripts/dev.py` — a bare `docker compose up` on the laptop is prod.
 - **Laptop (192.168.4.40) is the always-on home server**: runbook in
   docs/02 §13.4, dashboard at `http://192.168.4.40:8080` from any LAN device.
-- **Env overrides**: `SENTINEL_OLLAMA_HOST`, `SENTINEL_PROJECTS_DIR` (SMB share
-  to the desktop's projects), `SENTINEL_PIHOLE_HOST`/`SENTINEL_PIHOLE_API_TOKEN`,
-  `SENTINEL_API_PORT` — see `.env.example`.
+- **Env overrides**: `SENTINEL_OLLAMA_HOST`, `SENTINEL_GITHUB_TOKEN` +
+  `SENTINEL_PROJECTS_DIR` (local clone target; repos auto-synced from GitHub
+  by `repo-sync`, no SMB), `SENTINEL_PIHOLE_HOST`/`SENTINEL_PIHOLE_PASSWORD`
+  (v6 session auth), `SENTINEL_API_PORT` — see `.env.example`.
 - **System page**: `/system` is a read-only home snapshot (Ollama availability/
   models/tokens-per-sec + Pi-hole stats + startup checks). Per Rule 2 it never
   toggles anything server-side.

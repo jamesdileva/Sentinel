@@ -20,6 +20,7 @@ celery_app = Celery(
         "app.tasks.build_tasks",
         "app.tasks.rag_tasks",
         "app.tasks.world_sim_tasks",
+        "app.tasks.sync_tasks",
     ],
 )
 
@@ -40,6 +41,10 @@ celery_app.conf.update(
         "world-sim-tick": {
             "task": "app.tasks.world_sim_tasks.world_sim_tick",
             "schedule": settings.world_sim_tick_seconds,
+        },
+        "repo-sync": {
+            "task": "app.tasks.sync_tasks.run_repo_sync",
+            "schedule": settings.sync_interval_minutes * 60,
         },
     },
 )

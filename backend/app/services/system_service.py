@@ -7,10 +7,13 @@ here toggles blocking or starts/stops/loads models.
 
 Ollama "tokens/sec" is derived deterministically from Ollama's own
 eval_count / eval_duration counters, persisted for every generation
-(see OllamaQueryLog). Pi-hole interop uses the v6 REST API (read-only):
-  GET {host}/api/dns/blocking   → {"blocking": "enabled"|"disabled"}
-  GET {host}/api/stats/summary  → query/block/clients counters
-Authenticated with `X-FTL-API-KEY: <token>` from settings.
+(see OllamaQueryLog). Pi-hole interop uses the v6 REST API (read-only,
+session-auth; docs/02 §13.4):
+  POST {host}/api/auth  → {"session": {"sid": "..."}}   (password from settings)
+  GET  {host}/api/dns/blocking   → {"blocking": "enabled"|"disabled"}
+  GET  {host}/api/stats/summary  → query/block/clients counters
+The v6 API removed the static `X-FTL-API-KEY` token (v5-era); a session id
+returned from /api/auth is sent as `X-FTL-SID`.
 """
 
 import datetime
@@ -112,24 +115,44 @@ class OllamaStatus:
 
 
 class PiHoleStatus:
-    """Minimal read-only Pi-hole v6 API client — never mutating."""
+    """Minimal read-only Pi-hole v6 API client — never mutating.
 
-    def __init__(self, host: str | None = None, token: str | None = None) -> None:
+    v6 dropped the static X-FTL-API-KEY header in favour of a session
+    obtained from POST /api/auth using the web/API password. We authenticate
+    once per report; nothing is cached or mutated. If unconfigured the report
+    says so and the rest of Sentinel is unaffected.
+    """
+
+    def __init__(self, host: str | None = None, password: str | None = None) -> None:
         self.host = (host or settings.pihole_host).rstrip("/")
-        self.token = token or settings.pihole_api_token
-        self._client = httpx.Client(
-            base_url=self.host,
-            headers={"X-FTL-API-KEY": self.token},
-            timeout=5,
-        )
+        self.password = password if password is not None else settings.pihole_password
+        self._client = httpx.Client(base_url=self.host, timeout=5)
 
     @property
     def configured(self) -> bool:
-        return bool(self.host) and bool(self.token)
+        return bool(self.host) and bool(self.password)
+
+    def _session_id(self) -> str | None:
+        try:
+            response = self._client.post("/api/auth", json={"password": self.password})
+            response.raise_for_status()
+            data = response.json()
+            return data.get("session", {}).get("sid")
+        except (httpx.HTTPError, ValueError) as exc:
+            logger.warning("Pi-hole /api/auth failed: %s", exc)
+            return None
 
     def _get(self, path: str) -> dict:
         try:
-            response = self._client.get(path)
+            sid = self._session_id()
+            if not sid:
+                return {
+                    "error": (
+                        "Pi-hole authentication failed "
+                        "(wrong SENTINEL_PIHOLE_PASSWORD?)"
+                    )
+                }
+            response = self._client.get(path, headers={"X-FTL-SID": sid})
             response.raise_for_status()
             return response.json()
         except httpx.HTTPError as exc:
@@ -143,7 +166,7 @@ class PiHoleStatus:
         report = {"configured": self.configured, "host": self.host, "error": None}
         if not self.configured:
             report["error"] = (
-                "Not configured (set SENTINEL_PIHOLE_HOST + SENTINEL_PIHOLE_API_TOKEN)"
+                "Not configured (set SENTINEL_PIHOLE_HOST + SENTINEL_PIHOLE_PASSWORD)"
             )
             return report
         blocking = self._get("/api/dns/blocking")
