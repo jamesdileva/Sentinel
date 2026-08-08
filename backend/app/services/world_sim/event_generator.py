@@ -15,13 +15,16 @@ from app.services.world_sim import names
 from app.services.world_sim.rules_engine import (
     DISASTER_PLAGUE,
     DISASTER_TYPES,
-    RAID_DISTANCE,
-    RAID_CHANCE,
-    SOCIAL_CHANCE,
-    TERRAIN_DISASTER_MODIFIER,
     DISCOVERY_CHANCE,
     DISCOVERY_EXPLORER_BONUS,
+    FARM_CAPACITY,
     FOUNDING_POPULATION,
+    MAX_ACTIVE_SETTLEMENTS,
+    MAX_FOOD_DAYS,
+    RAID_CHANCE,
+    RAID_DISTANCE,
+    SOCIAL_CHANCE,
+    TERRAIN_DISASTER_MODIFIER,
     SettlementState,
     construction_needed,
     daily_consumption,
@@ -106,6 +109,11 @@ def simulate_day(
                 s.population -= max(1, s.population // FAMINE_POPULATION_LOSS)
                 if s.population <= MIN_ABANDON_POPULATION:
                     s.population = 0
+        # Granaries are finite: stores never exceed N days of consumption,
+        # otherwise the 6% trade bonus compound without bound.
+        store_cap = max(0, s.population * MAX_FOOD_DAYS)
+        if s.food > store_cap:
+            s.food = store_cap
 
     # 2. Construction and level ups.
     for s in active:
@@ -127,9 +135,30 @@ def simulate_day(
                 )
             )
 
-    # 3. Expansion: found new settlements, link them with roads.
+    # 2.5 Recruitment: food-secure settlements grow their workforce with the
+    # population (Sprint 12.2). Without this, farmers were fixed at the
+    # bootstrap value (~20) and production plateaued at ~130/day, so
+    # population could never reach EXPAND_POPULATION (600) and expansion —
+    # and therefore roads — could never happen. Recruitment is capped by the
+    # land's FARM_CAPACITY so growth converges instead of runaway. A starving
+    # settlement (food < population) recruits nobody, which preserves the
+    # famine path.
+    for s in active:
+        if s.food < s.population:
+            continue
+        capacity = FARM_CAPACITY[terrain_at(s.x, s.y, seed)]
+        s.farmers = min(max(s.farmers, s.population // 6), capacity)
+        s.builders = max(s.builders, s.population // 12)
+        s.merchants = max(s.merchants, s.population // 30)
+        s.explorers = max(s.explorers, s.population // 60)
+
+    # 3. Expansion: found new settlements, link them with roads. A full
+    # world (MAX_ACTIVE_SETTLEMENTS) founds nothing new — settlements must
+    # be lost before the frontier moves again.
     occupied = {(s.x, s.y) for s in settlements.values() if s.active}
     for s in active:
+        if len(active) >= MAX_ACTIVE_SETTLEMENTS:
+            break
         site = expansion_available(s, occupied, rng, seed)
         if site is None:
             continue
@@ -192,34 +221,39 @@ def simulate_day(
             )
         )
 
-    # 5. Raids between close settlements.
-    active_list = [s for s in settlements.values() if s.active]
-    for i, a in enumerate(active_list):
-        for b in active_list[i + 1 :]:
-            if abs(a.x - b.x) + abs(a.y - b.y) > RAID_DISTANCE:
-                continue
-            if not 0.5 <= a.population / max(b.population, 1) <= 2.0:
-                continue
-            if rng.random() >= RAID_CHANCE:
-                continue
-            smaller, larger = (a, b) if a.population < b.population else (b, a)
-            a.population = max(0, a.population - max(1, a.population // 33))
-            b.population = max(0, b.population - max(1, b.population // 33))
-            smaller.population = max(0, smaller.population - max(1, smaller.population // 50))
-            smaller.experience += RAID_SURVIVAL_EXPERIENCE
-            larger.experience += RAID_SURVIVAL_EXPERIENCE
-            outcome.events.append(
-                SimEvent(
-                    event_type="conflict",
-                    title=f"Raid between {a.name} and {b.name}",
-                    narrative=(
-                        f"Warriors from {larger.name} raided {smaller.name}; "
-                        "both sides counted losses."
-                    ),
-                    severity=6,
-                    affected=[a.id, b.id],
-                )
+    # 5. Raids between road-connected settlements. Only neighbors along a
+    # road fight (a raid without a road is a distant war the sim doesn't
+    # model), which keeps this O(roads) instead of O(n²) over all pairs.
+    for a_id, b_id in roads:
+        a, b = settlements.get(a_id), settlements.get(b_id)
+        if not a or not b or not a.active or not b.active:
+            continue
+        if abs(a.x - b.x) + abs(a.y - b.y) > RAID_DISTANCE:
+            continue
+        if not 0.5 <= a.population / max(b.population, 1) <= 2.0:
+            continue
+        if rng.random() >= RAID_CHANCE:
+            continue
+        smaller, larger = (a, b) if a.population < b.population else (b, a)
+        a.population = max(0, a.population - max(1, a.population // 33))
+        b.population = max(0, b.population - max(1, b.population // 33))
+        smaller.population = max(
+            0, smaller.population - max(1, smaller.population // 50)
+        )
+        smaller.experience += RAID_SURVIVAL_EXPERIENCE
+        larger.experience += RAID_SURVIVAL_EXPERIENCE
+        outcome.events.append(
+            SimEvent(
+                event_type="conflict",
+                title=f"Raid between {a.name} and {b.name}",
+                narrative=(
+                    f"Warriors from {larger.name} raided {smaller.name}; "
+                    "both sides counted losses."
+                ),
+                severity=6,
+                affected=[a.id, b.id],
             )
+        )
 
     # 6. Discoveries.
     for s in active:

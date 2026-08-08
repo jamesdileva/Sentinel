@@ -62,7 +62,7 @@ describe("ArchitectureMap", () => {
 
     expect(await screen.findByText("alpha")).toBeInTheDocument();
     expect(mockGetArchitecture).toHaveBeenCalledWith("p1");
-    expect(screen.getByText(/▸ src/)).toBeInTheDocument();
+    expect(await screen.findByText(/▸ src/)).toBeInTheDocument();
     expect(screen.getByText("app")).toBeInTheDocument();
   });
 

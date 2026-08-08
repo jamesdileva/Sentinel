@@ -1411,9 +1411,12 @@ Pure functions over `SettlementState`, tuned by constants (change with tests):
 | `EXPAND_POPULATION` | 600 | settlements below this never found children |
 | `EXPAND_LEVEL` / `EXPAND_CHANCE` | 3 / 0.25 | level and daily roll required to expand |
 | `LEVEL_COST_BASE` | 100 | construction needed = 100 × current level |
+| `FARM_CAPACITY` | plains 200 / forest 150 / hills 150 / mts 80 / water 0 | max farmers per type of land (recruitment cap, v1.14) |
+| `MAX_FOOD_DAYS` | 20 | food stores capped at `population × 20` — bounds the +6% trade growth (v1.14) |
+| `MAX_ACTIVE_SETTLEMENTS` | 60 | world stops expanding new settlements at this cap (v1.14) |
 | `TRADE_BONUS_FRACTION` | 0.06 | food +6% per day per connected road |
 | `DISCOVERY_CHANCE` / `SOCIAL_CHANCE` | 0.04 / 0.03 | per-day event probabilities |
-| `RAID_CHANCE` / `RAID_DISTANCE` | 0.02 / 3 | raids between close settlements |
+| `RAID_CHANCE` / `RAID_DISTANCE` | 0.02 / 3 | raids between road-connected close settlements |
 | `DISASTER_BASE_CHANCE` | flood .015 / drought .010 / plague .008 | × terrain modifier |
 
 Terrain (`terrain_at(x, y, seed)`): mountains/water/hills/forest/plains with
@@ -1422,17 +1425,22 @@ fertility 0.4–1.1; daily food = `farmers × 6 × fertility × skill_bonus`.
 ### 11.4. Daily Simulation (`event_generator.simulate_day`)
 
 Steps per day: (1) food production/growth/famine → (2) construction & level
-ups → (3) expansion (new settlement + road) → (4) road trade → (5) raids
-between close settlements → (6) discoveries → (7) social events → (8)
-disasters (with survival experience) → (9) collapse check. Returns a
-`DayOutcome` (events, new settlements, new roads) for the service to persist.
+ups → (2.5) **recruitment** (v1.14: food-secure settlements scale roles with
+population — farmers `pop//6` (capped by `FARM_CAPACITY`), builders `pop//12`,
+merchants `pop//30`, explorers `pop//60`; starving settlements recruit nobody)
+→ (3) expansion (new settlement + road, blocked at
+`MAX_ACTIVE_SETTLEMENTS`) → (4) road trade → (5) raids (road-connected pairs
+only, v1.14) → (6) discoveries → (7) social events → (8) disasters (with
+survival experience) → (9) collapse check. Returns a `DayOutcome` (events, new
+settlements, new roads) for the service to persist.
 
 ### 11.5. Skill System (`skill_system.py`)
 
 Surviving a disaster grants `20 + 5 × (severity − 1)` experience. Experience
 maps to a skill level by tier table (0/50/150/300/500 → levels 1–5): +5% food
 production and +10% rebuild speed per level beyond the first — settlements
-"build back stronger". Deterministic and unit-tested.
+"build back stronger". Both bonuses clamp at level 10 (+45% / +90%) so very
+long runs stay bounded (v1.14). Deterministic and unit-tested.
 
 ### 11.6. Service & God Tools (`world_simulator.py`)
 
@@ -1818,7 +1826,11 @@ no SMB share or second-manual-copy needed:
    15): new repos are `git clone`d, existing checkouts `git pull --ff-only`,
    then the indexer re-runs so new projects become known. `sentinel sync`
    (inside `backend`) runs one pass immediately; agent-safe (Rule 3) — git only,
-   never AI.
+   never AI. After a sync pass the CLI schedules **best-effort knowledge
+   indexing** (v1.14): untouched `project_files` of each synced project are
+   queued to the RAG indexer (`run_index_knowledge`), skipped silently when
+   Ollama is unavailable — new projects become answerable in chat shortly after
+   sync without any manual step.
 
 Only repos reachable with the token are synced. Private repos clone only if the
 machine has git credentials configured; the token is never embedded in remote
@@ -1968,6 +1980,7 @@ relationships aren't persisted, so they're intentionally absent.
 
 | Date | Version | Change | Author |
 |------|---------|--------|--------|
+| 2026-08-07 | 1.14 | Sprint 12.2 (Bugs + UI pages): §11 world sim unblocked — events/expansion: new step 2.5 **recruitment** (`event_generator.py`, food-secure settlements scale roles with population: farmers `pop//6` capped by new `FARM_CAPACITY` per terrain, builders/merchants/explorers pop//12//30//60; starving settlements recruit nobody), food store capped at `pop × MAX_FOOD_DAYS` (§11.3, bounds +6%/road trade growth so SQLite ints never overflow), expansion stops at `MAX_ACTIVE_SETTLEMENTS = 60`, raids restricted to road-connected pairs (O(roads) vs O(n²)), skill bonuses clamp at level 10 (+45% production / +90% rebuild); worlds now naturally reach ~60 settlements/58 roads (was dead at ~130 pop / 0 roads because farmers were fixed at bootstrap); new `test_roads_appear_from_natural_growth`. **Indexer encoding hardening**: `indexer.py`/`framework_detector.py`/`command_extractor.py` read text/json as UTF-8 with `errors="replace"` and catch `UnicodeDecodeError` so a non-UTF-8 `requirements.txt` (MLBattles) can't abort indexing; regression `test_index_project_survives_non_utf8_requirements`. **Knowledge auto-index after sync**: `sync_service._queue_knowledge_index` — after a pass, projects that still have files with `embedding_id IS NULL` get a `run_index_knowledge` Celery task queued per project (best-effort: skipped with `"ollama-unavailable"` when Ollama is down, never fails the sync); `rag_service.ingest_files` marks unreadable files with `embedding_id = record.id` and commits even with zero embeds so the pending query doesn't re-queue forever; CLI `sentinel sync` prints the knowledge line; 2 new tests. Frontend: placeholder content removed — real `/projects`, `/builds`, `/security` pages (`pages/Projects.tsx|Builds.tsx|Security.tsx`, `api/tests.ts`, etc) with expandable file lists, per-project run + history + log/finding drill-downs; `ArchitectureMap.test.tsx` race fixed (`findByText`). Tests: 256 backend (95.08% cov), 48 vitest. Docs: §11.3/§11.4/§11.5, §13.4 sync notes, changelogs v1.14 | User + AI agent |
 | 2026-08-07 | 1.13 | Sprint 12.1 (Repo auto-sync + Pi-hole v6 auth fix + SMB revert): §13.4 rewritten — laptop projects now come from **GitHub auto-sync** instead of an SMB share: `RepoSyncService` (`services/sync_service.py`) lists repos via GitHub API (read-only PAT, `SENTINEL_GITHUB_TOKEN`, paged `GET /user/repos`), `git clone`s missing repos and `git pull --ff-only` existing checkouts under `SENTINEL_PROJECTS_DIR` (local target → `/data/projects`), then re-indexes; CLI `sentinel sync` + Celery beat `repo-sync` (`SENTINEL_SYNC_INTERVAL_MINUTES`, default 15); git never prompts (`GIT_TERMINAL_PROMPT=0`), fail-fast stderr captured per repo. Pi-hole System-page client fixed (v6 session auth): `POST /api/auth` with `SENTINEL_PIHOLE_PASSWORD` → `X-FTL-SID` header (new `SENTINEL_PIHOLE_PASSWORD` config; v5 `SENTINEL_PIHOLE_API_TOKEN`/`X-FTL-API-KEY` removed); read-only, Rule 2. Compose/`.env.example` pass `SENTINEL_GITHUB_TOKEN`/`SENTINEL_SYNC_INTERVAL_MINUTES`/`SENTINEL_PIHOLE_PASSWORD` to backend + worker; env table §4 updated. Desktop SMB plumbing reverted. Tests: 251 backend (95.2% cov) — new `test_sync_service.py` (MockTransport + run_command stubs: clone/pull/failed/per-repo errors, unconfigured skip, GitHub error), `test_system_service.py` reworked (session auth happy path, bad password 401, X-FTL-SID asserted), CLI sync tests. Docs: laptop.md, AGENTS.md, changelogs v1.13 | User + AI agent |
 | 2026-08-06 | 1.12 | Sprint 12 (Home Server + System page): §13.4 new home-server runbook — laptop runs full stack from one compose file; `frontend` nginx container (docker/frontend/Dockerfile multi-stage → nginx, `8080:80`, `/api` + WS proxy to backend) serves the dashboard at `http://192.168.4.40:8080`; dev overrides moved to explicit `docker-compose.dev.yml` (prod default); `SENTINEL_API_PORT`/`SENTINEL_PROJECTS_DIR`/`SENTINEL_OLLAMA_HOST` env-overridable (SMB projects share = no second copy). Backend: startup validation `services/startup_check.py` (database/chroma/watch dirs/ollama), System page surface — `OllamaQueryLog` table, `generate_with_metrics` (eval_count/eval_duration → tokens/sec), `OllamaStatus`/`PiHoleStatus`/`system_overview`, router `api/v1/system.py` (read-only), Pi-hole v6 read-only client (`X-FTL-API-KEY`). CLI finalized per §12.6: `portfolio` wired to `PortfolioService`, new `docs <id>`, `world-sim start`. Packaging: `scripts/build.py` + `scripts/release.py` (zip + sha256). Frontend: `/system` page + nav item + `ErrorBoundary`. Tests: §12 update — test_compose (prod/dev split + frontend service), test_system_service (8), test_startup_check (5), test_packaging (5), System page vitest (4), ErrorBoundary vitest (3), e2e system.spec (2); 238 backend / 36 vitest / 9 e2e | User + AI agent |
 | 2026-08-05 | 1.10.1 | Sprint 10.5 (Observatory): new §2.11 endpoint docs (`GET /observatory/galaxy|timeline?days=|architecture/{id}`), new §14.6 Observatory — `ObservatoryService` (`backend/app/services/observatory_service.py`): galaxy = project nodes + shared tech nodes (framework + `Dependency.name`, 2+ projects: tech, links tech-sorted), timeline = `project-created`/`commit`/`build`/`test`/`finding` from `created_at`/`GitCommit.timestamp`/`BuildLog.started_at`/`TestResult.run_at`/`SecurityFinding.detected_at`, naive-UTC cutoff, descending, cap 500, messages clipped to 120 chars; architecture = recursive tree from indexed file paths (dirs-first, count = files beneath, leaf = 1, root = total files), 404 on unknown project. Router `api/v1/observatory.py` registered in `main.py`; schemas `observatory.py` (`GalaxyGraph`/`GalaxyNode`/`GalaxyLink`, `Timeline`/`TimelineEvent`, `ArchitectureNode`, exported). Tests: `tests/test_observatory.py` (11 tests: galaxy shared-tech filtering, timeline window/order/cap/exclusion, tree nesting + counts, `_clip`, API galaxy/timeline/architecture + 404, in-memory SQLite, dependency override). §2.6 stale never-built `/projects/{id}/timeline` replaced by a pointer to §2.11. Full suite 152 green; black/isort/flake8 clean on new files; `npm run build` clean. Frontend: `/observatory` route + nav item, `pages/Observatory.tsx` (Galaxy + Timeline + Architecture sections), `components/ProjectGalaxy.tsx` (plain SVG node-link graph), `ProjectTimeline.tsx` (kind-colored dots + days-window selector), `ArchitectureMap.tsx` (project dropdown + indented tree), `api/observatory.ts` on shared axios client; `types/index.ts` observatory interfaces | User + AI agent |

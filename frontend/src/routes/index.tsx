@@ -1,11 +1,13 @@
 import { Navigate, Route, Routes } from "react-router";
 
 import Layout from "../components/Layout";
+import Builds from "../pages/Builds";
 import Dashboard from "../pages/Dashboard";
 import KnowledgeExplorer from "../pages/KnowledgeExplorer";
 import Observatory from "../pages/Observatory";
-import Placeholder from "../pages/Placeholder";
 import Portfolio from "../pages/Portfolio";
+import Projects from "../pages/Projects";
+import Security from "../pages/Security";
 import System from "../pages/System";
 import WorldSimulatorPage from "../pages/WorldSimulatorPage";
 
@@ -14,9 +16,9 @@ export function AppRoutes() {
     <Routes>
       <Route element={<Layout />}>
         <Route index element={<Dashboard />} />
-        <Route path="projects" element={<Placeholder title="Projects" />} />
-        <Route path="builds" element={<Placeholder title="Builds" />} />
-        <Route path="security" element={<Placeholder title="Security" />} />
+        <Route path="projects" element={<Projects />} />
+        <Route path="builds" element={<Builds />} />
+        <Route path="security" element={<Security />} />
         <Route path="knowledge" element={<KnowledgeExplorer />} />
         <Route path="world" element={<WorldSimulatorPage />} />
         <Route path="portfolio" element={<Portfolio />} />

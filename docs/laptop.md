@@ -26,6 +26,10 @@ beat keeps them current every 15 minutes (`SENTINEL_SYNC_INTERVAL_MINUTES`).
 Repos that exist only locally (no GitHub `origin`) are not synced — push them
 to GitHub to have the laptop pick them up.
 
+Since v1.14, each sync pass also auto-queues knowledge (RAG) indexing for
+projects that have unembedded files, as long as Ollama is up — the Chat tab
+gets data with no extra step (`sentinel sync` prints the queued count).
+
 ## Daily operations
 
 ```powershell

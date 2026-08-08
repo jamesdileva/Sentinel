@@ -139,3 +139,26 @@ def test_update_incremental_only_changes_files(tmp_db):
         assert {f.path for f in files} >= {"app/extra.py"}
     finally:
         new_file.unlink()
+
+
+def test_index_project_survives_non_utf8_requirements(tmp_db, tmp_path):
+    """Sprint 12.2 regression: latin-1 requirements.txt must not abort indexing.
+
+    MLBattles' requirements.txt contained non-UTF-8 bytes; the framework
+    detector read it with strict UTF-8 and raised UnicodeDecodeError, killing
+    index_project for the whole repo.
+    """
+    repo = tmp_path / "mlbattles"
+    repo.mkdir()
+    (repo / "train.py").write_text("import gym\n", encoding="utf-8")
+    (repo / "requirements.txt").write_bytes(
+        b"gymnasium\r\npygame\r\n" + b"\x93curly quote in a comment\x94\r\n"
+    )
+    svc = _service(tmp_db)
+    project = svc.index_project(repo)
+    assert project.language == "python"
+    assert project.framework is None  # latin-1 line does not match any framework
+    commands = svc.extract_build_commands(repo)
+    assert commands["install"] == "pip install -r requirements.txt"
+    deps = svc.extract_dependencies(repo)
+    assert {d.name for d in deps} >= {"gymnasium", "pygame"}

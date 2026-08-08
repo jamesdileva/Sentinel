@@ -33,11 +33,34 @@ TERRAIN_FERTILITY = {
     TERRAIN_WATER: 0.1,
 }
 
+# Maximum farmers a settlement's land can support. The food equilibrium of a
+# settlement is ~FARM_CAPACITY * 6 * fertility (+5% per level), which is what
+# makes population growth logistic rather than exponential: a village stops
+# growing when its farmland is saturated, so worlds neither stall at the
+# bootstrap size nor overflow SQLite's 64-bit integers.
+FARM_CAPACITY = {
+    TERRAIN_PLAINS: 200,
+    TERRAIN_FOREST: 150,
+    TERRAIN_HILLS: 150,
+    TERRAIN_MOUNTAINS: 80,
+    TERRAIN_WATER: 0,
+}
+
+# Food stores are capped at N days of consumption so trade bonuses (which
+# multiply stored food) cannot grow stores without bound.
+MAX_FOOD_DAYS = 20
+
 # Expansion thresholds and costs (documented, tune-with-tests).
 EXPAND_POPULATION = 600
 EXPAND_LEVEL = 3
 EXPAND_CHANCE = 0.25
 FOUNDING_POPULATION = 200
+# Hard cap on active settlements: keeps the world interesting but bounded
+# (runtime, SQLite integers, and map density). A full world simply stops
+# accepting new founders until a settlement is abandoned. New farmlands
+# "out there" are a natural break on founding, but the cap is what keeps a
+# very long run from snowballing out of control.
+MAX_ACTIVE_SETTLEMENTS = 60
 LEVEL_COST_BASE = 100
 TRADE_BONUS_FRACTION = 0.06
 RAID_CHANCE = 0.02
@@ -62,7 +85,11 @@ TERRAIN_DISASTER_MODIFIER = {
     TERRAIN_PLAINS: {DISASTER_FLOOD: 1.3, DISASTER_DROUGHT: 1.0, DISASTER_PLAGUE: 1.2},
     TERRAIN_FOREST: {DISASTER_FLOOD: 1.0, DISASTER_DROUGHT: 0.6, DISASTER_PLAGUE: 1.0},
     TERRAIN_HILLS: {DISASTER_FLOOD: 0.7, DISASTER_DROUGHT: 1.4, DISASTER_PLAGUE: 0.9},
-    TERRAIN_MOUNTAINS: {DISASTER_FLOOD: 0.4, DISASTER_DROUGHT: 2.0, DISASTER_PLAGUE: 0.7},
+    TERRAIN_MOUNTAINS: {
+        DISASTER_FLOOD: 0.4,
+        DISASTER_DROUGHT: 2.0,
+        DISASTER_PLAGUE: 0.7,
+    },
     TERRAIN_WATER: {DISASTER_FLOOD: 1.0, DISASTER_DROUGHT: 1.0, DISASTER_PLAGUE: 1.0},
 }
 

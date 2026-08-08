@@ -30,13 +30,15 @@ def skill_level(experience: int) -> int:
 
 
 def production_bonus(level: int) -> float:
-    """Food/yield multiplier: +5% per level beyond the first (5 levels → 1.2)."""
-    return 1.0 + 0.05 * max(0, level - 1)
+    """Food/yield multiplier: +5% per level beyond the first, capped at +45%
+    (level 10). The cap keeps world population bounded over very long runs."""
+    return 1.0 + 0.05 * min(max(0, level - 1), 9)
 
 
 def rebuild_speed(level: int) -> float:
-    """Construction progress multiplier: +10% per level beyond the first."""
-    return 1.0 + 0.10 * max(0, level - 1)
+    """Construction progress multiplier: +10% per level beyond the first,
+    capped at +90% (level 10)."""
+    return 1.0 + 0.10 * min(max(0, level - 1), 9)
 
 
 def grant_survival_experience(severity: int) -> int:

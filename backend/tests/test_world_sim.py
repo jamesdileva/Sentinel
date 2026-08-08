@@ -179,6 +179,24 @@ def test_expansion_creates_child_and_road(tmp_path):
     assert road["from_id"] == starter["id"] or road["to_id"] == starter["id"]
 
 
+def test_roads_appear_from_natural_growth(tmp_path):
+    """Sprint 12.2 regression: from the bootstrap alone (no manual role
+    injection) a settlement must grow, level up, and found a child linked
+    by a road within the cap. Pre-fix, farmers stayed fixed at ~20 so
+    population plateaued at ~130 and EXPAND_POPULATION (600) was never
+    reached — the natural world could not produce roads at all."""
+    svc = make_service(tmp_path)
+    svc.ensure_world()
+    assert svc.get_state()["roads"] == []
+    while svc.get_state()["day_number"] < 1000:
+        svc.advance_day(1)
+        if svc.get_state()["roads"]:
+            break
+    state = svc.get_state()
+    assert state["roads"], "natural growth must produce roads within 1000 days"
+    assert state["day_number"] < 1000
+
+
 def test_famine_collapses_settlement(tmp_path):
     svc = make_service(tmp_path)
     svc.ensure_world()

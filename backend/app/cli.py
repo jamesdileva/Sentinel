@@ -359,6 +359,16 @@ def sync():
         typer.echo(f"  ~ {name}")
     for name, reason in result["failed"].items():
         typer.echo(f"  ! {name}: {reason}", err=True)
+    knowledge = result.get("knowledge", {})
+    if knowledge.get("skipped"):
+        typer.echo(
+            f"Knowledge indexing: skipped ({knowledge['skipped']}).",
+            err=True,
+        )
+    else:
+        typer.echo(
+            f"Knowledge indexing: queued {knowledge.get('queued', 0)} project(s)."
+        )
     typer.echo(
         f"Indexed {result['indexed']} project(s). "
         f"Next auto-sync in {settings.sync_interval_minutes} minute(s)."

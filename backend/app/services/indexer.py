@@ -135,7 +135,9 @@ class IndexerService:
             import json
 
             try:
-                data = json.loads(package_json.read_text(encoding="utf-8"))
+                data = json.loads(
+                    package_json.read_text(encoding="utf-8", errors="replace")
+                )
                 for name, version in data.get("dependencies", {}).items():
                     deps.append((name, version, "production"))
                 for name, version in data.get("devDependencies", {}).items():

@@ -97,6 +97,10 @@ class RagService:
         for record in files:
             content = _read_local_file(record.absolute_path)
             if not content:
+                # Nothing to embed; still mark the file so the "pending
+                # knowledge" query (repo sync, Sprint 12.2) doesn't re-queue
+                # this project forever.
+                record.embedding_id = record.id
                 continue
             doc = f"{record.path}\n\n{_truncate(content)}"
             embeds.append(self._embed(doc))
@@ -111,6 +115,7 @@ class RagService:
             record.embedding_id = record.id
             embedded.append(record)
         if not embeds:
+            self.session.commit()
             return 0
         self.chroma.upsert(
             "file_summaries",

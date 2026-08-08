@@ -7,7 +7,10 @@ reproducible workflow driven entirely by git, never by AI:
 * For each repo, if the local directory already holds a `.git` checkout we
   `git pull --ff-only`; otherwise we `git clone` it directly under the
   configured watch dir root (default: first entry of SENTINEL_WATCH_DIRS).
-* After the loop we re-run the indexer so new projects become known.
+* After the loop we re-run the indexer so new projects become known, then
+  kick off knowledge (RAG) indexing for any project that has none yet
+  (Sprint 12.2) — strictly best-effort: if Ollama or the broker is down we
+  log and move on, never failing the sync for it.
 
 Nothing mutates remote state; nothing is deleted. Big repo clones use the
 longer `CLONE_TIMEOUT_SECONDS`, and git never prompts (GIT_TERMINAL_PROMPT=0).
@@ -19,11 +22,15 @@ import datetime
 from pathlib import Path
 
 import httpx
+from sqlmodel import Session, select
 
 from app.core.config import settings
 from app.core.logging import get_logger
+from app.db.connection import get_engine
+from app.db.models import ProjectFile
 from app.services.command_runner import run_command
 from app.services.indexer import IndexerService
+from app.services.ollama_service import OllamaService
 
 logger = get_logger(__name__)
 
@@ -113,7 +120,8 @@ class RepoSyncService:
         return Path(local_path).joinpath(".git").is_dir()
 
     def sync(self) -> dict:
-        """Clone missing repos, pull existing ones, then re-index over them."""
+        """Clone missing repos, pull existing ones, then re-index over them
+        and queue knowledge indexing for projects that still lack it."""
         if not self.configured:
             raise ValueError("SENTINEL_GITHUB_TOKEN is not configured")
         results = {"cloned": [], "pulled": [], "failed": {}}
@@ -126,17 +134,48 @@ class RepoSyncService:
             else:
                 results["failed"][repo["full_name"]] = status
         results["indexed"] = self._reindex()
+        results["knowledge"] = self._queue_knowledge_index()
         results["ran_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
         return results
 
     def _reindex(self) -> int:
-        from sqlmodel import Session
-
-        from app.db.connection import get_engine
-
         with Session(get_engine()) as session:
             projects = IndexerService(session).scan_all_projects(watch_dirs=[self.root])
         return len(projects)
+
+    def _queue_knowledge_index(self) -> dict:
+        """Best-effort RAG indexing for projects without embedded files yet.
+
+        Never blocks or fails the sync: if Ollama is unreachable the projects
+        are simply skipped (they can be indexed later via `sentinel rag-index`
+        or the /rag/index API). Each queued project becomes one Celery task.
+        """
+        try:
+            if not OllamaService().is_available():
+                logger.info("Knowledge indexing skipped: Ollama unavailable")
+                return {"queued": 0, "skipped": "ollama-unavailable"}
+        except Exception:  # noqa: BLE001 — a probe failure means "not available"
+            logger.info("Knowledge indexing skipped: Ollama probe failed")
+            return {"queued": 0, "skipped": "ollama-unavailable"}
+
+        try:
+            from app.tasks.rag_tasks import run_index_knowledge
+
+            with Session(get_engine()) as session:
+                unembedded = session.exec(
+                    select(ProjectFile.project_id)
+                    .where(ProjectFile.embedding_id.is_(None))
+                    .distinct()
+                ).all()
+            for project_id in unembedded:
+                try:
+                    run_index_knowledge.apply_async(args=[project_id])
+                except Exception:  # noqa: BLE001 — one bad queue must not kill the run
+                    logger.warning("Knowledge queuing failed for %s", project_id)
+            return {"queued": len(unembedded), "skipped": None}
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Knowledge indexing step failed: %s", exc)
+            return {"queued": 0, "skipped": f"error: {exc}"}
 
 
 def run_sync(service: RepoSyncService | None = None) -> dict:

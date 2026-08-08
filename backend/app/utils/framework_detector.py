@@ -25,14 +25,14 @@ _JS_FRAMEWORKS: dict[str, list[str]] = {
 
 def _read_json(path: Path) -> dict:
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
+        return json.loads(path.read_text(encoding="utf-8", errors="replace"))
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError):
         return {}
 
 
 def _read_text_lines(path: Path) -> list[str]:
     try:
-        return path.read_text(encoding="utf-8").splitlines()
+        return path.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
         return []
 

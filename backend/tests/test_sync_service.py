@@ -148,3 +148,78 @@ def test_run_sync_returns_github_error(tmp_path, monkeypatch):
     result = run_sync(client)
     assert result["configured"] is True
     assert result["error"].startswith("HTTPStatusError")
+
+
+# ── knowledge auto-index after sync (Sprint 12.2) ─────────────────────
+
+
+def test_sync_queues_knowledge_for_unembedded_projects(tmp_path, tmp_db, monkeypatch):
+    """After a successful sync, projects whose files are not yet embedded get
+    a RAG index task queued (the Knowledge tab then fills on its own)."""
+    from sqlmodel import Session
+
+    from app.db.connection import get_engine
+    from app.db.models import Project, ProjectFile
+
+    with Session(get_engine()) as session:
+        session.add(
+            Project(
+                id="p1", name="Alpha", path=str(tmp_path / "alpha"), language="python"
+            )
+        )
+        session.add(
+            ProjectFile(
+                project_id="p1", path="main.py", id="f1", absolute_path="main.py"
+            )
+        )
+        session.add(
+            ProjectFile(
+                project_id="p1",
+                path="embedded.py",
+                id="f2",
+                embedding_id="f2",
+                absolute_path="embedded.py",
+            )
+        )
+        session.commit()
+
+    queued: list[str] = []
+
+    def fake_apply_async(args=None, kwargs=None, task_id=None):
+        queued.append(args[0])
+
+    from app.tasks import rag_tasks
+
+    monkeypatch.setattr(rag_tasks.run_index_knowledge, "apply_async", fake_apply_async)
+    monkeypatch.setattr(sync_service, "run_command", lambda *a, **k: _fake_result())
+    monkeypatch.setattr(
+        sync_service.IndexerService,
+        "scan_all_projects",
+        lambda self, watch_dirs=None: [1],
+    )
+    monkeypatch.setattr(sync_service.OllamaService, "is_available", lambda self: True)
+    client = _service(
+        str(tmp_path),
+        [{"full_name": "a/b", "clone_url": "https://github.com/a/b.git"}],
+    )
+    result = client.sync()
+    assert result["knowledge"] == {"queued": 1, "skipped": None}
+    assert queued == ["p1"]  # only the project with at least one unembedded file
+
+
+def test_sync_skips_knowledge_when_ollama_unavailable(tmp_path, tmp_db, monkeypatch):
+    """No knowledge tasks are queued when Ollama cannot be reached: the sync
+    itself must still succeed (best-effort, rule: never fail the sync)."""
+    monkeypatch.setattr(sync_service.OllamaService, "is_available", lambda self: False)
+    monkeypatch.setattr(sync_service, "run_command", lambda *a, **k: _fake_result())
+    monkeypatch.setattr(
+        sync_service.IndexerService,
+        "scan_all_projects",
+        lambda self, watch_dirs=None: [1],
+    )
+    client = _service(
+        str(tmp_path),
+        [{"full_name": "a/b", "clone_url": "https://github.com/a/b.git"}],
+    )
+    result = client.sync()
+    assert result["knowledge"] == {"queued": 0, "skipped": "ollama-unavailable"}
