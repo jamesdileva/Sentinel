@@ -1,8 +1,8 @@
 """Test run endpoints — /api/v1/tests.
 
-Trigger test runs as async Celery jobs; results are read via GET /results
-(docs/02 §5.4). Result rows have no running/queued state, so polling uses the
-results list itself.
+Run a test suite as an in-process scheduler job; results are read via
+GET /results (docs/02 §5.4). Result rows have no running/queued state, so
+polling uses the results list itself.
 """
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -12,7 +12,7 @@ from app.db.connection import get_session
 from app.repositories import ProjectRepository, TestRepository
 from app.schemas import TestResultRead
 from app.schemas.test import TestRunResponse
-from app.tasks.build_tasks import run_tests_task
+from app.services.job_scheduler import scheduler as job_scheduler
 
 router = APIRouter(prefix="/tests", tags=["tests"])
 
@@ -30,8 +30,8 @@ def run_tests(
 ) -> TestRunResponse:
     """Enqueue a test run for a project."""
     project = _project_or_404(project_id, session)
-    task = run_tests_task.delay(project.id)
-    return TestRunResponse(job_id=task.id, status="queued")
+    job_id = job_scheduler.submit("run_tests", args=[project.id])
+    return TestRunResponse(job_id=job_id, status="queued")
 
 
 @router.get("/results", response_model=list[TestResultRead])

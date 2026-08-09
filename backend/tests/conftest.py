@@ -8,6 +8,15 @@ from app.db import connection
 from app.main import app
 
 
+@pytest.fixture(autouse=True)
+def _quiet_scheduler(monkeypatch):
+    """Beats must never run during tests: dispatch stays manual (Sprint 16)."""
+    monkeypatch.setattr(settings, "scheduler_enabled", False)
+    from app.services.job_scheduler import scheduler
+
+    monkeypatch.setattr(scheduler, "run_inline", False)
+
+
 @pytest.fixture()
 def tmp_db(tmp_path, monkeypatch):
     """Redirect the database to a temp file and rebuild the engine."""

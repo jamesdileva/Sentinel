@@ -322,12 +322,12 @@ def test_sync_queues_knowledge_for_unembedded_projects(tmp_path, tmp_db, monkeyp
 
     queued: list[str] = []
 
-    def fake_apply_async(args=None, kwargs=None, task_id=None):
+    def fake_submit(name, args=None, task_id=None):
         queued.append(args[0])
 
-    from app.tasks import rag_tasks
+    from app.services.job_scheduler import scheduler as job_scheduler
 
-    monkeypatch.setattr(rag_tasks.run_index_knowledge, "apply_async", fake_apply_async)
+    monkeypatch.setattr(job_scheduler, "submit", fake_submit)
     monkeypatch.setattr(sync_service, "run_command", lambda *a, **k: _fake_result())
     monkeypatch.setattr(
         sync_service.IndexerService,

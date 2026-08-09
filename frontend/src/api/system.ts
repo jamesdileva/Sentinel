@@ -20,17 +20,6 @@ export interface OllamaStatus {
   recent: OllamaQueryRecord[];
 }
 
-export interface PiHoleStatus {
-  configured: boolean;
-  host: string;
-  blocking: string | null;
-  queries_total: number | null;
-  queries_blocked: number | null;
-  blocked_percent: number | null;
-  clients: number | null;
-  error: string | null;
-}
-
 export interface SystemStartupState {
   name: string;
   ok: boolean;
@@ -41,7 +30,6 @@ export interface SystemOverview {
   generated_at: string;
   startup: { states: SystemStartupState[] };
   ollama: OllamaStatus;
-  pihole: PiHoleStatus;
 }
 
 export interface SyncRun {

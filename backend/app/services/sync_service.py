@@ -188,7 +188,7 @@ class RepoSyncService:
 
         Never blocks or fails the sync: if Ollama is unreachable the projects
         are simply skipped (they can be indexed later via `sentinel rag-index`
-        or the /rag/index API). Each queued project becomes one Celery task.
+        or the /rag/index API). Each queued project becomes one scheduler job.
         """
         if not changed:
             return {"queued": 0, "skipped": "no-changes"}
@@ -204,7 +204,7 @@ class RepoSyncService:
 
         try:
             from app.db.models import Project, ProjectFile
-            from app.tasks.rag_tasks import run_index_knowledge
+            from app.services.job_scheduler import scheduler as job_scheduler
 
             with Session(get_engine()) as session:
                 unembedded = session.exec(
@@ -216,7 +216,7 @@ class RepoSyncService:
                 ).all()
             for project_id in unembedded:
                 try:
-                    run_index_knowledge.apply_async(args=[project_id])
+                    job_scheduler.submit("run_index_knowledge", args=[project_id])
                 except Exception:  # noqa: BLE001 — one bad queue must not kill the run
                     logger.warning("Knowledge queuing failed for %s", project_id)
             return {"queued": len(unembedded), "skipped": None}

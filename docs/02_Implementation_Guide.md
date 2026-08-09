@@ -889,13 +889,16 @@ docker:
 
 ### 4.2. Environment Variables
 
-Used by Docker Compose and backend:
+Read from the repo-root `.env` (Sprint 15: no containers — the backend process
+`Settings` in `app/core/config.py` loads them directly):
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `SENTINEL_DB_PATH` | `/data/sqlite/sentinel.db` | SQLite database path |
-| `SENTINEL_CHROMA_PATH` | `/data/chroma` | ChromaDB persistence directory |
-| `SENTINEL_OLLAMA_HOST` | `http://ollama:11434` | Ollama server endpoint |
+| `SENTINEL_HOST` | `127.0.0.1` | Bind address for uvicorn |
+| `SENTINEL_PORT` | `8000` | Listen port (dashboard + API, same origin) |
+| `SENTINEL_DB_PATH` | `data/sqlite/sentinel.db` | SQLite database path (repo root) |
+| `SENTINEL_CHROMA_PATH` | `data/chroma` | ChromaDB persistence directory |
+| `SENTINEL_OLLAMA_HOST` | `http://localhost:11434` | Ollama server endpoint (laptop: `http://192.168.4.40:11434`) |
 | `SENTINEL_OLLAMA_MODEL` | `gemma2` | LLM model for project AI |
 | `SENTINEL_EMBEDDING_MODEL` | `nomic-embed-text` | Embedding model |
 | `SENTINEL_WATCH_DIRS` | `C:\Users\j` | Comma-separated project directories |
@@ -903,8 +906,6 @@ Used by Docker Compose and backend:
 | `SENTINEL_SCHEDULE_INTERVAL` | `60` | Minutes between automation runs |
 | `SENTINEL_GITHUB_TOKEN` | (empty) | Read-only PAT for `repo-sync` (clone/pull from GitHub) |
 | `SENTINEL_SYNC_INTERVAL_MINUTES` | `15` | Minutes between repo auto-syncs |
-| `SENTINEL_PIHOLE_HOST` | (empty) | Pi-hole web URL for the System page |
-| `SENTINEL_PIHOLE_PASSWORD` | (empty) | Pi-hole v6 web admin password (session auth) |
 
 ---
 
@@ -941,18 +942,23 @@ sentinel config set <key> <value>    # Update a config value
 ### 5.2. Development Helpers
 
 ```bash
-# scripts/dev.py
-python scripts/dev.py                  # Start all services in dev mode
-python scripts/dev.py --backend-only   # Start only backend
-python scripts/dev.py --frontend-only  # Start only frontend
+# run.py (repo root) — the single entry point for the home server
+python run.py                          # startup checks + start on 127.0.0.1:8000
+python run.py --check                  # startup checks only (SQLite, Ollama, frontend)
+python run.py --port 8080              # different port
+python run.py --reload                 # dev auto-reload
+python scripts/install_service.py --install   # Task Scheduler autostart (Sentinel)
+python scripts/install_service.py --uninstall # remove autostart task
 
-# scripts/build.py
-python scripts/build.py                # Build all Docker images
-python scripts/build.py --push         # Build and push to registry
+# scripts/build.py — verify + stage the dashboard, no Docker
+python scripts/build.py                # verify (pytest, lint, npm test) + npm build
+python scripts/build.py --dist         # also stage frontend into backend/app/static
+python scripts/build.py --skip-tests   # stage only, no verification
 
 # scripts/release.py
-python scripts/release.py              # Create release package
-python scripts/release.py --version    # Bump version and release
+python scripts/release.py              # build dist/sentinel-<version>.zip + .sha256
+python scripts/release.py --dry-run    # print the file plan, write nothing
+python scripts/release.py --tag        # also create a git tag v<version>
 ```
 
 ---
@@ -1504,7 +1510,7 @@ long runs stay bounded (v1.14). Deterministic and unit-tested.
 | `test_git_history.py` | Git log parsing, dedupe, Windows quoting | `services/git_history_service.py` |
 | `test_indexer.py` | Repo discovery, indexing, language/framework detection | `services/indexer.py` |
 | `test_quality.py` | Quality gates: formatting, lint, coverage | repo-wide |
-| `test_compose.py` | Docker Compose config validity | `docker-compose*.yml` |
+| `test_packaging.py` | Release archive contents/exclusions, run.py probes, script parsers | `scripts/build.py`, `scripts/release.py`, `run.py` |
 | `test_cli.py` | CLI commands (index, ask, rag-index, …) | `app/cli.py` |
 | `test_tasks.py` | Celery task registry, job envelope wiring | `tasks/*.py` |
 | `test_exceptions.py` | Error handlers and `ApiError` mapping | `core/exceptions.py`, `api/errors.py` |
@@ -1572,261 +1578,100 @@ components, E2E covering key user workflows.
 
 ---
 
-## 13. Docker Compose Setup
+## 13. Deployment (Native Install)
 
-### 13.1. docker-compose.yml (Core Services)
+**Sprint 15 changed the deployment model: Docker Compose is gone.** The project
+runs natively — one uvicorn process serves the API and the built dashboard from
+the same origin (`backend/app/static`), so there is no nginx, no CORS, no
+containers, no Redis/Celery (the background scheduler is the in-process
+APScheduler). The always-on machine is the laptop at `192.168.4.40`; the
+dashboard is at `http://192.168.4.40:8000` (docs/01 §9).
 
-```yaml
-services:
-  backend:
-    build:
-      context: .
-      dockerfile: docker/backend/Dockerfile
-    ports:
-      - "8000:8000"
-    volumes:
-      - ./data:/data
-      - ./config:/app/config
-      - /var/run/docker.sock:/var/run/docker.sock  # For executing project builds
-    environment:
-      - SENTINEL_DB_PATH=/data/sqlite/sentinel.db
-      - SENTINEL_CHROMA_PATH=/data/chroma
-      # Sprint 8.5: AI is served by the laptop's Ollama over the LAN.
-      - SENTINEL_OLLAMA_HOST=http://192.168.4.40:11434
-    profiles: ["core"]
-    depends_on:
-      - redis
-      - ollama
+Pi-hole also left the Sentinel stack in Sprint 15: it was never the project's
+purpose (docs/pi-hole-idea.md), it stays deployed independently on the laptop
+(DNS for the LAN) and Sentinel no longer reads its stats. The System page shows
+Ollama + startup checks only.
 
-  frontend:
-    build:
-      context: .
-      dockerfile: docker/frontend/Dockerfile
-    ports:
-      - "3000:80"
-    environment:
-      - VITE_API_URL=http://project-sentinel.local:8000
-    profiles: ["core"]
-    depends_on:
-      - backend
-
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
-    volumes:
-      - ./data/redis:/data
-    profiles: ["core"]
-
-  # Local Ollama fallback only (Sprint 8.5: the laptop at 192.168.4.40 is the
-  # primary AI host; this container profile is for single-machine setups).
-  ollama:
-    image: ollama/ollama:latest
-    ports:
-      - "11434:11434"
-    volumes:
-      - ./data/ollama:/root/.ollama
-    profiles: ["ollama"]
-
-  worker:
-    build:
-      context: .
-      dockerfile: docker/backend/Dockerfile
-    command: celery -A app.tasks.celery_app worker --loglevel=INFO
-    volumes:
-      - ./data:/data
-      - /var/run/docker.sock:/var/run/docker.sock
-    environment:
-      # Sprint 8.5: laptop Ollama over the LAN (same as backend).
-      - SENTINEL_OLLAMA_HOST=http://192.168.4.40:11434
-    profiles: ["core"]
-    depends_on:
-      - redis
-      - ollama
-
-  scheduler:
-    build:
-      context: .
-      dockerfile: docker/backend/Dockerfile
-    command: celery -A app.tasks.celery_app beat --loglevel=INFO
-    volumes:
-      - ./data:/data
-    environment:
-      - SENTINEL_OLLAMA_HOST=http://192.168.4.40:11434
-    profiles: ["core"]
-    depends_on:
-      - redis
-
-  # Optional: Pi-hole for network-wide ad blocking (Sprint 8.5, runs on the laptop)
-  # Pi-hole v6 env vars; admin UI on http://<laptop-ip>:8053.
-  # PIHOLE_WEBPASSWORD lives in a gitignored .env (see §13.3).
-  # Image is pulled from GitHub Container Registry — Pi-hole no longer
-  # publishes to Docker Hub (docker.io/pi-hole/pihole returns 404).
-  pihole:
-    image: ghcr.io/pi-hole/pihole:latest
-    ports:
-      - "53:53/tcp"
-      - "53:53/udp"
-      - "8053:80/tcp"
-    volumes:
-      - ./data/pihole/etc-pihole:/etc/pihole
-      - ./data/pihole/etc-dnsmasq.d:/etc/dnsmasq.d
-    environment:
-      - FTLCONF_LOCAL_IPV4=192.168.4.40
-      - FTLCONF_webpassword=${PIHOLE_WEBPASSWORD}
-      - TZ=${PIHOLE_TZ:-UTC}
-    profiles: ["pihole"]
-
-  # Optional: World Simulator (only with 'world-sim' profile)
-  world-sim:
-    build:
-      context: .
-      dockerfile: docker/backend/Dockerfile
-    command: python -m app.services.world_simulator --run
-    volumes:
-      - ./data/world_sim:/data
-    environment:
-      - SENTINEL_WORLD_SIM_MODEL=llama3
-    profiles: ["world-sim"]
-    depends_on:
-      - redis
-      - ollama
-```
-
-### 13.2. Running with Different Profiles
-
-```bash
-# Core services only (no Ollama, no Pi-hole, no World Sim)
-docker compose --profile core up
-
-# Full stack with Ollama AI
-docker compose --profile core --profile ollama up
-
-# Full stack including Pi-hole and World Simulator
-docker compose --profile core --profile ollama --profile pihole --profile world-sim up
-
-# Start only World Simulator
-docker compose --profile world-sim up world-sim
-```
-
-### 13.3. Laptop Deployment (Pi-hole + Shared Ollama)
-
-Sprint 8.5 topology: the laptop (`192.168.4.40`, always-on) hosts Pi-hole and the
-shared Ollama instance; the desktop's containers reach AI over the LAN via
-`SENTINEL_OLLAMA_HOST=http://192.168.4.40:11434`. The desktop keeps a native
-Ollama install as an unused fallback.
-
-**One-time laptop setup (commands run on the laptop):**
+### 13.1. Install (one-time)
 
 ```powershell
-# 1. Make native Ollama serve the LAN (default binds 127.0.0.1)
-#    Set the user env var, then restart the Ollama tray app:
-setx OLLAMA_HOST "0.0.0.0:11434"
-
-# 2. Open the firewall (11434 = Ollama, 53 tcp+udp = Pi-hole DNS)
-New-NetFirewallRule -DisplayName "Ollama LAN" -Direction Inbound -Protocol TCP -LocalPort 11434 -Action Allow
-New-NetFirewallRule -DisplayName "Pi-hole DNS TCP" -Direction Inbound -Protocol TCP -LocalPort 53 -Action Allow
-New-NetFirewallRule -DisplayName "Pi-hole DNS UDP" -Direction Inbound -Protocol UDP -LocalPort 53 -Action Allow
-
-# 3. Pull the shared models
-ollama pull llama3.1:8b     # airadio's model
-ollama pull gemma2          # Sentinel default
-ollama pull nomic-embed-text
-
-# 4. Clone Sentinel and start Pi-hole (it already exposes the 'pihole' profile)
-git clone https://github.com/jamesdileva/Sentinel.git
+git clone https://github.com/jamesdileva/Sentinel.git   # or cd into an existing clone + git pull
 cd Sentinel
-# .env is gitignored — create it with the admin password shared by the user:
-#   PIHOLE_WEBPASSWORD=<generated>
-#   PIHOLE_TZ=<e.g. America/New_York>
-docker compose --profile pihole up -d pihole
+py -3.11 -m venv .venv                                   # backend venv (repo root)
+.venv\Scripts\python.exe -m pip install -r backend\requirements.txt
+.venv\Scripts\python.exe -m pip install -r backend\requirements-dev.txt   # pytest, black, isort, flake8
+cd frontend
+npm install
+npm run build                          # → frontend/dist
+cd ..
+.venv\Scripts\python.exe scripts\build.py --dist   # verify (backend+frontend tests, lint) and stage
 ```
 
-**Router configuration** (one-time):
-- DHCP reservation → `192.168.4.40` (static LAN IP for the laptop)
-- LAN DNS server → `192.168.4.40` (network-wide ad blocking via Pi-hole)
+`.env` (gitignored) is optional; defaults are safe (§4.2). The only variables
+that usually matter on the laptop: `SENTINEL_OLLAMA_HOST=http://192.168.4.40:11434`
+(native Ollama on the same machine, `setx OLLAMA_HOST "0.0.0.0:11434"` once and
+restart the tray app) and `SENTINEL_GITHUB_TOKEN=<read-only PAT>` (repo
+auto-sync).
 
-**Verification:**
-- `http://192.168.4.40:8053` → Pi-hole admin UI (password from `.env`)
-- `http://192.168.4.40:11434/api/tags` → Ollama model list
-- `nslookup doubleclick.net 192.168.4.40` → returns `0.0.0.0` (blocked)
-
-**Network-wide blocking (eero router, done 2026-08-05):**
-In the eero app, keep DHCP and NAT on **Automatic** (no subnet or lease-range
-changes) and leave eero Secure / Advanced Security **off**. Set Custom DNS:
-IPv4 Primary `192.168.4.40` (Pi-hole), IPv4 Secondary `192.168.4.1` (eero
-fallback — the network behaves exactly as before if the laptop is off), IPv6
-fields empty. Save; eero reboots the network (~2 min), then verify from any
-device:
+### 13.2. Running
 
 ```powershell
-ipconfig /renew; ipconfig /flushdns
-ipconfig /all | Select-String "DNS Servers"   # → 192.168.4.40
-nslookup doubleclick.net                      # → 0.0.0.0 (blocked)
-nslookup example.com                          # → real IPs (upstream OK)
+python run.py              # startup checks (SQLite, Ollama, frontend built) + uvicorn on 127.0.0.1:8000
+python run.py --check      # checks only, no server
+python run.py --port 8080  # or set SENTINEL_PORT in .env
+python run.py --reload     # dev-only file-watch reload
 ```
 
-**Pi-hole login (v6):** username is `admin` (all lowercase) + the password from
-`PIHOLE_WEBPASSWORD` in `.env`. If login reports a wrong password, the running
-container may predate the current `.env` value — `FTLCONF_webpassword` is only
-applied at first container boot; reset the stored password with
-`docker exec -it sentinel-pihole-1 pihole setpassword` (the container is named
-`sentinel-pihole-1`, not `pihole`). Blocking itself works without a login.
+The dashboard is `http://192.168.4.40:8000` (System page: `/system`). The API is
+same-origin (`/api/v1/*`) — the SPA fallback route in `app/main.py` serves
+`index.html` for any non-API path.
 
-**Multi-host Ollama consumers:**
+### 13.3. Autostart (always-on laptop)
 
-| App | Env var | Default | Laptop value |
-|-----|---------|---------|--------------|
-| Sentinel backend/worker | `SENTINEL_OLLAMA_HOST` | `http://ollama:11434` (compose) | `http://192.168.4.40:11434` |
-| airadio desktop | `OLLAMA_URL` | `http://localhost:11434` | `http://192.168.4.40:11434` |
-| airadio desktop | `OLLAMA_MODEL` | `llama3.1:8b` | `llama3.1:8b` |
+```powershell
+python scripts/install_service.py --install    # registers the "Sentinel" Task-Scheduler task
+python scripts/install_service.py --uninstall  # removes it
+```
 
-The desktop's running stack picks up the new host on the next
-`docker compose up -d` (env is baked at container create time).
+The task runs `run.py --service` every 5 minutes with the repo's own venv
+(`pythonw.exe`, no console window). `--service` exits immediately when the port
+is already serving, so the server stays up (or comes back up) with no superuser
+rights and no service wrapper.
 
----
+### 13.4. Home Server Deployment (Sprint 12, reworked in Sprint 15)
 
-## 13.4. Home Server Deployment (Sprint 12)
-
-The laptop is the always-on home server: it hosts the full Sentinel stack,
-Pi-hole, and Ollama. After the one-time setup below the whole application is
-reachable at **http://192.168.4.40:8080** from any device on the LAN — no
-terminal commands, no npm, no Tauri (the dashboard is a web app served by the
-`frontend` nginx container).
+The laptop is the always-on home server. After the one-time setup (§13.1) the
+whole application is reachable at **http://192.168.4.40:8000** from any device
+on the LAN. `python run.py` performs the same startup checks the server itself
+performs at boot (database, chroma, watch dirs, Ollama) and refuses to launch a
+broken process — cases that in the compose world silently rolled over.
 
 **One-time laptop setup:**
 
 ```powershell
 git clone https://github.com/jamesdileva/Sentinel.git
 cd Sentinel
-
-# .env is gitignored — create it on the laptop:
+py -3.11 -m venv .venv
+.venv\Scripts\python.exe -m pip install -r backend\requirements.txt
+cd frontend && npm install && npm run build && cd ..
+.venv\Scripts\python.exe scripts\build.py --dist
+# .env (gitignored) — from .env.example; the only laptop-specific values:
 #   SENTINEL_OLLAMA_HOST=http://192.168.4.40:11434   (native Ollama, same host)
 #   SENTINEL_GITHUB_TOKEN=<read-only PAT>            (repo auto-sync, Sprint 12.1)
-#   SENTINEL_PROJECTS_DIR=C:\Users\james\projects     (local clone target)
-#   SENTINEL_PIHOLE_HOST=http://192.168.4.40:8053     (System page, optional)
-#   SENTINEL_PIHOLE_PASSWORD=<Pi-hole web admin pw>   (System page, optional)
-#   PIHOLE_WEBPASSWORD=<same as Pi-hole admin>        (compose profile)
-
-docker compose --profile pihole up -d
+.venv\Scripts\python.exe scripts\install_service.py --install   # autostart (optional)
+python run.py               # or reboot — the Task-Scheduler task starts it
 ```
-
-`docker compose up` (without `-f docker-compose.dev.yml`) runs **production**:
-dev overrides are only merged by `python scripts/dev.py` on a workstation
-(§5.2). The stack restarts on boot (`restart: unless-stopped`).
 
 **Projects via GitHub auto-sync (Sprint 12.1):**
 
-The laptop keeps a local clone target (e.g. `C:\Users\james\projects`, set as
-`SENTINEL_PROJECTS_DIR`) that the `repo-sync` service fills from GitHub —
-no SMB share or second-manual-copy needed:
+The laptop keeps watch on `SENTINEL_WATCH_DIRS`; the `repo-sync` service fills
+them from GitHub — no SMB share or manual second copy needed:
 
 1. Create a **read-only PAT** on GitHub (Settings → Developer settings →
    Personal access tokens; `repo` scope) and set `SENTINEL_GITHUB_TOKEN` in the
    laptop `.env` (gitignored — never commit it).
-2. `SENTINEL_PROJECTS_DIR` is mounted into the containers at `/data/projects`
-   and `SENTINEL_WATCH_DIRS=["/data/projects"]` finds every `.git` checkout.
-3. The Celery beat schedule syncs on `SENTINEL_SYNC_INTERVAL_MINUTES` (default
+2. `SENTINEL_WATCH_DIRS` contains every `.git` checkout (default `C:\Users\j`).
+3. The beat schedule syncs on `SENTINEL_SYNC_INTERVAL_MINUTES` (default
    15): new repos are `git clone`d, existing checkouts `git pull --ff-only`.
    **Change detection (v1.15):** a repo's HEAD is recorded (`git rev-parse --short
    HEAD`) before and after each pull — only repos whose HEAD actually moved are
@@ -1839,55 +1684,44 @@ no SMB share or second-manual-copy needed:
    (`run_index_knowledge`), skipped silently when Ollama is unavailable — new
    projects become answerable in chat shortly after sync without any manual step.
    Every pass is persisted to the `SyncRun` table and `GET /system/sync`
-   (dashboard header pill, v1.15) shows the last outcome (cloned/pulled counts,
+   (dashboard header pill) shows the last outcome (cloned/pulled counts,
    failures, indexed count, knowledge queued).
 
-Only repos reachable with the token are synced. Private repos clone only if the
-machine has git credentials configured; the token is never embedded in remote
-URLs. Repos that live only locally (no GitHub `origin`) are simply not part of
-this sync — push them to GitHub to have the laptop pick them up.
+Only repos reachable with the token are synced. Repos that live only locally (no
+GitHub `origin`) are simply not part of this sync — push them to GitHub to have
+the laptop pick them up.
 
 The laptop keeps its own `data/sqlite/sentinel.db` and `data/chroma` (the
 desktop's indexes do not transfer); after first boot run
-`docker compose exec backend sentinel index --all` to build the laptop's
-database from the synced projects.
+`.venv\Scripts\python -m app.cli index --all` (inside `backend`) to build the
+laptop's database from the synced projects.
 
-**System page (Sprint 12):**
+**System page (Sprint 12, Pi-hole removed in Sprint 15):**
 
-`http://192.168.4.40:8080/system` shows read-only status for Ollama
-(availability, installed models, tokens/sec of recent generations) and Pi-hole
-(blocking state, queries today, blocked counts) plus backend startup checks.
-Pi-hole interop is a read-only v6 API client using session auth (POST
-`/api/auth` with `SENTINEL_PIHOLE_PASSWORD` → `X-FTL-SID`; the v5 `X-FTL-API-KEY`
-header no longer exists in v6) — per Project Rule 2 it never toggles blocking.
-When `SENTINEL_PIHOLE_HOST`/`SENTINEL_PIHOLE_PASSWORD` are unset the panel
-reports "not configured" and the rest of Sentinel is unaffected.
+`http://192.168.4.40:8000/system` shows read-only status for Ollama
+(availability, installed models, tokens/sec of recent generations) plus the
+backend startup checks — per Project Rule 2 nothing on the page toggles
+anything server-side.
 
 **Release artifacts:** `python scripts/release.py` produces
-`dist/sentinel-<version>.zip` + `.sha256` (compose, Dockerfiles, nginx conf,
-`.env.example`, docs) — copy that archive to the laptop instead of cloning if
-preferred. `python scripts/build.py` builds and verifies the two container
-images.
+`dist/sentinel-<version>.zip` + `.sha256` (run.py, scripts, `.env.example`,
+docs, `backend/app` + `pyproject.toml`) — copy that archive to the laptop
+instead of cloning if preferred, then follow §13.1 minus `git clone`.
 
-**Troubleshooting (field-tested Sprint 12 deploy):**
+**Troubleshooting:**
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| `net use` → *error 67 network name not found* | Windows Firewall SMB-In rule for the **Private** profile is disabled | Desktop: `Enable-NetFirewallRule -Name FPS-SMB-In-TCP_1` (+ `FPS-NB_*-*_1`, `FPS-LLMNR-In-UDP` for discovery); Wi-Fi profile must be **Private** |
-| Docker build → *failed to calculate checksum ... "/frontend": not found* | `.dockerignore` excluded `frontend/` from the build context | Removed in v1.12.1; regression-tested by `test_packaging.py` (never exclude `frontend/`) |
-| Pi-hole dashboard *wrong password* after restart | Container started manually in Docker Desktop (env/volumes not applied) or volume path moved | Always start via `docker compose --profile pihole up -d`; then `docker compose exec pihole pihole setpassword` writes the hash into the persisted `pihole.toml` |
-| Internet dies when Docker stops | Pi-hole **is** the network DNS; stopping Docker stops DNS | Don't stop Docker wholesale — manage the stack via `docker compose --profile pihole up -d` |
-| `docker compose exec backend ...` → *service "backend" is not running* | A build failure (e.g. frontend) aborts `up`, so backend never starts | Fix the build error first; `docker compose up -d` again |
-| System page shows stale/no endpoints after `git pull` | Container still running an old image | `docker compose up -d --build` (compose only rebuilds when the image is missing) |
-| System page Pi-hole panel → *authentication failed* | `SENTINEL_PIHOLE_PASSWORD` wrong, or the v5-style `SENTINEL_PIHOLE_API_TOKEN` is set (v6 dropped `X-FTL-API-KEY`) | Set the web admin password in `SENTINEL_PIHOLE_PASSWORD`; remove the obsolete token var; restart backend |
-| `sentinel sync` → *SENTINEL_GITHUB_TOKEN is not configured* | Token not in the backend/worker env | Set `SENTINEL_GITHUB_TOKEN` in `.env`; `docker compose up -d --build` re-reads it |
-| New repos never appear after a push | Beat not scheduled, or sync interval hasn't elapsed | Check `docker compose logs scheduler`; or run `docker compose exec backend sentinel sync` for an immediate pass |
+| `run.py` warns *frontend not built* | `backend/app/static/index.html` missing | `python scripts/build.py --dist` before serving |
+| Dashboard shows stale UI after `git pull` | The served build is the staged one, not `frontend/dist` | Re-run `scripts/build.py --dist`; restart the backend |
+| Port 8000 already in use | Another app owns it (e.g. the desktop dev server) | `SENTINEL_PORT=8100` in `.env` (or `run.py --port 8100`) |
+| Server dies after reboot | Autostart task not installed, or paths moved | `scripts/install_service.py --install` (task uses absolute venv paths) |
+| `sentinel sync` → *SENTINEL_GITHUB_TOKEN is not configured* | Token missing in `.env` | Set the PAT; restart the backend |
+| New repos never appear after a push | Sync interval not elapsed | `python -m app.cli sync` (inside `backend`) for an immediate pass |
+| Task-Scheduler task runs but nothing listens | Absolute paths point at a moved repo | `--uninstall` then `--install` again |
 
-(SMB troubleshooting rows above are kept for reference from the Sprint 12
-deploy; the desktop share has been reverted in v1.13.)
-
----
-
+(Pi-hole and Docker troubleshooting from the Sprint 8–13 era is archived in the
+document changelogs; Pi-hole is no longer part of Sentinel.)
 ## 14. Data Access Patterns
 
 | Consumer | Source | Access Method |
@@ -2003,6 +1837,7 @@ relationships aren't persisted, so they're intentionally absent.
 
 | Date | Version | Change | Author |
 |------|---------|--------|--------|
+| 2026-08-08 | 1.16 | Sprint 15.1 (Native deployment, decommission Docker). Compose/Docker layer removed: docker-compose*.yml, docker/, scripts/dev.py deleted; un.py (repo root) is the single starting point — startup checks then uvicorn on 127.0.0.1:8000 (--check/--port/--reload/--service/--install/--uninstall); scripts/install_service.py registers the Sentinel Task-Scheduler task (pythonw run.py --service every 5 min, idempotent); scripts/build.py reworked (verify + --dist stages frontend into ackend/app/static, served same-origin by pp/main.py); scripts/release.py ships run.py + scripts + docs + ackend/app; SENTINEL_PORT replaces SENTINEL_API_PORT; §4.2 env table + §13 rewritten (native runbook, troubleshooting); laptop.md rewritten. Pi-hole left the stack — System-page panel + SENTINEL_PIHOLE_* removed. Frontend: /system panel + pi/system.ts types updated. Tests: packaging suite reworked for native artifacts. Docs: changelogs v1.16 | User + AI agent |
 | 2026-08-07 | 1.15 | Sprint 15 (Performance tuning + final polish): §14.5 scoring rewritten (build = 21 static + 9 proven / tests = 24 static + 6 proven — static survives failed runs; docs green ≥50%) + caching (`_fresh_row` serves the stored `PortfolioScore` until a source row is newer) + `GET /portfolio/summary` (dashboard stats); §13.4 GitHub sync — HEAD change detection before/after pull (only moved repos re-indexed, all-clean passes skip the scan, knowledge auto-index narrowed to changed repos), runs persisted to new `SyncRun` table surfaced by `GET /system/sync` (read-only); §2.3 `GET /rag/index/status` (embedded vs total files per project); scanner skips self-scan false positives (`data/`, `fixtures/`, template `.env` names; real `.env` still flagged). Frontend: Dashboard real stats (portfolio summary), header sync pill (Layout), Knowledge page index progress. Tests: 268 backend (new change-detection/persistence in `test_sync_service.py`, `/system/sync` in `test_system_service.py`, `/rag/index/status` in `test_rag_api.py`, scoring/cache/`is_test_file_path` in `test_portfolio.py`, scanner tests) + 58 vitest (Layout pill, Dashboard stats, KnowledgeExplorer) | User + AI |
 | 2026-08-07 | 1.14 | Sprint 12.2 (Bugs + UI pages): §11 world sim unblocked — events/expansion: new step 2.5 **recruitment** (`event_generator.py`, food-secure settlements scale roles with population: farmers `pop//6` capped by new `FARM_CAPACITY` per terrain, builders/merchants/explorers pop//12//30//60; starving settlements recruit nobody), food store capped at `pop × MAX_FOOD_DAYS` (§11.3, bounds +6%/road trade growth so SQLite ints never overflow), expansion stops at `MAX_ACTIVE_SETTLEMENTS = 60`, raids restricted to road-connected pairs (O(roads) vs O(n²)), skill bonuses clamp at level 10 (+45% production / +90% rebuild); worlds now naturally reach ~60 settlements/58 roads (was dead at ~130 pop / 0 roads because farmers were fixed at bootstrap); new `test_roads_appear_from_natural_growth`. **Indexer encoding hardening**: `indexer.py`/`framework_detector.py`/`command_extractor.py` read text/json as UTF-8 with `errors="replace"` and catch `UnicodeDecodeError` so a non-UTF-8 `requirements.txt` (MLBattles) can't abort indexing; regression `test_index_project_survives_non_utf8_requirements`. **Knowledge auto-index after sync**: `sync_service._queue_knowledge_index` — after a pass, projects that still have files with `embedding_id IS NULL` get a `run_index_knowledge` Celery task queued per project (best-effort: skipped with `"ollama-unavailable"` when Ollama is down, never fails the sync); `rag_service.ingest_files` marks unreadable files with `embedding_id = record.id` and commits even with zero embeds so the pending query doesn't re-queue forever; CLI `sentinel sync` prints the knowledge line; 2 new tests. Frontend: placeholder content removed — real `/projects`, `/builds`, `/security` pages (`pages/Projects.tsx|Builds.tsx|Security.tsx`, `api/tests.ts`, etc) with expandable file lists, per-project run + history + log/finding drill-downs; `ArchitectureMap.test.tsx` race fixed (`findByText`). Tests: 256 backend (95.08% cov), 48 vitest. Docs: §11.3/§11.4/§11.5, §13.4 sync notes, changelogs v1.14 | User + AI agent |
 | 2026-08-07 | 1.13 | Sprint 12.1 (Repo auto-sync + Pi-hole v6 auth fix + SMB revert): §13.4 rewritten — laptop projects now come from **GitHub auto-sync** instead of an SMB share: `RepoSyncService`: `RepoSyncService` (`services/sync_service.py`) lists repos via GitHub API (read-only PAT, `SENTINEL_GITHUB_TOKEN`, paged `GET /user/repos`), `git clone`s missing repos and `git pull --ff-only` existing checkouts under `SENTINEL_PROJECTS_DIR` (local target → `/data/projects`), then re-indexes; CLI `sentinel sync` + Celery beat `repo-sync` (`SENTINEL_SYNC_INTERVAL_MINUTES`, default 15); git never prompts (`GIT_TERMINAL_PROMPT=0`), fail-fast stderr captured per repo. Pi-hole System-page client fixed (v6 session auth): `POST /api/auth` with `SENTINEL_PIHOLE_PASSWORD` → `X-FTL-SID` header (new `SENTINEL_PIHOLE_PASSWORD` config; v5 `SENTINEL_PIHOLE_API_TOKEN`/`X-FTL-API-KEY` removed); read-only, Rule 2. Compose/`.env.example` pass `SENTINEL_GITHUB_TOKEN`/`SENTINEL_SYNC_INTERVAL_MINUTES`/`SENTINEL_PIHOLE_PASSWORD` to backend + worker; env table §4 updated. Desktop SMB plumbing reverted. Tests: 251 backend (95.2% cov) — new `test_sync_service.py` (MockTransport + run_command stubs: clone/pull/failed/per-repo errors, unconfigured skip, GitHub error), `test_system_service.py` reworked (session auth happy path, bad password 401, X-FTL-SID asserted), CLI sync tests. Docs: laptop.md, AGENTS.md, changelogs v1.13 | User + AI agent |

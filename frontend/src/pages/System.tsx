@@ -38,8 +38,8 @@ export default function System() {
           Home Server
         </h2>
         <p className="text-xs text-slate-400 dark:text-slate-500">
-          Read-only status of the always-on machine: AI (Ollama) and network
-          filtering (Pi-hole).
+          Read-only status of the always-on machine: AI (Ollama) and startup
+          checks.
         </p>
         {error && (
           <div className="mt-3 rounded-lg border border-red-300 bg-red-50 px-4 py-2 text-sm text-red-800 dark:border-red-800 dark:bg-red-950 dark:text-red-200">
@@ -51,7 +51,6 @@ export default function System() {
       {data ? (
         <>
           <OllamaPanel ollama={data.ollama} />
-          <PiHolePanel pihole={data.pihole} />
           <StartupPanel states={data.startup.states} />
         </>
       ) : (
@@ -155,72 +154,6 @@ function OllamaPanel({ ollama }: { ollama: SystemOverviewData["ollama"] }) {
           </ul>
         )}
       </div>
-    </div>
-  );
-}
-
-function PiHolePanel({ pihole }: { pihole: SystemOverviewData["pihole"] }) {
-  return (
-    <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
-      <div className="flex items-center justify-between gap-3">
-        <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-          Pi-hole
-        </h3>
-        <Badge
-          ok={pihole.configured && pihole.blocking === "enabled"}
-          label={
-            pihole.error
-              ? "error"
-              : pihole.blocking === "enabled"
-                ? "blocking"
-                : pihole.blocking === "disabled"
-                  ? "disabled"
-                  : "not configured"
-          }
-        />
-      </div>
-      <p className="mt-1 break-all text-xs text-slate-400 dark:text-slate-500">
-        {pihole.configured
-          ? pihole.host
-          : (pihole.error ?? "Configure via .env")}
-      </p>
-
-      {pihole.queries_total !== null && (
-        <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
-          {[
-            {
-              label: "Queries today",
-              value: Number(pihole.queries_total).toLocaleString(),
-            },
-            {
-              label: "Blocked today",
-              value: Number(pihole.queries_blocked ?? 0).toLocaleString(),
-            },
-            {
-              label: "Blocked %",
-              value: `${pihole.blocked_percent ?? 0}%`,
-            },
-          ].map((stat) => (
-            <div
-              key={stat.label}
-              className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 dark:border-slate-800 dark:bg-slate-900"
-            >
-              <p className="text-xs text-slate-400 dark:text-slate-500">
-                {stat.label}
-              </p>
-              <p className="mt-1 text-lg font-semibold text-slate-900 dark:text-slate-100">
-                {stat.value}
-              </p>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {pihole.clients !== null && (
-        <p className="mt-3 text-xs text-slate-400 dark:text-slate-500">
-          Active clients: {pihole.clients}
-        </p>
-      )}
     </div>
   );
 }

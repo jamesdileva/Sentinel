@@ -3,13 +3,17 @@
 Sprint 1 scope: health endpoints, CORS, exception handling, CLI-compatible server.
 Sprint 2: database initialization on startup (lifespan).
 Sprint 3: background repository discovery scan on startup.
+Sprint 16: single-process runtime — the API also serves the built dashboard
+(SPA) from `frontend/dist`, and the in-process scheduler replaces Celery.
 """
 
 import threading
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.api.v1.builds import router as builds_router
 from app.api.v1.observatory import router as observatory_router
@@ -24,10 +28,13 @@ from app.api.v1.ws import router as ws_router
 from app.core.config import settings
 from app.core.logging import get_logger, setup_logging
 from app.db.connection import check_db, get_engine, init_db
+from app.services.job_scheduler import scheduler
 from app.services.startup_check import run_startup_checks
 
 setup_logging()
 logger = get_logger(__name__)
+
+FRONTEND_DIST = Path(__file__).resolve().parent.parent.parent.parent / "frontend" / "dist"
 
 
 def _background_initial_scan() -> None:
@@ -52,6 +59,9 @@ def _background_initial_scan() -> None:
 async def lifespan(_: FastAPI):
     init_db()
     run_startup_checks()
+    if settings.scheduler_enabled:
+        scheduler.start()
+        logger.info("In-process scheduler started")
     if settings.auto_scan_on_startup:
         threading.Thread(
             target=_background_initial_scan, daemon=True, name="sentinel-scan"
@@ -59,6 +69,7 @@ async def lifespan(_: FastAPI):
         logger.info("Background discovery scan started")
     logger.info("Application startup complete")
     yield
+    scheduler.shutdown()
 
 
 app = FastAPI(
@@ -66,19 +77,6 @@ app = FastAPI(
     version=settings.version,
     description="Local-first personal software operations platform.",
     lifespan=lifespan,
-)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-    ],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
 )
 
 
@@ -115,3 +113,30 @@ app.include_router(rag_router, prefix="/api/v1")
 app.include_router(ws_router, prefix="/api/v1")
 if settings.world_sim_enabled:
     app.include_router(world_sim_router, prefix="/api/v1")
+
+# SPA dashboard (Sprint 16): the same origin serves the built frontend, so one
+# process = API + WebSocket + dashboard with no nginx and no CORS. Mounted
+# last so /api/* and health routes always win; unknown paths fall back to
+# index.html (client-side routing).
+if FRONTEND_DIST.is_dir():
+    assets_dir = FRONTEND_DIST / "assets"
+    if assets_dir.is_dir():
+        app.mount(
+            "/assets",
+            StaticFiles(directory=assets_dir),
+            name="frontend-assets",
+        )
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    def spa_fallback(full_path: str) -> FileResponse:
+        candidate = (FRONTEND_DIST / full_path).resolve()
+        if (
+            candidate.is_file()
+            and candidate.is_relative_to(FRONTEND_DIST.resolve())
+        ):
+            return FileResponse(candidate)
+        return FileResponse(FRONTEND_DIST / "index.html")
+
+    logger.info("Serving dashboard from %s", FRONTEND_DIST)
+else:
+    logger.info("frontend/dist not found — API only (run `npm run build`)")

@@ -2,7 +2,7 @@
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from app.db import connection
 from app.db.models import Project
@@ -12,7 +12,6 @@ from app.services.command_runner import CommandResult
 from app.services.indexer import IndexerService
 from app.services.security_scanner import SecurityScanner
 from app.services.test_runner import TestRunner as RunnerService
-from app.tasks.celery_app import celery_app
 
 client = TestClient(app)
 
@@ -22,8 +21,12 @@ SCAN_FIXTURE = "tests/fixtures/sample_scan_project"
 
 @pytest.fixture()
 def eager(monkeypatch):
-    """Run Celery tasks synchronously so tests need no broker."""
-    monkeypatch.setattr(celery_app.conf, "task_always_eager", True)
+    """Run in-process scheduler jobs synchronously so tests need no threads."""
+    from app.services.job_scheduler import scheduler
+
+    monkeypatch.setattr(scheduler, "run_inline", True)
+    yield
+    monkeypatch.setattr(scheduler, "run_inline", False)
 
 
 def _seed(tmp_db, path: str = PYTHON_FIXTURE) -> str:
@@ -255,6 +258,50 @@ def test_tests_run_and_results(eager, tmp_db):
     assert len(rows) == 1
     assert rows[0]["framework"] == "pytest"
     assert rows[0]["summary"] is not None
+
+
+def test_security_scan_is_idempotent(tmp_db):
+    """Sprint 16: re-scanning a project must not re-insert duplicate rows —
+    only *new* findings are returned, existing ones are reused."""
+    from app.db.models import SecurityFinding
+
+    project_id = _seed(tmp_db, SCAN_FIXTURE)
+    with Session(connection.get_engine()) as session:
+        project = SecurityScanner.get_project(session, project_id)
+        first = SecurityScanner(session).scan_project(project)
+        assert len(first) > 0
+        second = SecurityScanner(session).scan_project(project)
+        assert second == []
+        open_rows = session.exec(
+            select(SecurityFinding).where(
+                SecurityFinding.project_id == project_id,
+                SecurityFinding.resolved == False,  # noqa: E712
+            )
+        ).all()
+        assert len(open_rows) == len(first)
+
+
+def test_security_scan_resolves_stale_findings(tmp_db, tmp_path):
+    """Sprint 16: when a file no longer matches any pattern, its open finding
+    is marked resolved instead of piling up."""
+    from app.db.models import SecurityFinding
+
+    root = tmp_path / "app"
+    root.mkdir()
+    (root / "leak.py").write_text("TOKEN = 'ghp_abcdefghijklmnopqrst'\n")
+    (root / "pyproject.toml").write_text("[tool.pytest.ini_options]\n")
+
+    with Session(connection.get_engine()) as session:
+        project = IndexerService(session).index_project(str(root))
+        scanner = SecurityScanner(session)
+        assert len(scanner.scan_project(project)) == 1
+        (root / "leak.py").write_text("TOKEN = 'safe'\n")
+        assert scanner.scan_project(project) == []
+        rows = session.exec(
+            select(SecurityFinding).where(SecurityFinding.project_id == project.id)
+        ).all()
+        assert len(rows) == 1
+        assert rows[0].resolved is True
 
 
 def test_security_scan_and_findings(eager, tmp_db):

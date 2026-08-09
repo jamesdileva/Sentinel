@@ -1,15 +1,15 @@
 #!/usr/bin/env python
-"""Project Sentinel — release helper (Sprint 12, docs/02 §12.5).
+"""Project Sentinel — release helper (Sprint 15, docs/02 §12.5).
 
 Produces a versioned release archive a human can ship to the laptop server:
 
     dist/sentinel-<version>.zip
     dist/sentinel-<version>.sha256  (per-file manifest)
 
-The archive contains the compose file, env example, Dockerfiles, nginx config,
-docs, and backend packaging metadata — everything needed to run `docker compose
-up` on a fresh machine. It deliberately omits runtime `data/`, secrets, and
-venvs (they live on each host, per docs/01 Rule 1).
+The archive contains the native-install runbook, the run/install scripts,
+env example, docs, and backend packaging metadata — everything needed to run
+`python run.py` on a fresh machine. It deliberately omits runtime `data/`,
+secrets, and venvs (they live on each host, per docs/01 Rule 1).
 
 Usage:
     python scripts/release.py                 # build dist/sentinel-0.1.0.zip
@@ -36,14 +36,13 @@ if sys.path and str(ROOT / "backend") not in sys.path:
 from app import __version__ as VERSION  # noqa: E402
 
 INCLUDED = [
-    "docker-compose.yml",
-    "docker-compose.dev.yml",
-    "docker/backend/Dockerfile",
-    "docker/frontend/Dockerfile",
-    "docker/nginx.conf",
+    "run.py",
+    "scripts/install_service.py",
+    "scripts/build.py",
     ".env.example",
     "docs",
     "backend/pyproject.toml",
+    "backend/app",
 ]
 
 
@@ -93,9 +92,7 @@ def make_archive() -> tuple[Path, dict[str, str]]:
 
 def write_manifest(archive: Path, checksums: dict[str, str]) -> Path:
     manifest = archive.with_suffix(".sha256")
-    lines = "\n".join(
-        f"{digest}  {name}" for name, digest in sorted(checksums.items())
-    )
+    lines = "\n".join(f"{digest}  {name}" for name, digest in sorted(checksums.items()))
     manifest.write_text(lines + "\n", encoding="utf-8")
     return manifest
 

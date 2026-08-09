@@ -40,16 +40,6 @@ function makeOverview(): SystemOverview {
         },
       ],
     },
-    pihole: {
-      configured: true,
-      host: "http://192.168.4.40:8053",
-      blocking: "enabled",
-      queries_total: 1234,
-      queries_blocked: 310,
-      blocked_percent: 25.1,
-      clients: 4,
-      error: null,
-    },
   };
 }
 
@@ -65,15 +55,6 @@ describe("System", () => {
     expect(screen.getByText("gemma2")).toBeInTheDocument();
     expect(screen.getByText("avg 300.0 t/s")).toBeInTheDocument();
     expect(screen.getByText(/300 tokens/)).toBeInTheDocument();
-  });
-
-  it("renders pihole blocking stats", async () => {
-    render(<System />);
-    expect(await screen.findByText("Pi-hole")).toBeInTheDocument();
-    expect(screen.getByText("Queries today")).toBeInTheDocument();
-    expect(screen.getByText("1,234")).toBeInTheDocument();
-    expect(screen.getByText("Blocked today")).toBeInTheDocument();
-    expect(screen.getByText("310")).toBeInTheDocument();
   });
 
   it("shows an error when the request fails", async () => {

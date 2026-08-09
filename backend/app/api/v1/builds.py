@@ -1,8 +1,8 @@
 """Build endpoints — /api/v1/builds.
 
-Run a build as an async Celery job (docs/02 §5.3). The job row is created here
-with id == the Celery task id, so GET /status/{job_id} is a plain DB read and
-works transparently in both eager (test) and broker-backed modes.
+Run a build as an async job on the in-process scheduler (docs/02 §5.3). The
+job row is created here with id == the submitted job id, so GET /status/{job_id}
+is a plain DB read.
 """
 
 import uuid
@@ -14,7 +14,7 @@ from app.db.connection import get_session
 from app.db.models import BuildLog
 from app.repositories import BuildLogRepository, ProjectRepository
 from app.schemas import BuildLogRead, BuildTrigger, JobStatus, build_status_from_log
-from app.tasks.build_tasks import run_build_task
+from app.services.job_scheduler import scheduler as job_scheduler
 
 router = APIRouter(prefix="/builds", tags=["builds"])
 
@@ -35,7 +35,7 @@ def run_build(
     job_id = str(uuid.uuid4())
     session.add(BuildLog(id=job_id, project_id=project.id))
     session.commit()
-    run_build_task.apply_async(args=[project.id, job_id], task_id=job_id)
+    job_scheduler.submit("run_build", args=[project.id, job_id], task_id=job_id)
     session.expire_all()
     return build_status_from_log(session.get(BuildLog, job_id))
 

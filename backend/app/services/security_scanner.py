@@ -8,7 +8,7 @@ dependency-free on hosts without those tools.
 import re
 from pathlib import Path
 
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from app.core.logging import get_logger
 from app.db.models import Project, SecurityFinding, Severity
@@ -89,19 +89,84 @@ class SecurityScanner:
         self.session = session
 
     def scan_project(self, project: Project) -> list[SecurityFinding]:
-        """Run all scanners and persist findings, returning the new ones."""
-        findings = []
+        """Scan and persist findings, returning the *new* ones only.
+
+        Deterministic idempotence (Rule 3): a finding is keyed by
+        (project, type, cve_id, file_path, line_number, title). Already-open
+        findings with the same key are left untouched — every scan does not
+        re-insert rows (the pre-Sprint-16 behaviour that flooded the
+        timeline). Findings from a previous scan whose key no longer matches
+        are marked `resolved = True` (the problem was fixed).
+        """
+        templates = self._collect(project)
+        incoming_keys = {
+            self._fingerprint(project.id, template) for template in templates
+        }
+
+        existing = self.session.exec(
+            select(SecurityFinding).where(
+                SecurityFinding.project_id == project.id,
+                SecurityFinding.resolved == False,  # noqa: E712
+            )
+        ).all()
+        existing_by_key: dict[tuple, SecurityFinding] = {
+            self._fingerprint(project.id, self._row_to_dict(row)): row for row in existing
+        }
+
+        new_rows: list[SecurityFinding] = []
+        for template in templates:
+            key = self._fingerprint(project.id, template)
+            if key in existing_by_key:
+                continue
+            finding = SecurityFinding(project_id=project.id, **template)
+            self.session.add(finding)
+            new_rows.append(finding)
+
+        stale = [
+            row for key, row in existing_by_key.items() if key not in incoming_keys
+        ]
+        for row in stale:
+            row.resolved = True
+
+        if stale or new_rows:
+            self.session.commit()
+        logger.info(
+            "Security scan for %s: %d new, %d resolved",
+            project.name,
+            len(new_rows),
+            len(stale),
+        )
+        return new_rows
+
+    @staticmethod
+    def _fingerprint(project_id: str, template: dict) -> tuple:
+        return (
+            project_id,
+            template.get("type"),
+            template.get("cve_id"),
+            template.get("file_path"),
+            template.get("line_number"),
+            template.get("title"),
+        )
+
+    @staticmethod
+    def _row_to_dict(row: SecurityFinding) -> dict:
+        """Project a stored finding row onto a scan-template dict."""
+        return {
+            "type": row.type,
+            "cve_id": row.cve_id,
+            "file_path": row.file_path,
+            "line_number": row.line_number,
+            "title": row.title,
+        }
+
+    def _collect(self, project: Project) -> list[dict]:
+        """Collect all scan templates (dependencies + secrets + static)."""
+        findings: list[dict] = []
         findings += self.scan_dependencies(project)
         findings += self.scan_secrets(project.path)
         findings += self.scan_static_analysis(project.path)
-        persisted = []
-        for template in findings:
-            finding = SecurityFinding(project_id=project.id, **template)
-            self.session.add(finding)
-            persisted.append(finding)
-        self.session.commit()
-        logger.info("Security scan for %s: %d finding(s)", project.name, len(persisted))
-        return persisted
+        return findings
 
     def scan_dependencies(self, project: Project) -> list[dict]:
         """Flag known-vulnerable dependency versions from the advisory table."""

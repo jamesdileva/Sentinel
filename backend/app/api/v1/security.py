@@ -1,6 +1,6 @@
 """Security endpoints — /api/v1/security.
 
-Trigger scans as async Celery jobs; findings are read via GET /findings
+Trigger scans as in-process scheduler jobs; findings are read via GET /findings
 (docs/02 §5.6). Findings rows have no running/queued state, so polling uses the
 findings list itself.
 """
@@ -12,7 +12,7 @@ from app.db.connection import get_session
 from app.repositories import ProjectRepository, SecurityRepository
 from app.schemas import SecurityFindingRead
 from app.schemas.security import ScanResponse
-from app.tasks.build_tasks import run_security_scan_task
+from app.services.job_scheduler import scheduler as job_scheduler
 
 router = APIRouter(prefix="/security", tags=["security"])
 
@@ -28,8 +28,8 @@ def _project_or_404(project_id: str, session: Session) -> object:
 def run_scan(project_id: str, session: Session = Depends(get_session)) -> ScanResponse:
     """Enqueue a full security scan for a project."""
     project = _project_or_404(project_id, session)
-    task = run_security_scan_task.delay(project.id)
-    return ScanResponse(job_id=task.id, status="queued")
+    job_id = job_scheduler.submit("run_security_scan", args=[project.id])
+    return ScanResponse(job_id=job_id, status="queued")
 
 
 @router.get("/findings", response_model=list[SecurityFindingRead])

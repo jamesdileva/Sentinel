@@ -1,24 +1,17 @@
 """SystemService — read-only home status aggregation (Sprint 12).
 
-Surface: GET /api/v1/system/* reports the health of the two machine services
-Sentinel integrates with (Ollama + Pi-hole) plus backend startup checks.
-Strictly read-only (docs/01 Rule 2: AI/actions are never autonomous) — nothing
-here toggles blocking or starts/stops/loads models.
+Surface: GET /api/v1/system/* reports the health of the services Sentinel
+integrates with (Ollama) plus backend startup checks. Strictly read-only
+(docs/01 Rule 2: AI/actions are never autonomous) — nothing here toggles
+blocking or starts/stops/loads models.
 
 Ollama "tokens/sec" is derived deterministically from Ollama's own
 eval_count / eval_duration counters, persisted for every generation
-(see OllamaQueryLog). Pi-hole interop uses the v6 REST API (read-only,
-session-auth; docs/02 §13.4):
-  POST {host}/api/auth  → {"session": {"sid": "..."}}   (password from settings)
-  GET  {host}/api/dns/blocking   → {"blocking": "enabled"|"disabled"}
-  GET  {host}/api/stats/summary  → query/block/clients counters
-The v6 API removed the static `X-FTL-API-KEY` token (v5-era); a session id
-returned from /api/auth is sent as `X-FTL-SID`.
+(see OllamaQueryLog).
 """
 
 import datetime
 
-import httpx
 from sqlmodel import Session, select
 
 from app.core.config import settings
@@ -114,76 +107,6 @@ class OllamaStatus:
         ]
 
 
-class PiHoleStatus:
-    """Minimal read-only Pi-hole v6 API client — never mutating.
-
-    v6 dropped the static X-FTL-API-KEY header in favour of a session
-    obtained from POST /api/auth using the web/API password. We authenticate
-    once per report; nothing is cached or mutated. If unconfigured the report
-    says so and the rest of Sentinel is unaffected.
-    """
-
-    def __init__(self, host: str | None = None, password: str | None = None) -> None:
-        self.host = (host or settings.pihole_host).rstrip("/")
-        self.password = password if password is not None else settings.pihole_password
-        self._client = httpx.Client(base_url=self.host, timeout=5)
-
-    @property
-    def configured(self) -> bool:
-        return bool(self.host) and bool(self.password)
-
-    def _session_id(self) -> str | None:
-        try:
-            response = self._client.post("/api/auth", json={"password": self.password})
-            response.raise_for_status()
-            data = response.json()
-            return data.get("session", {}).get("sid")
-        except (httpx.HTTPError, ValueError) as exc:
-            logger.warning("Pi-hole /api/auth failed: %s", exc)
-            return None
-
-    def _get(self, path: str) -> dict:
-        try:
-            sid = self._session_id()
-            if not sid:
-                return {
-                    "error": (
-                        "Pi-hole authentication failed "
-                        "(wrong SENTINEL_PIHOLE_PASSWORD?)"
-                    )
-                }
-            response = self._client.get(path, headers={"X-FTL-SID": sid})
-            response.raise_for_status()
-            return response.json()
-        except httpx.HTTPError as exc:
-            logger.warning("Pi-hole %s failed: %s", path, exc)
-            return {"error": f"{exc.__class__.__name__}: {exc}"}
-
-    def close(self) -> None:
-        self._client.close()
-
-    def report(self) -> dict:
-        report = {"configured": self.configured, "host": self.host, "error": None}
-        if not self.configured:
-            report["error"] = (
-                "Not configured (set SENTINEL_PIHOLE_HOST + SENTINEL_PIHOLE_PASSWORD)"
-            )
-            return report
-        blocking = self._get("/api/dns/blocking")
-        summary = self._get("/api/stats/summary")
-        report.update(
-            {
-                "blocking": blocking.get("blocking"),
-                "queries_total": summary.get("queries", {}).get("total"),
-                "queries_blocked": summary.get("queries", {}).get("blocked"),
-                "blocked_percent": summary.get("queries", {}).get("percent_blocked"),
-                "clients": summary.get("clients", {}).get("active"),
-                "error": blocking.get("error") or summary.get("error"),
-            }
-        )
-        return report
-
-
 def system_overview(session: Session | None = None) -> dict:
     """Aggregate report for GET /api/v1/system/overview."""
     states: list[ComponentStatus] = run_startup_checks()
@@ -200,5 +123,4 @@ def system_overview(session: Session | None = None) -> dict:
             ]
         },
         "ollama": OllamaStatus(session=session).report(),
-        "pihole": PiHoleStatus().report(),
     }

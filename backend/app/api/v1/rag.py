@@ -1,10 +1,9 @@
 """RAG endpoints — /api/v1/rag (docs/02 §2.3).
 
 Semantic search and grounded Q&A over indexed project knowledge. Queries run
-in the API process (Ollama is local); indexing runs as an async Celery job.
+in the API process (Ollama is local); indexing runs as an in-process
+scheduler job.
 """
-
-import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func
@@ -22,8 +21,8 @@ from app.schemas import (
     RagSearchRequest,
     RagSearchResponse,
 )
+from app.services.job_scheduler import scheduler as job_scheduler
 from app.services.rag_service import RagService
-from app.tasks.rag_tasks import run_index_knowledge
 
 router = APIRouter(tags=["rag"])
 
@@ -71,9 +70,8 @@ def rag_index(
 ) -> JobEnvelope:
     """Enqueue knowledge ingestion for a project."""
     project = _project_or_404(payload.project_id, session)
-    job_id = str(uuid.uuid4())
-    run_index_knowledge.apply_async(
-        args=[project.id, payload.with_summary], task_id=job_id
+    job_id = job_scheduler.submit(
+        "run_index_knowledge", args=[project.id, payload.with_summary]
     )
     return JobEnvelope(job_id=job_id, status="queued")
 

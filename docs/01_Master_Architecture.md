@@ -255,10 +255,10 @@ The MVP is complete when a user can:
                                         ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │              External Integrations (Local Network)               │
-│  ┌──────────┐ ┌──────────┐ ┌──────────────┐                    │
-│  │  Ollama  │ │Pi-hole/  │ │  Local API   │                    │
-│  │          │ │AdGuard   │ │ (Sentinel)   │                    │
-│  └──────────┘ └──────────┘ └──────────────┘                    │
+│  ┌──────────┐                      ┌──────────────┐                    │
+│  │  Ollama  │                      │  Local API   │                    │
+│  │          │                      │ (Sentinel)   │                    │
+│  └──────────┘                      └──────────────┘                    │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -561,10 +561,13 @@ Sentinel is not just Project Intelligence — its identity is a **Home Developme
 
 Initial services hosted by the home server (laptop):
 
-- **Pi-hole** — network-wide ad and tracker blocking (DNS on port 53, admin UI on `http://192.168.4.40:8053`). Deployed via the `pihole` compose profile (`docker-compose.yml`).
 - **Ollama** — local AI inference shared by every device on the network (`http://192.168.4.40:11434`). Laptop runs it natively (Windows); Sentinel and airadio reach it over the LAN via `SENTINEL_OLLAMA_HOST` / `OLLAMA_URL`.
 - **Local API** — Sentinel modules and future desktop/mobile apps.
 - **Background scheduler** — indexing, builds, nightly scans, maintenance jobs.
+
+(Pi-hole was deployed alongside Sentinel from Sprint 8.5 to 13 and removed from
+the stack in Sprint 15 — see docs/pi-hole-idea.md; it stays deployed
+independently as the LAN DNS/ad-blocker but is no longer part of this project.)
 
 The laptop acts as:
 
@@ -599,15 +602,19 @@ Desktop (dev workstation)   Phone          Tablet
           192.168.4.40 (DHCP-reserved)
 
 Services:
-  http://192.168.4.40:8053      Pi-hole admin (ad blocking)
+  http://192.168.4.40:8000      Sentinel dashboard + API (native install, Sprint 15)
   http://192.168.4.40:11434     Ollama (shared AI inference)
   http://192.168.4.28:5173      Sentinel dashboard (desktop dev)
   http://192.168.4.28:8000      Sentinel API (desktop dev)
+  http://192.168.4.40:8053      Pi-hole admin (independent, not part of Sentinel)
 ```
 
 **Connectivity Rules**:
-- Services bind to `localhost` by default; the laptop's Ollama/Pi-hole bind all interfaces (`0.0.0.0`) so LAN devices can use them
-- Router DHCP hands out a **reservation** for `192.168.4.40` and advertises it as the **LAN DNS server** → network-wide ad blocking via Pi-hole
+- Sentinel binds `127.0.0.1` (or `SENTINEL_HOST`); the laptop's Ollama binds all
+  interfaces (`0.0.0.0`) so LAN devices can use it
+- Router DHCP hands out a **reservation** for `192.168.4.40` and advertises it
+  as the **LAN DNS server** (Pi-hole handles DNS; Sentinel no longer integrates
+  with it — Sprint 15)
 - No public exposure by default
 - Optional future enhancement: WireGuard/OpenVPN for secure remote access
 
@@ -884,9 +891,8 @@ A separate entertainment subsystem:
 |------------|---------|
 | SQLite | Structured knowledge storage (file-based) |
 | ChromaDB | Vector embeddings storage (embedded) |
-| Uvicorn/Gunicorn | ASGI server deployment |
-| Nginx (optional) | Reverse proxy for dashboard/API |
-| Docker Compose | Multi-service orchestration (Redis, Celery workers, Ollama, optional services) |
+| Uvicorn | ASGI server serving API + dashboard from one process (Sprint 15: no nginx) |
+| APScheduler | In-process background scheduler (Sprint 7; Redis/Celery deferred, Rule 3) |
 
 ### Why This Stack
 
@@ -1037,13 +1043,13 @@ sentinel/
 │   ├── package.json
 │   └── tsconfig.json
 ├── scripts/
-│   ├── dev.py                         # Run both backend + frontend in dev mode
-│   ├── build.py                       # Build all artifacts
-│   └── release.py                     # Package release
-├── docker-compose.yml                 # Orchestrate all services
-├── AGENTS.md                          # Project rules for AI agents
+│   ├── install_service.py              # Windows autostart (Task Scheduler)
+│   ├── build.py                        # Verify + stage the dashboard
+│   └── release.py                      # Package release zip
+├── run.py                              # Single starting point: checks + uvicorn
+├── AGENTS.md                           # Project rules for AI agents
 ├── .python-version
-├── pyproject.toml                     # Root pyproject (workspace)
+├── pyproject.toml                      # Root pyproject (workspace)
 └── README.md
 ```
 
@@ -1190,6 +1196,7 @@ When contributing to or extending Project Sentinel, agents should follow these p
 
 | Date | Version | Change | Author |
 |------|---------|--------|--------|
+| 2026-08-08 | 1.16 | Sprint 15.1 (Native deployment, decommission Docker). Compose/Docker layer removed: docker-compose*.yml, docker/, scripts/dev.py deleted; un.py (repo root) is the single starting point — startup checks then uvicorn on 127.0.0.1:8000 (--check/--port/--reload/--service/--install/--uninstall); scripts/install_service.py registers the Sentinel Task-Scheduler task (pythonw run.py --service every 5 min, idempotent); scripts/build.py reworked (verify + --dist stages frontend into ackend/app/static, served same-origin by pp/main.py); scripts/release.py ships run.py + scripts + docs + ackend/app; SENTINEL_PORT replaces SENTINEL_API_PORT; §4.2 env table + §13 rewritten (native runbook, troubleshooting); laptop.md rewritten. Pi-hole left the stack — System-page panel + SENTINEL_PIHOLE_* removed. Frontend: /system panel + pi/system.ts types updated. Tests: packaging suite reworked for native artifacts. Docs: changelogs v1.16 | User + AI agent |
 | 2026-08-07 | 1.15 | Sprint 15 (Performance tuning + final polish): repo sync now detects changes — HEAD is recorded before/after each `git pull --ff-only` (`git rev-parse --short HEAD`), only repos whose HEAD moved are re-indexed, an all-clean pass skips the scan entirely, and knowledge auto-index (v1.14) is narrowed to changed repos; every run persists to a new `SyncRun` table surfaced by `GET /api/v1/system/sync` (header pill shows last outcome). Portfolio scoring rework: build = 21 static (command detected) + 9 proven (green run), tests = 24 static (test files detected) + 6 proven — the static part survives a failed run; docs matrix green threshold lowered to 50%; new `GET /portfolio/summary` and a change-driven cache (cached `PortfolioScore` row is served until a build/test/security/file source is newer). Scanner skips self-scan false positives (`data/`, `fixtures/`, `.env`-template names; real `.env` still flagged). `GET /rag/index/status` reports embedded vs total files. Frontend: Dashboard shows real portfolio stats, header sync pill, Knowledge page index progress. Tests: 268 backend / 58 vitest. Docs: 02 §14.5 scoring + §13.4 sync + §2.3 status endpoint, changelogs v1.15 | User + AI |
 
   | 2026-08-07 | 1.14 | Sprint 12.2 (Bugs + UI pages): world-sim growth bugs fixed — new recruitment step (roles scale with population vs fixed bootstrap) + land capacity (`FARM_CAPACITY`), food-store cap (`MAX_FOOD_DAYS=20`, bounds trade growth), world cap (`MAX_ACTIVE_SETTLEMENTS=60`), road-only raids, skill caps at +45%/+90% — worlds now grow to ~60 settlements/58 roads naturally; regression test `test_roads_appear_from_natural_growth`. Non-UTF-8 file encoding hardening (repo sync can't abort on a latin-1 `requirements.txt`). Best-effort knowledge auto-index after repo sync (unembedded projects → RAG tasks when Ollama up). Real Projects/Builds/Security pages replace placeholders (run/trigger + history/log/findings UI, `api/tests.ts`). Details in impl guide §11/§13.4/§19, sprint plan v1.14 | User + AI |

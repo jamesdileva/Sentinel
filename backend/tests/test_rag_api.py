@@ -118,15 +118,17 @@ def test_rag_query_no_index_helpful_answer(overridden):
     assert resp.json()["confidence"] == 0.0
 
 
-def test_rag_index_returns_job_envelope(tmp_db):
+def test_rag_index_returns_job_envelope(tmp_db, monkeypatch):
     project_id = _seed(tmp_db)
     captured = {}
 
-    def fake_apply_async(args=None, kwargs=None, task_id=None):
+    def fake_submit(name, args=None, task_id=None):
+        captured["name"] = name
         captured["args"] = args
         captured["task_id"] = task_id
+        return "job-123"
 
-    run_index_knowledge.apply_async = fake_apply_async  # type: ignore[method-assign]
+    monkeypatch.setattr("app.api.v1.rag.job_scheduler.submit", fake_submit)
     client = TestClient(app)
     resp = client.post(
         "/api/v1/rag/index", json={"project_id": project_id, "with_summary": False}
@@ -134,9 +136,10 @@ def test_rag_index_returns_job_envelope(tmp_db):
     assert resp.status_code == 202
     body = resp.json()
     assert body["status"] == "queued"
-    assert body["job_id"] == captured["task_id"]
+    assert body["job_id"] == "job-123"
+    assert captured["name"] == "run_index_knowledge"
     assert captured["args"] == [project_id, False]
-    del run_index_knowledge.apply_async
+    assert captured["task_id"] is None
 
 
 def test_rag_index_unknown_project_404(tmp_db):

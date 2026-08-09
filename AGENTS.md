@@ -33,7 +33,7 @@ These are the project's constitution. They must be upheld in every decision, cha
 | Backend framework | FastAPI, Pydantic v2 |
 | Frontend | React 19+, TypeScript, Vite, TailwindCSS |
 | AI | Ollama (local); LLM `gemma2`, embedding `nomic-embed-text` |
-| Task queue | Celery + Redis (Sprint 4+, Docker) |
+| Task queue | In-process APScheduler + thread pool (no Redis/Celery — Sprint 15 removed the deferred Docker queue) |
 | Watch dirs | `C:\Users\j` (configurable via `SENTINEL_WATCH_DIRS`) |
 
 ## Source of Truth
@@ -51,28 +51,32 @@ These are the project's constitution. They must be upheld in every decision, cha
 - Status/read endpoints use GET; state-changing actions use POST
 - Never commit secrets, `.env`, or `data/` content (see `.gitignore`)
 
-## Deployment (Sprint 12)
+## Deployment (Sprint 12 → 15: native install, no containers)
 
-- **One compose file is the single source of truth** (`docker-compose.yml`):
-  backend, frontend (nginx, served at `:8080`), worker, scheduler, redis,
-  plus the optional `ollama`/`pihole` profiles. `docker-compose.dev.yml` holds
-  dev overrides (source mount + reload) and is loaded **only** by
-  `python scripts/dev.py` — a bare `docker compose up` on the laptop is prod.
+- **The project runs natively**: one uvicorn process serves the API + built
+  dashboard from the same origin (`backend/app/static`). `python run.py` is the
+  single starting point (startup checks: SQLite, Ollama, frontend built) and
+  `scripts/install_service.py` registers a Task-Scheduler autostart task that
+  runs `run.py --service` every 5 min (exits when the port is serving).
+  `scripts/build.py --dist` verifies (backend pytest + lint, frontend test +
+  build) and stages the dashboard; `scripts/release.py` ships
+  `dist/sentinel-<v>.zip` + `.sha256` (run.py, scripts, `.env.example`, docs,
+  `backend/app`).
 - **Laptop (192.168.4.40) is the always-on home server**: runbook in
-  docs/02 §13.4, dashboard at `http://192.168.4.40:8080` from any LAN device.
+  docs/02 §13.4, dashboard at `http://192.168.4.40:8000` from any LAN device.
+  Ollama runs natively (`OLLAMA_HOST=0.0.0.0:11434`) and Pi-hole remains the
+  network DNS — **independent of Sentinel since Sprint 15** (no code, no env,
+  no System-page panel; never start/stop it from Sentinel).
 - **Env overrides**: `SENTINEL_OLLAMA_HOST`, `SENTINEL_GITHUB_TOKEN` +
-  `SENTINEL_PROJECTS_DIR` (local clone target; repos auto-synced from GitHub
-  by `repo-sync`, no SMB), `SENTINEL_PIHOLE_HOST`/`SENTINEL_PIHOLE_PASSWORD`
-  (v6 session auth), `SENTINEL_API_PORT` — see `.env.example`.
+  `SENTINEL_WATCH_DIRS` (repos auto-synced from GitHub by `repo-sync`, no SMB),
+  `SENTINEL_PORT`, `SENTINEL_DB_PATH`/`SENTINEL_CHROMA_PATH` — see `.env.example`.
 - **System page**: `/system` is a read-only home snapshot (Ollama availability/
-  models/tokens-per-sec + Pi-hole stats + startup checks). Per Rule 2 it never
-  toggles anything server-side.
+  models/tokens-per-sec + startup checks). Per Rule 2 it never toggles
+  anything server-side.
 - **Release tooling**: `python scripts/release.py` → `dist/sentinel-<v>.zip` +
-  `.sha256` (compose, Dockerfiles, nginx conf, `.env.example`, docs);
-  `python scripts/build.py` builds both images (tests first unless
-  `--skip-tests`).
-- **Laptop operations**: `docs/laptop.md` is the on-server checklist (SMB map,
-  compose commands, Pi-hole password, known issues); troubleshooting table in
-  docs/02 §13.4. Never start Pi-hole from Docker Desktop's UI (resets the
-  password), and never stop Docker wholesale on the laptop (Pi-hole is the
-  network DNS).
+  `.sha256` (run.py, scripts/install_service.py, scripts/build.py, `.env.example`,
+  docs, `backend/app`); `python scripts/build.py --dist` verifies and stages.
+- **Laptop operations**: `docs/laptop.md` is the on-server checklist (venv setup,
+  build/stage, autostart task, known issues); troubleshooting table in docs/02 §13.4.
+  Never register the autostart task twice with a different repo path (uninstall
+  first), and keep port 8000 free of other services.
