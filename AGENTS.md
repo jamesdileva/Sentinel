@@ -34,7 +34,7 @@ These are the project's constitution. They must be upheld in every decision, cha
 | Frontend | React 19+, TypeScript, Vite, TailwindCSS |
 | AI | Ollama (local); LLM `gemma2`, embedding `nomic-embed-text` |
 | Task queue | In-process APScheduler + thread pool (no Redis/Celery — Sprint 15 removed the deferred Docker queue) |
-| Watch dirs | `C:\Users\j` (configurable via `SENTINEL_WATCH_DIRS`) |
+| Watch dirs | Current user's home (`Path.home()`, configurable via `SENTINEL_WATCH_DIRS`) |
 
 ## Source of Truth
 
@@ -54,8 +54,10 @@ These are the project's constitution. They must be upheld in every decision, cha
 ## Deployment (Sprint 12 → 15: native install, no containers)
 
 - **The project runs natively**: one uvicorn process serves the API + built
-  dashboard from the same origin (`backend/app/static`). `python run.py` is the
-  single starting point (startup checks: SQLite, Ollama, frontend built) and
+  dashboard from the same origin (`backend/app/static`).
+  `.\.venv\Scripts\python.exe run.py` is the single starting point (startup
+  checks: SQLite, Ollama, frontend built; **no venv activation needed — the
+  venv python is called by path everywhere**) and
   `scripts/install_service.py` registers a Task-Scheduler autostart task that
   runs `run.py --service` every 5 min (exits when the port is serving).
   `scripts/build.py --dist` verifies (backend pytest + lint, frontend test +
@@ -73,9 +75,10 @@ These are the project's constitution. They must be upheld in every decision, cha
 - **System page**: `/system` is a read-only home snapshot (Ollama availability/
   models/tokens-per-sec + startup checks). Per Rule 2 it never toggles
   anything server-side.
-- **Release tooling**: `python scripts/release.py` → `dist/sentinel-<v>.zip` +
-  `.sha256` (run.py, scripts/install_service.py, scripts/build.py, `.env.example`,
-  docs, `backend/app`); `python scripts/build.py --dist` verifies and stages.
+- **Release tooling**: `.\.venv\Scripts\python.exe scripts\release.py` →
+  `dist/sentinel-<v>.zip` + `.sha256` (run.py, scripts/install_service.py,
+  scripts/build.py, `.env.example`, docs, `backend/app`);
+  `.\.venv\Scripts\python.exe scripts\build.py --dist` verifies and stages.
 - **Laptop operations**: `docs/laptop.md` is the on-server checklist (venv setup,
   build/stage, autostart task, known issues); troubleshooting table in docs/02 §13.4.
   Never register the autostart task twice with a different repo path (uninstall

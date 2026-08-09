@@ -4,7 +4,7 @@ Sprint 1 scope: health endpoints, CORS, exception handling, CLI-compatible serve
 Sprint 2: database initialization on startup (lifespan).
 Sprint 3: background repository discovery scan on startup.
 Sprint 16: single-process runtime — the API also serves the built dashboard
-(SPA) from `frontend/dist`, and the in-process scheduler replaces Celery.
+(SPA) from `backend/app/static`, and the in-process scheduler replaces Celery.
 """
 
 import threading
@@ -34,7 +34,17 @@ from app.services.startup_check import run_startup_checks
 setup_logging()
 logger = get_logger(__name__)
 
-FRONTEND_DIST = Path(__file__).resolve().parent.parent.parent.parent / "frontend" / "dist"
+# The committed, release-shipped build (scripts/build.py --dist stages into it).
+STATIC_DIR = Path(__file__).resolve().parent / "static"
+# Dev convenience: a fresh clone with no staged build yet can serve frontend/dist.
+DEV_DIST = Path(__file__).resolve().parent.parent.parent.parent / "frontend" / "dist"
+
+DASHBOARD_DIR = (
+    STATIC_DIR if STATIC_DIR.is_dir() else (DEV_DIST if DEV_DIST.is_dir() else None)
+)
+DASHBOARD_INDEX = (
+    Path(DASHBOARD_DIR) / "index.html" if DASHBOARD_DIR is not None else None
+)
 
 
 def _background_initial_scan() -> None:
@@ -81,8 +91,10 @@ app = FastAPI(
 
 
 @app.get("/", tags=["system"])
-def root() -> dict:
-    """Health check root endpoint."""
+def root():
+    """Serve the dashboard; health JSON only when no build exists."""
+    if DASHBOARD_INDEX is not None and DASHBOARD_INDEX.is_file():
+        return FileResponse(DASHBOARD_INDEX)
     return {"status": "ok"}
 
 
@@ -115,11 +127,12 @@ if settings.world_sim_enabled:
     app.include_router(world_sim_router, prefix="/api/v1")
 
 # SPA dashboard (Sprint 16): the same origin serves the built frontend, so one
-# process = API + WebSocket + dashboard with no nginx and no CORS. Mounted
-# last so /api/* and health routes always win; unknown paths fall back to
-# index.html (client-side routing).
-if FRONTEND_DIST.is_dir():
-    assets_dir = FRONTEND_DIST / "assets"
+# process = API + WebSocket + dashboard with no nginx and no CORS. Served from
+# backend/app/static (the staged, shipped build). Mounted after the routers so
+# /api/* and health routes always win; unknown paths fall back to index.html
+# (client-side routing).
+if DASHBOARD_DIR is not None:
+    assets_dir = DASHBOARD_DIR / "assets"
     if assets_dir.is_dir():
         app.mount(
             "/assets",
@@ -129,14 +142,14 @@ if FRONTEND_DIST.is_dir():
 
     @app.get("/{full_path:path}", include_in_schema=False)
     def spa_fallback(full_path: str) -> FileResponse:
-        candidate = (FRONTEND_DIST / full_path).resolve()
-        if (
-            candidate.is_file()
-            and candidate.is_relative_to(FRONTEND_DIST.resolve())
-        ):
+        candidate = (DASHBOARD_DIR / full_path).resolve()
+        if candidate.is_file() and candidate.is_relative_to(DASHBOARD_DIR.resolve()):
             return FileResponse(candidate)
-        return FileResponse(FRONTEND_DIST / "index.html")
+        return FileResponse(DASHBOARD_INDEX)
 
-    logger.info("Serving dashboard from %s", FRONTEND_DIST)
+    logger.info("Serving dashboard from %s", DASHBOARD_DIR)
 else:
-    logger.info("frontend/dist not found — API only (run `npm run build`)")
+    logger.info(
+        "no dashboard build found (backend/app/static) — API only "
+        "(run `scripts/build.py --dist`)"
+    )

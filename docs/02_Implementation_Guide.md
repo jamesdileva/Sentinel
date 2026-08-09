@@ -901,7 +901,7 @@ Read from the repo-root `.env` (Sprint 15: no containers — the backend process
 | `SENTINEL_OLLAMA_HOST` | `http://localhost:11434` | Ollama server endpoint (laptop: `http://192.168.4.40:11434`) |
 | `SENTINEL_OLLAMA_MODEL` | `gemma2` | LLM model for project AI |
 | `SENTINEL_EMBEDDING_MODEL` | `nomic-embed-text` | Embedding model |
-| `SENTINEL_WATCH_DIRS` | `C:\Users\j` | Comma-separated project directories |
+| `SENTINEL_WATCH_DIRS` | `<home>` (current user) | Comma-separated project directories (v1.16.2: defaults to `Path.home()` so the laptop works out of the box) |
 | `SENTINEL_API_KEY` | (empty) | Optional API key for authentication |
 | `SENTINEL_SCHEDULE_INTERVAL` | `60` | Minutes between automation runs |
 | `SENTINEL_GITHUB_TOKEN` | (empty) | Read-only PAT for `repo-sync` (clone/pull from GitHub) |
@@ -943,22 +943,23 @@ sentinel config set <key> <value>    # Update a config value
 
 ```bash
 # run.py (repo root) — the single entry point for the home server
-python run.py                          # startup checks + start on 127.0.0.1:8000
-python run.py --check                  # startup checks only (SQLite, Ollama, frontend)
-python run.py --port 8080              # different port
-python run.py --reload                 # dev auto-reload
-python scripts/install_service.py --install   # Task Scheduler autostart (Sentinel)
-python scripts/install_service.py --uninstall # remove autostart task
+# (commands use the venv python explicitly — no activation required)
+.\.venv\Scripts\python.exe run.py                          # startup checks + start on 127.0.0.1:8000
+.\.venv\Scripts\python.exe run.py --check                  # startup checks only (SQLite, Ollama, frontend)
+.\.venv\Scripts\python.exe run.py --port 8080              # different port
+.\.venv\Scripts\python.exe run.py --reload                 # dev auto-reload
+.\.venv\Scripts\python.exe scripts\install_service.py --install   # Task Scheduler autostart (Sentinel)
+.\.venv\Scripts\python.exe scripts\install_service.py --uninstall # remove autostart task
 
 # scripts/build.py — verify + stage the dashboard, no Docker
-python scripts/build.py                # verify (pytest, lint, npm test) + npm build
-python scripts/build.py --dist         # also stage frontend into backend/app/static
-python scripts/build.py --skip-tests   # stage only, no verification
+.\.venv\Scripts\python.exe scripts\build.py                # verify (pytest, lint, npm test) + npm build
+.\.venv\Scripts\python.exe scripts\build.py --dist         # also stage frontend into backend/app/static
+.\.venv\Scripts\python.exe scripts\build.py --skip-tests   # stage only, no verification
 
 # scripts/release.py
-python scripts/release.py              # build dist/sentinel-<version>.zip + .sha256
-python scripts/release.py --dry-run    # print the file plan, write nothing
-python scripts/release.py --tag        # also create a git tag v<version>
+.\.venv\Scripts\python.exe scripts\release.py              # build dist/sentinel-<version>.zip + .sha256
+.\.venv\Scripts\python.exe scripts\release.py --dry-run    # print the file plan, write nothing
+.\.venv\Scripts\python.exe scripts\release.py --tag        # also create a git tag v<version>
 ```
 
 ---
@@ -1617,21 +1618,27 @@ auto-sync).
 ### 13.2. Running
 
 ```powershell
-python run.py              # startup checks (SQLite, Ollama, frontend built) + uvicorn on 127.0.0.1:8000
-python run.py --check      # checks only, no server
-python run.py --port 8080  # or set SENTINEL_PORT in .env
-python run.py --reload     # dev-only file-watch reload
+# venv python is used explicitly — PowerShell will block Activate.ps1 by default
+.\.venv\Scripts\python.exe run.py              # startup checks (SQLite, Ollama, frontend built) + uvicorn on 127.0.0.1:8000
+.\.venv\Scripts\python.exe run.py --check      # checks only, no server
+.\.venv\Scripts\python.exe run.py --port 8080  # or set SENTINEL_PORT in .env
+.\.venv\Scripts\python.exe run.py --reload     # dev-only file-watch reload
 ```
 
 The dashboard is `http://192.168.4.40:8000` (System page: `/system`). The API is
 same-origin (`/api/v1/*`) — the SPA fallback route in `app/main.py` serves
 `index.html` for any non-API path.
 
+> **Note:** the dashboard ships **prebuilt** in the repo (`backend/app/static`,
+> committed). A fresh `git pull` is all the laptop needs — `npm install`,
+> `npm run build`, and even `scripts\build.py` are only required when you have
+> changed the frontend code yourself (e.g. the Tauri ride-along next sprint).
+
 ### 13.3. Autostart (always-on laptop)
 
 ```powershell
-python scripts/install_service.py --install    # registers the "Sentinel" Task-Scheduler task
-python scripts/install_service.py --uninstall  # removes it
+.\.venv\Scripts\python.exe scripts\install_service.py --install    # registers the "Sentinel" Task-Scheduler task
+.\.venv\Scripts\python.exe scripts\install_service.py --uninstall  # removes it
 ```
 
 The task runs `run.py --service` every 5 minutes with the repo's own venv
@@ -1643,9 +1650,10 @@ rights and no service wrapper.
 
 The laptop is the always-on home server. After the one-time setup (§13.1) the
 whole application is reachable at **http://192.168.4.40:8000** from any device
-on the LAN. `python run.py` performs the same startup checks the server itself
-performs at boot (database, chroma, watch dirs, Ollama) and refuses to launch a
-broken process — cases that in the compose world silently rolled over.
+on the LAN. `.\.venv\Scripts\python.exe run.py` performs the same startup
+checks the server itself performs at boot (database, chroma, watch dirs, Ollama)
+and refuses to launch a broken process — cases that in the compose world
+silently rolled over.
 
 **One-time laptop setup:**
 
@@ -1660,7 +1668,7 @@ cd frontend && npm install && npm run build && cd ..
 #   SENTINEL_OLLAMA_HOST=http://192.168.4.40:11434   (native Ollama, same host)
 #   SENTINEL_GITHUB_TOKEN=<read-only PAT>            (repo auto-sync, Sprint 12.1)
 .venv\Scripts\python.exe scripts\install_service.py --install   # autostart (optional)
-python run.py               # or reboot — the Task-Scheduler task starts it
+.venv\Scripts\python.exe run.py                # or reboot — the Task-Scheduler task starts it
 ```
 
 **Projects via GitHub auto-sync (Sprint 12.1):**
@@ -1671,7 +1679,9 @@ them from GitHub — no SMB share or manual second copy needed:
 1. Create a **read-only PAT** on GitHub (Settings → Developer settings →
    Personal access tokens; `repo` scope) and set `SENTINEL_GITHUB_TOKEN` in the
    laptop `.env` (gitignored — never commit it).
-2. `SENTINEL_WATCH_DIRS` contains every `.git` checkout (default `C:\Users\j`).
+2. `SENTINEL_WATCH_DIRS` contains every `.git` checkout (default: the current
+   user's home directory — the laptop user's `C:\Users\james` is found
+   automatically, no setup).
 3. The beat schedule syncs on `SENTINEL_SYNC_INTERVAL_MINUTES` (default
    15): new repos are `git clone`d, existing checkouts `git pull --ff-only`.
    **Change detection (v1.15):** a repo's HEAD is recorded (`git rev-parse --short
@@ -1704,7 +1714,7 @@ laptop's database from the synced projects.
 backend startup checks — per Project Rule 2 nothing on the page toggles
 anything server-side.
 
-**Release artifacts:** `python scripts/release.py` produces
+**Release artifacts:** `.\.venv\Scripts\python.exe scripts\release.py` produces
 `dist/sentinel-<version>.zip` + `.sha256` (run.py, scripts, `.env.example`,
 docs, `backend/app` + `pyproject.toml`) — copy that archive to the laptop
 instead of cloning if preferred, then follow §13.1 minus `git clone`.
@@ -1713,12 +1723,12 @@ instead of cloning if preferred, then follow §13.1 minus `git clone`.
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| `run.py` warns *frontend not built* | `backend/app/static/index.html` missing | `python scripts/build.py --dist` before serving |
+| `run.py` warns *frontend not built* | `backend/app/static/index.html` missing | `.\.venv\Scripts\python.exe scripts\build.py --dist` before serving |
 | Dashboard shows stale UI after `git pull` | The served build is the staged one, not `frontend/dist` | Re-run `scripts/build.py --dist`; restart the backend |
 | Port 8000 already in use | Another app owns it (e.g. the desktop dev server) | `SENTINEL_PORT=8100` in `.env` (or `run.py --port 8100`) |
-| Server dies after reboot | Autostart task not installed, or paths moved | `scripts/install_service.py --install` (task uses absolute venv paths) |
+| Server dies after reboot | Autostart task not installed, or paths moved | `.\.venv\Scripts\python.exe scripts\install_service.py --install` (task uses absolute venv paths) |
 | `sentinel sync` → *SENTINEL_GITHUB_TOKEN is not configured* | Token missing in `.env` | Set the PAT; restart the backend |
-| New repos never appear after a push | Sync interval not elapsed | `python -m app.cli sync` (inside `backend`) for an immediate pass |
+| New repos never appear after a push | Sync interval not elapsed | `..\.venv\Scripts\python.exe -m app.cli sync` (from inside `backend`) for an immediate pass |
 | Task-Scheduler task runs but nothing listens | Absolute paths point at a moved repo | `--uninstall` then `--install` again |
 
 (Pi-hole and Docker troubleshooting from the Sprint 8–13 era is archived in the
@@ -1838,6 +1848,7 @@ relationships aren't persisted, so they're intentionally absent.
 
 | Date | Version | Change | Author |
 |------|---------|--------|--------|
+| 2026-08-08 | 1.16.2 | Dashboard actually served: `app/main.py` still pointed at `frontend/dist` while the build is staged at `backend/app/static` — on a Node-less laptop every non-API path 404'd. Now serves the staged build (dev fallback to `frontend/dist`) and `/` returns dashboard HTML instead of the Sprint-1 health JSON (health stays at `/health` + `/api/v1/health`). SPA-fallback + root tests added; 257 backend green. Docs: venv-path commands tightened (`.\.venv\Scripts\python.exe run.py` — PowerShell ExecutionPolicy blocks `Activate.ps1`, activation never required): §5.2 + §13, laptop.md, AGENTS.md. Watch-dir default changed from hardcoded `C:\Users\j` to the current user's home (`Path.home()`) — laptop `C:\Users\james` found with no config; env override unchanged | AI agent |
 | 2026-08-08 | 1.16.1 | Pi-hole decommissioned on the laptop (docs/laptop.md `Moving off Docker`): router DNS back to Automatic, docker system prune -a --volumes wipes the old stack + Pi-hole, Docker Desktop uninstalled, old Sentinel task removed; laptop now needs only Python (repo ships the staged dashboard in ackend/app/static — no Node). Docs: laptop.md migration section added, 01 §9.2/§10 and 02 §13 updated (Pi-hole retired, DNS Automatic) | User |
 | 2026-08-08 | 1.16 | Sprint 15.1 (Native deployment, decommission Docker). Compose/Docker layer removed: docker-compose*.yml, docker/, scripts/dev.py deleted; 
 un.py (repo root) is the single starting point — startup checks then uvicorn on 127.0.0.1:8000 (--check/--port/--reload/--service/--install/--uninstall); scripts/install_service.py registers the Sentinel Task-Scheduler task (pythonw run.py --service every 5 min, idempotent); scripts/build.py reworked (verify + --dist stages frontend into ackend/app/static, served same-origin by pp/main.py); scripts/release.py ships run.py + scripts + docs + ackend/app; SENTINEL_PORT replaces SENTINEL_API_PORT; §4.2 env table + §13 rewritten (native runbook, troubleshooting); laptop.md rewritten. Pi-hole left the stack — System-page panel + SENTINEL_PIHOLE_* removed. Frontend: /system panel + pi/system.ts types updated. Tests: packaging suite reworked for native artifacts. Docs: changelogs v1.16 | User + AI agent |

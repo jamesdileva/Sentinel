@@ -5,6 +5,7 @@ See docs/02_Implementation_Guide.md §4.2 for the full variable reference.
 
 from pathlib import Path
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Repo root: sentinel/ (data lives at repo root, see docs/01 §13)
@@ -33,7 +34,10 @@ class Settings(BaseSettings):
     embedding_model: str = "nomic-embed-text"
     ollama_timeout_seconds: int = 120
 
-    watch_dirs: list[str] = ["C:\\Users\\j"]
+    # Defaults to the current user's home directory instead of a hardcoded
+    # path, so a fresh install on any machine (e.g. the laptop, user `james`)
+    # finds its repos with no SENTINEL_WATCH_DIRS setup.
+    watch_dirs: list[str] = Field(default_factory=lambda: [str(Path.home())])
     ignore_patterns: list[str] = [
         ".git/",
         "__pycache__/",

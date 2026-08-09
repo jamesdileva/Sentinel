@@ -35,8 +35,14 @@ Remove-Item -Recurse -Force .\data
 ```
 
 After the wipe, `git pull` and continue with the One-time setup below. The
-whole migration is complete when `python run.py --check` reports all startup
-checks ok and the dashboard answers at `http://192.168.4.40:8000`.
+whole migration is complete when `.\.venv\Scripts\python.exe run.py --check`
+reports all startup checks ok and the dashboard answers at
+`http://192.168.4.40:8000`.
+
+> **venv never needs activating.** PowerShell's default execution policy blocks
+> `Activate.ps1` on most machines, so every command below uses the venv's
+> python explicitly (`.\.venv\Scripts\python.exe`) — the autostart task does
+> the same (via `pythonw.exe`).
 
 ## One-time setup
 
@@ -59,23 +65,28 @@ py -3.11 -m venv .venv
 `.venv\Scripts\python.exe scripts\build.py --dist` — skip this if you never
 touch the frontend.
 
-**Start the server** (recommended): `python run.py` → startup checks (SQLite,
-Ollama, frontend built) then uvicorn on `127.0.0.1:8000`. For always-on runs from
-login: `python scripts/install_service.py --install` registers a `Sentinel`
-Task-Scheduler task that runs `run.py --service` every 5 minutes (exits instantly
-if the port is already serving — the server itself runs 24/7, the task only
-restarts it after crashes/reboots).
+**Start the server** (recommended): `.\.venv\Scripts\python.exe run.py` →
+startup checks (SQLite, Ollama, frontend built) then uvicorn on
+`127.0.0.1:8000`. For always-on runs from login:
+`.\.venv\Scripts\python.exe scripts\install_service.py --install` registers a
+`Sentinel` Task-Scheduler task that runs `run.py --service` every 5 minutes
+(exits instantly if the port is already serving — the server itself runs 24/7,
+the task only restarts it after crashes/reboots).
 
-Repos are found under `SENTINEL_WATCH_DIRS` (default `C:\Users\j`); the `repo-sync`
-beat keeps GitHub checkouts current every 15 minutes (`SENTINEL_SYNC_INTERVAL_MINUTES`)
-and auto-queues knowledge (RAG) indexing when Ollama is up.
+Repos are found under `SENTINEL_WATCH_DIRS`; it **defaults to the current
+user's home directory** (`~`, i.e. `C:\Users\james` on this laptop), so you do
+NOT need to set it — the repos just need to live under `~` (or set
+`SENTINEL_WATCH_DIRS=C:\Users\james` in `.env` if you prefer an explicit
+value). The `repo-sync` beat keeps GitHub checkouts current every 15 minutes
+(`SENTINEL_SYNC_INTERVAL_MINUTES`) and auto-queues knowledge (RAG) indexing
+when Ollama is up.
 
 ## Daily operations
 
 ```powershell
 git pull                         # update the repo (includes the staged dashboard)
-python run.py --service          # ensure it's running (the scheduler task does this)
-.venv\Scripts\python.exe -m app.cli sync   # immediate repo sync if impatient (run inside backend)
+.\.venv\Scripts\python.exe run.py --service   # ensure it's running (the scheduler task does this)
+..\.venv\Scripts\python.exe -m app.cli sync   # immediate repo sync if impatient (run from inside backend)
 ```
 
 - Dashboard: `http://192.168.4.40:8000` · System page: `/system`
@@ -96,7 +107,8 @@ python run.py --service          # ensure it's running (the scheduler task does 
 
 - `frontend` changed but dashboard is stale → forgot `scripts/build.py --dist`;
   the backend serves the *staged* build from `backend/app/static`.
-- Port 8000 already in use → another app is bound to it; `python run.py --port
-  8100` (and set `SENTINEL_PORT=8100` in `.env`).
+- Port 8000 already in use → another app is bound to it;
+  `.\.venv\Scripts\python.exe run.py --port 8100` (and set
+  `SENTINEL_PORT=8100` in `.env`).
 - After moving the repo folder on disk: the venv paths in the Task-Scheduler task
   are absolute — uninstall and re-install it (`scripts/install_service.py`).
