@@ -47,7 +47,7 @@ cd Sentinel
 # Only a Python venv is required — the repo ships the built dashboard in
 # backend/app/static, so no Node toolchain is needed on the laptop:
 py -3.11 -m venv .venv
-.venv\Scripts\python.exe -m pip install -r backend\requirements.txt
+.venv\Scripts\python.exe -m pip install -e "backend[dev]"
 
 # .env (gitignored) — from .env.example; defaults are safe, only these matter:
 #   SENTINEL_OLLAMA_HOST=http://127.0.0.1:11434   (native Ollama, same host)

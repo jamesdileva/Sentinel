@@ -27,10 +27,10 @@ server — no Docker.
 
 ```powershell
 py -3.11 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r backend\requirements-dev.txt
+.\.venv\Scripts\python.exe -m pip install -e "backend[dev]"
 cd frontend; npm install; npm run build; cd ..
 .\.venv\Scripts\python.exe scripts\build.py --dist   # verify + stage the dashboard
-python run.py                                        # startup checks + serve on 127.0.0.1:8000
+.\.venv\Scripts\python.exe run.py                    # startup checks + serve on 127.0.0.1:8000
 .\.venv\Scripts\python.exe scripts\install_service.py --install   # optional autostart
 ```
 

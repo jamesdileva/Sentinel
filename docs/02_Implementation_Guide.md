@@ -1600,8 +1600,7 @@ containers/volumes and the router DNS returns to Automatic (see
 git clone https://github.com/jamesdileva/Sentinel.git   # or cd into an existing clone + git pull
 cd Sentinel
 py -3.11 -m venv .venv                                   # backend venv (repo root)
-.venv\Scripts\python.exe -m pip install -r backend\requirements.txt
-.venv\Scripts\python.exe -m pip install -r backend\requirements-dev.txt   # pytest, black, isort, flake8
+.venv\Scripts\python.exe -m pip install -e "backend[dev]"   # runtime + dev deps (sqlmodel, pytest, lint)
 cd frontend
 npm install
 npm run build                          # → frontend/dist
@@ -1654,7 +1653,7 @@ broken process — cases that in the compose world silently rolled over.
 git clone https://github.com/jamesdileva/Sentinel.git
 cd Sentinel
 py -3.11 -m venv .venv
-.venv\Scripts\python.exe -m pip install -r backend\requirements.txt
+.venv\Scripts\python.exe -m pip install -e "backend[dev]"
 cd frontend && npm install && npm run build && cd ..
 .venv\Scripts\python.exe scripts\build.py --dist
 # .env (gitignored) — from .env.example; the only laptop-specific values:
