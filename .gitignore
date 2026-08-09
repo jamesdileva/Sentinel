@@ -43,3 +43,6 @@ Thumbs.db
 .idea/
 .vscode/
 *.swp
+
+# Scratchpad
+docs/later.md
