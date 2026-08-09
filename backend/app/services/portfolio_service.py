@@ -5,12 +5,24 @@ Aggregates each project's build, test, security and documentation state into a
 candidate ranking and feature matrix. All logic is deterministic (no AI): scores
 derive purely from stored rows, and nothing here mutates project data.
 
-Scoring (Sprint 10 decisions):
+Scoring (Sprint 10 + Sprint 15 refinements):
 - weights: build 30 / tests 30 / security 25 / docs 15
-- a component with no data yet scores 0 (never assumed healthy)
+- build = 21 static (a build command was discovered in the repo) + 9 when the
+  latest build actually passed. The static part survives a failed run — the
+  command does not change because a build failed (Sprint 15 decision).
+- tests = 24 static (test files exist in the repo) + 6 when the latest test
+  run is green. Same static-first logic as build.
 - security: unresolved findings deduct by severity; an all-resolved finding set
   (a scan happened) is "clean"; no findings at all is "pending" (never scanned)
-- docs = fraction of indexed files that are README/Markdown/docs files
+- docs = fraction of indexed files that are README/Markdown/docs files;
+  >= 50% counts as a green ✓ in the feature matrix (Sprint 15 threshold).
+- a component with no data yet scores 0 (never assumed healthy)
+
+Caching (Sprint 15): portfolio reads are cached in the `PortfolioScore` row.
+A project is recomputed only when a source row (build/test/security/file) is
+newer than the stored score, or when no score row exists yet — so repeated tab
+loads are instant and the numbers refresh exactly when the underlying data
+changes (e.g. after a repo sync pulls new commits).
 """
 
 import datetime
@@ -33,6 +45,14 @@ logger = get_logger(__name__)
 
 WEIGHTS = {"build": 30, "tests": 30, "security": 25, "docs": 15}
 
+# Sprint 15: static (detected) vs proven (ran green) split of the build/test
+# components. The static part is granted purely from repo detection and is
+# never lost to a failed run.
+BUILD_STATIC = 21
+BUILD_PROVEN = 9
+TESTS_STATIC = 24
+TESTS_PROVEN = 6
+
 SEVERITY_PENALTY = {
     "critical": 10,
     "high": 6,
@@ -42,7 +62,11 @@ SEVERITY_PENALTY = {
 }
 
 _DOC_EXTENSIONS = (".md", ".markdown", ".mdx")
+DOCS_GREEN_PCT = 50
 FEATURE_LIST = ["build", "test", "docs", "security", "screenshots"]
+
+# Test-file detection for the static tests component (Sprint 15).
+_TEST_DIR_PARTS = ("tests", "__tests__", "test")
 
 
 def is_doc_path(path: str) -> bool:
@@ -54,6 +78,22 @@ def is_doc_path(path: str) -> bool:
     if leaf == "readme":
         return True
     return "/docs/" in f"/{normalized}"
+
+
+def is_test_file_path(path: str) -> bool:
+    """True for conventional test files: tests/ dirs, test_*.py, *_test.py,
+    *.test.ts(x)/js, *.spec.ts(x)/js, __tests__/."""
+    normalized = (path or "").replace("\\", "/").lower()
+    parts = normalized.split("/")
+    if any(part in _TEST_DIR_PARTS for part in parts):
+        return True
+    name = parts[-1]
+    return (
+        name.startswith("test_")
+        or name.endswith("_test.py")
+        or ".test." in name
+        or ".spec." in name
+    )
 
 
 class PortfolioService:
@@ -88,24 +128,35 @@ class PortfolioService:
         stmt = select(ProjectFile).where(ProjectFile.project_id == project_id)
         return list(self.session.exec(stmt).all())
 
+    def _has_build_command(self, project: Project) -> bool:
+        commands = (project.stack or {}).get("commands") or {}
+        return bool(commands.get("build"))
+
+    def _has_test_files(self, project_id: str) -> bool:
+        return any(is_test_file_path(f.path) for f in self._files(project_id))
+
     # --- component scores -----------------------------------------------------
 
-    def _build_component(self, project_id: str) -> tuple[float, str]:
-        build = self._latest_build(project_id)
-        if build is None or build.success is None:
+    def _build_component(self, project: Project) -> tuple[float, str]:
+        if not self._has_build_command(project):
             return 0.0, "pending"
-        if build.success:
-            return float(WEIGHTS["build"]), "passing"
-        return round(WEIGHTS["build"] / 3.0, 1), "failing"
+        build = self._latest_build(project.id)
+        if build is not None and build.success is True:
+            return float(BUILD_STATIC + BUILD_PROVEN), "passing"
+        if build is not None and build.success is False:
+            return float(BUILD_STATIC), "failing"
+        return float(BUILD_STATIC), "configured"
 
     def _test_component(self, project_id: str) -> tuple[float, str]:
         test = self._latest_test(project_id)
-        if test is None or test.passed + test.failed + test.errors <= 0:
+        ran = test is not None and test.passed + test.failed + test.errors > 0
+        if not self._has_test_files(project_id) and not ran:
             return 0.0, "pending"
-        if test.failed == 0 and test.errors == 0:
-            return float(WEIGHTS["tests"]), "passing"
-        ratio = test.passed / (test.passed + test.failed + test.errors)
-        return round(WEIGHTS["tests"] * ratio, 1), "failing"
+        if ran and test.failed == 0 and test.errors == 0:
+            return float(TESTS_STATIC + TESTS_PROVEN), "passing"
+        if ran:
+            return float(TESTS_STATIC), "failing"
+        return float(TESTS_STATIC), "configured"
 
     def _security_component(self, project_id: str) -> tuple[float, str]:
         findings = self._findings(project_id)
@@ -129,6 +180,44 @@ class PortfolioService:
         pct = int(round(100.0 * doc_count / len(files)))
         return round(WEIGHTS["docs"] * pct / 100.0, 1), pct
 
+    # --- caching --------------------------------------------------------------
+
+    def _source_epoch(self, project: Project) -> datetime.datetime:
+        """Newest timestamp among the rows a score depends on; a score stored
+        after this is still fresh and is served from cache.
+
+        SQLite stores datetimes without tzinfo, so everything is normalized to
+        naive UTC before comparing (aware/naive mixing raises TypeError).
+        """
+        project_id = project.id
+        epochs: list[datetime.datetime] = []
+        for stmt in (
+            select(BuildLog.started_at).where(BuildLog.project_id == project_id),
+            select(TestResult.run_at).where(TestResult.project_id == project_id),
+            select(SecurityFinding.detected_at).where(
+                SecurityFinding.project_id == project_id
+            ),
+            select(ProjectFile.created_at).where(ProjectFile.project_id == project_id),
+        ):
+            for value in self.session.exec(stmt).all():
+                if value is not None:
+                    epochs.append(value.replace(tzinfo=None) if value.tzinfo else value)
+        if project.last_indexed is not None:
+            value = project.last_indexed
+            epochs.append(value.replace(tzinfo=None) if value.tzinfo else value)
+        if not epochs:
+            return datetime.datetime.min
+        return max(epochs)
+
+    def _fresh_row(self, project: Project) -> PortfolioScore:
+        """Return the cached score row if it is up to date, else recompute."""
+        row = self.session.exec(
+            select(PortfolioScore).where(PortfolioScore.project_id == project.id)
+        ).first()
+        if row is not None and row.updated_at >= self._source_epoch(project):
+            return row
+        return self.compute_portfolio_score(project)
+
     # --- results --------------------------------------------------------------
 
     def compute_health_score(self, project: Project) -> float:
@@ -136,7 +225,7 @@ class PortfolioService:
         return self._components(project)["score"]
 
     def _components(self, project: Project) -> dict:
-        build, build_status = self._build_component(project.id)
+        build, build_status = self._build_component(project)
         tests, test_status = self._test_component(project.id)
         security, security_status = self._security_component(project.id)
         docs, docs_pct = self._docs_component(project.id)
@@ -171,9 +260,9 @@ class PortfolioService:
         return row
 
     def scores(self) -> list[PortfolioScoreRead]:
-        """Fresh scores for every indexed project (recomputed, then persisted)."""
+        """Fresh scores for every indexed project (cached where still valid)."""
         return [
-            PortfolioScoreRead.model_validate(self.compute_portfolio_score(p))
+            PortfolioScoreRead.model_validate(self._fresh_row(p))
             for p in self._all_projects()
         ]
 
@@ -181,7 +270,7 @@ class PortfolioService:
         """Ranked candidates (score >= min_score) with the items they are missing."""
         candidates: list[PortfolioCandidate] = []
         for project in self._all_projects():
-            row = self.compute_portfolio_score(project)
+            row = self._fresh_row(project)
             if row.portfolio_score < min_score:
                 continue
             candidates.append(
@@ -199,7 +288,7 @@ class PortfolioService:
         projects = self._all_projects()
         matrix: list[list[str]] = []
         for project in projects:
-            row = self.compute_portfolio_score(project)
+            row = self._fresh_row(project)
             matrix.append(
                 [
                     self._pass_symbol(row.build_status),
@@ -214,6 +303,31 @@ class PortfolioService:
             features=list(FEATURE_LIST),
             matrix=matrix,
         )
+
+    def summary(self) -> dict:
+        """Dashboard numbers: project count, buildable projects, open findings,
+        average health. Used by GET /api/v1/portfolio/summary (Sprint 15)."""
+        projects = self._all_projects()
+        rows = [self._fresh_row(p) for p in projects]
+        buildable = sum(1 for p in projects if self._has_build_command(p))
+        open_findings = len(
+            list(
+                self.session.exec(
+                    select(SecurityFinding).where(
+                        SecurityFinding.resolved == False
+                    )  # noqa: E712
+                ).all()
+            )
+        )
+        avg_health = (
+            round(sum(r.portfolio_score for r in rows) / len(rows), 1) if rows else 0.0
+        )
+        return {
+            "projects": len(projects),
+            "buildable": buildable,
+            "open_findings": open_findings,
+            "avg_health": avg_health,
+        }
 
     # --- helpers --------------------------------------------------------------
 
@@ -236,12 +350,12 @@ class PortfolioService:
     def _pass_symbol(self, status: str) -> str:
         if status == "passing":
             return "✓"
-        if status == "failing":
+        if status in ("configured", "failing"):
             return "⚠"
         return "✗"
 
     def _docs_symbol(self, pct: int) -> str:
-        if pct >= 80:
+        if pct >= DOCS_GREEN_PCT:
             return "✓"
         if pct > 0:
             return "⚠"

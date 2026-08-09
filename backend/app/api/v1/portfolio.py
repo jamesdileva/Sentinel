@@ -43,3 +43,12 @@ def feature_matrix(
 ) -> FeatureMatrix:
     """Grid of every project x feature (build/test/docs/security/screenshots)."""
     return service.feature_matrix()
+
+
+@router.get("/summary")
+def portfolio_summary(
+    service: PortfolioService = Depends(get_portfolio_service),
+) -> dict:
+    """Dashboard stats: project count, buildable projects, open findings,
+    average health. Read-only; cached like the score table (Sprint 15)."""
+    return service.summary()

@@ -7,10 +7,15 @@ reproducible workflow driven entirely by git, never by AI:
 * For each repo, if the local directory already holds a `.git` checkout we
   `git pull --ff-only`; otherwise we `git clone` it directly under the
   configured watch dir root (default: first entry of SENTINEL_WATCH_DIRS).
-* After the loop we re-run the indexer so new projects become known, then
-  kick off knowledge (RAG) indexing for any project that has none yet
-  (Sprint 12.2) — strictly best-effort: if Ollama or the broker is down we
-  log and move on, never failing the sync for it.
+* After the loop we re-index only the repos whose HEAD actually moved
+  (Sprint 15 change detection): an unchanged pull results in zero scans —
+  no re-parsing, no re-embedding, and no portfolio cache invalidation.
+* Knowledge (RAG) indexing is queued only for projects under the changed
+  repos that still have unembedded files (Sprint 12.2, narrowed in Sprint 15)
+  — strictly best-effort: if Ollama or the broker is down we log and move on,
+  never failing the sync for it.
+* Every run is persisted to `SyncRun` (Sprint 15) so the dashboard pill and
+  GET /api/v1/system/sync can show the last sync outcome.
 
 Nothing mutates remote state; nothing is deleted. Big repo clones use the
 longer `CLONE_TIMEOUT_SECONDS`, and git never prompts (GIT_TERMINAL_PROMPT=0).
@@ -27,7 +32,7 @@ from sqlmodel import Session, select
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.db.connection import get_engine
-from app.db.models import ProjectFile
+from app.db.models import SyncRun
 from app.services.command_runner import run_command
 from app.services.indexer import IndexerService
 from app.services.ollama_service import OllamaService
@@ -119,37 +124,76 @@ class RepoSyncService:
     def _is_checkout(local_path: str) -> bool:
         return Path(local_path).joinpath(".git").is_dir()
 
+    def _head_sha(self, local: str) -> str | None:
+        """Current HEAD of a checkout, or None when there is no checkout (or
+        git cannot read it). Used to detect real changes after clone/pull."""
+        if not self._is_checkout(local):
+            return None
+        result = run_command("git rev-parse --short HEAD", cwd=local, timeout=60)
+        if result.exit_code != 0:
+            return None
+        sha = result.stdout.strip()
+        return sha or None
+
     def sync(self) -> dict:
-        """Clone missing repos, pull existing ones, then re-index over them
-        and queue knowledge indexing for projects that still lack it."""
+        """Clone missing repos, pull existing ones, then re-index only the
+        repos whose HEAD moved and queue knowledge for changed projects."""
         if not self.configured:
             raise ValueError("SENTINEL_GITHUB_TOKEN is not configured")
         results = {"cloned": [], "pulled": [], "failed": {}}
+        changed: list[str] = []
         for repo in self.remote_repos():
+            local = self._local_path(repo["full_name"])
+            before = self._head_sha(local)
             status = self._sync_repo(repo)
             if status == "cloned":
                 results["cloned"].append(repo["full_name"])
+                changed.append(repo["full_name"])
             elif status == "pulled":
                 results["pulled"].append(repo["full_name"])
+                if before != self._head_sha(local):
+                    changed.append(repo["full_name"])
             else:
                 results["failed"][repo["full_name"]] = status
-        results["indexed"] = self._reindex()
-        results["knowledge"] = self._queue_knowledge_index()
+        results["indexed"] = self._reindex(changed)
+        results["knowledge"] = self._queue_knowledge_index(changed)
         results["ran_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        persist_sync_run(
+            status="success",
+            cloned=results["cloned"],
+            pulled=results["pulled"],
+            failed=results["failed"],
+            indexed=results["indexed"],
+            knowledge_queued=results["knowledge"].get("queued", 0),
+        )
         return results
 
-    def _reindex(self) -> int:
-        with Session(get_engine()) as session:
-            projects = IndexerService(session).scan_all_projects(watch_dirs=[self.root])
-        return len(projects)
+    def _reindex(self, changed: list[str]) -> int:
+        """Index only repos whose HEAD actually moved (Sprint 15).
 
-    def _queue_knowledge_index(self) -> dict:
-        """Best-effort RAG indexing for projects without embedded files yet.
+        When nothing changed the whole scan is skipped — no directory walks,
+        no parsing, and portfolio caches stay valid.
+        """
+        if not changed:
+            logger.info("No repo changes detected; skipping reindex")
+            return 0
+        dirs = [self._local_path(name) for name in changed]
+        with Session(get_engine()) as session:
+            return len(IndexerService(session).scan_all_projects(watch_dirs=dirs))
+
+    def _queue_knowledge_index(self, changed: list[str]) -> dict:
+        """Best-effort RAG indexing for projects under *changed* repos that
+        still have unembedded files (Sprint 15: unchanged repos are skipped —
+        their embeddings are already current).
 
         Never blocks or fails the sync: if Ollama is unreachable the projects
         are simply skipped (they can be indexed later via `sentinel rag-index`
         or the /rag/index API). Each queued project becomes one Celery task.
         """
+        if not changed:
+            return {"queued": 0, "skipped": "no-changes"}
+        changed_dirs = [self._local_path(name) for name in changed]
+
         try:
             if not OllamaService().is_available():
                 logger.info("Knowledge indexing skipped: Ollama unavailable")
@@ -159,12 +203,15 @@ class RepoSyncService:
             return {"queued": 0, "skipped": "ollama-unavailable"}
 
         try:
+            from app.db.models import Project, ProjectFile
             from app.tasks.rag_tasks import run_index_knowledge
 
             with Session(get_engine()) as session:
                 unembedded = session.exec(
                     select(ProjectFile.project_id)
+                    .join(Project, ProjectFile.project_id == Project.id)
                     .where(ProjectFile.embedding_id.is_(None))
+                    .where(Project.path.in_(changed_dirs))
                     .distinct()
                 ).all()
             for project_id in unembedded:
@@ -178,14 +225,63 @@ class RepoSyncService:
             return {"queued": 0, "skipped": f"error: {exc}"}
 
 
+def persist_sync_run(
+    status: str,
+    cloned: list[str] | None = None,
+    pulled: list[str] | None = None,
+    failed: dict | None = None,
+    indexed: int = 0,
+    knowledge_queued: int = 0,
+    detail: str | None = None,
+) -> None:
+    """Record a sync run in `SyncRun` for /system/sync. Best-effort: a DB
+    problem is logged, never raised — the sync outcome has already happened."""
+    try:
+        with Session(get_engine()) as session:
+            session.add(
+                SyncRun(
+                    status=status,
+                    cloned=cloned or [],
+                    pulled=pulled or [],
+                    failed=failed or {},
+                    indexed=indexed,
+                    knowledge_queued=knowledge_queued,
+                    detail=detail,
+                )
+            )
+            session.commit()
+    except Exception:  # noqa: BLE001 — persistence must never break the run
+        logger.exception("Failed to persist sync run status")
+
+
+def latest_sync_run(session: Session) -> dict | None:
+    """Most recent syncRun, or None when no sync has ever run successfully."""
+    stmt = select(SyncRun).order_by(SyncRun.ran_at.desc())
+    row = session.exec(stmt).first()
+    if row is None:
+        return None
+    return {
+        "status": row.status,
+        "ran_at": row.ran_at.isoformat() if row.ran_at else None,
+        "cloned": row.cloned,
+        "pulled": row.pulled,
+        "failed": row.failed,
+        "indexed": row.indexed,
+        "knowledge_queued": row.knowledge_queued,
+        "detail": row.detail,
+    }
+
+
 def run_sync(service: RepoSyncService | None = None) -> dict:
     """Entry point used by both the CLI and the Celery beat task."""
     service = service or RepoSyncService()
     if not service.configured:
         logger.warning("GitHub sync skipped: SENTINEL_GITHUB_TOKEN not configured")
+        persist_sync_run(status="skipped", detail="token not configured")
         return {"configured": False, "skipped": True}
     try:
         return service.sync()
     except httpx.HTTPError as exc:
         logger.error("GitHub sync failed: %s", exc)
+        persist_sync_run(status="error", detail=f"{exc.__class__.__name__}: {exc}")
         return {"configured": True, "error": f"{exc.__class__.__name__}: {exc}"}

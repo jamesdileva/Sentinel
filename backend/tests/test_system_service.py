@@ -7,6 +7,7 @@ Pi-hole stats. All HTTP is mocked via httpx.MockTransport; no real servers.
 import httpx
 from fastapi.testclient import TestClient
 
+from app.core.config import settings
 from app.main import app
 from app.services.ollama_service import OllamaService
 from app.services.system_service import OllamaStatus, PiHoleStatus
@@ -166,3 +167,30 @@ def test_system_pihole_endpoint(tmp_db, monkeypatch):
         response = client.get("/api/v1/system/pihole")
     assert response.status_code == 200
     assert response.json()["configured"] is False
+
+
+def test_system_sync_endpoint(tmp_db, monkeypatch):
+    """Sprint 15: /system/sync reports the sync config and the persisted last
+    run (or None) — read-only, nothing is triggered here."""
+    from sqlmodel import Session
+
+    from app.db.connection import get_engine
+    from app.services.sync_service import persist_sync_run
+
+    monkeypatch.setattr(settings, "github_token", "test-token")
+    persist_sync_run(status="error", detail="HTTPStatusError: 401")
+    with TestClient(app) as client:
+        response = client.get("/api/v1/system/sync")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["configured"] is True
+    assert body["last_run"]["status"] == "error"
+    assert body["last_run"]["detail"].startswith("HTTPStatusError")
+    assert body["interval_minutes"] == settings.sync_interval_minutes
+
+
+def test_system_sync_endpoint_never_synced(tmp_db):
+    with TestClient(app) as client:
+        response = client.get("/api/v1/system/sync")
+    assert response.status_code == 200
+    assert response.json()["last_run"] is None

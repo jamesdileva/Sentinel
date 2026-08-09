@@ -328,6 +328,10 @@ All endpoints live under `http://127.0.0.1:8000/api/v1/`. Relative paths below o
 - Dispatches Celery task `run_index_knowledge`, returning `{"status": "queued", "job_id": "<task_id>"}`
 - Default increments embed raw file content/git commits/test/security/build logs; `with_summary: true` additionally generates an Ollama architecture summary persisted to `KnowledgeSummary`
 
+**GET `/rag/index/status`** — Index progress (Sprint 15)
+- Query: `?project_id=optional` (narrow the report to one project)
+- Returns: `{"project_id": null, "projects": {"<project_id>": {"files": N, "embedded": M}}, "files_total": N, "files_embedded": M}` — embedded = files with an `embedding_id` set; drives the "X of Y files embedded" line in the Knowledge page
+
 **GET `/projects/{id}/summaries`** — Get AI-generated project summaries
 - Query: `?type=architecture`
 - Returns: list of KnowledgeSummary objects
@@ -1823,14 +1827,20 @@ no SMB share or second-manual-copy needed:
 2. `SENTINEL_PROJECTS_DIR` is mounted into the containers at `/data/projects`
    and `SENTINEL_WATCH_DIRS=["/data/projects"]` finds every `.git` checkout.
 3. The Celery beat schedule syncs on `SENTINEL_SYNC_INTERVAL_MINUTES` (default
-   15): new repos are `git clone`d, existing checkouts `git pull --ff-only`,
-   then the indexer re-runs so new projects become known. `sentinel sync`
+   15): new repos are `git clone`d, existing checkouts `git pull --ff-only`.
+   **Change detection (v1.15):** a repo's HEAD is recorded (`git rev-parse --short
+   HEAD`) before and after each pull — only repos whose HEAD actually moved are
+   re-indexed, and when nothing changed anywhere the whole scan is skipped
+   (no directory walks, no re-parsing, portfolio caches stay valid). `sentinel sync`
    (inside `backend`) runs one pass immediately; agent-safe (Rule 3) — git only,
    never AI. After a sync pass the CLI schedules **best-effort knowledge
-   indexing** (v1.14): untouched `project_files` of each synced project are
-   queued to the RAG indexer (`run_index_knowledge`), skipped silently when
-   Ollama is unavailable — new projects become answerable in chat shortly after
-   sync without any manual step.
+   indexing** (v1.14, narrowed in v1.15 to the changed repos only): untouched
+   `project_files` under the changed repos are queued to the RAG indexer
+   (`run_index_knowledge`), skipped silently when Ollama is unavailable — new
+   projects become answerable in chat shortly after sync without any manual step.
+   Every pass is persisted to the `SyncRun` table and `GET /system/sync`
+   (dashboard header pill, v1.15) shows the last outcome (cloned/pulled counts,
+   failures, indexed count, knowledge queued).
 
 Only repos reachable with the token are synced. Private repos clone only if the
 machine has git credentials configured; the token is never embedded in remote
@@ -1894,7 +1904,7 @@ deploy; the desktop share has been reverted in v1.13.)
 
 ---
 
-## 14.5. Portfolio Intelligence (Sprint 10)
+## 14.5. Portfolio Intelligence (Sprint 10, scoring refined in Sprint 15)
 
 `PortfolioService` (`backend/app/services/portfolio_service.py`) aggregates each
 project's build, test, security and documentation state into a deterministic
@@ -1902,13 +1912,13 @@ project's build, test, security and documentation state into a deterministic
 upserted into the `PortfolioScore` table (docs/02 §1), so the API, matrix and
 candidates always agree.
 
-**Score formula (weights sum to 100):**
+**Score formula (weights sum to 100, Sprint 15 static/proven split):**
 
 | Component | Weight | Rule |
 |-----------|--------|------|
-| build | 30 | latest `BuildLog`: `success=True` → 30; `success=False` → 10; none/pending → 0 |
-| tests | 30 | latest `TestResult`: 0 failures/errors and ≥1 pass → 30; else 30 × pass ratio; none → 0 |
-| security | 25 | all findings resolved → 25; unresolved deduct per severity (critical 10 / high 6 / medium 3 / low 1 / info 0, floor 0); no findings at all → 0 (never scanned) |
+| build | 30 | `21 static` if a build command was detected in `stack.commands.build` (granted from repo detection alone) + `9` when the latest `BuildLog` actually passed. The static 21 survives a failed run — a command does not change because a build failed. No command → 0/pending |
+| tests | 30 | `24 static` if conventional test files exist (`tests/`, `__tests__/`, `test_*.py`, `*_test.py`, `*.test.ts(x)`, `*.spec.ts(x)`) + `6` when the latest `TestResult` is green; failed/errored run keeps the static 24. No test files and no run → 0/pending |
+| security | 25 | all findings resolved → 25 ("clean"); unresolved deduct per severity (critical 10 / high 6 / medium 3 / low 1 / info 0, floor 0); no findings at all → 0 (never scanned) |
 | docs | 15 | README/Markdown/`docs/` files ÷ total indexed files × 15 |
 
 A component with no data yet scores **0** — projects are never assumed healthy.
@@ -1916,16 +1926,29 @@ A component with no data yet scores **0** — projects are never assumed healthy
 is always `False` (no screenshot feature yet; the Feature Matrix screenshots
 column stays `✗`).
 
-**Feature Matrix cells** (`✓`/`⚠`/`✗`): build/test — passing/failing/pending;
-docs — ≥80% / 1-79% / 0%; security — clean/findings/pending.
+**Feature Matrix cells** (`✓`/`⚠`/`✗`): build/test — passing/failing/pending
+(a detected-but-unproven component is `⚠` "configured"); docs — **≥50%** /
+1-49% / 0% (the 50% green threshold is a Sprint 15 decision); security —
+clean/findings/pending.
+
+**Caching (Sprint 15):** every read goes through `_fresh_row(project)` — if the
+stored `PortfolioScore.updated_at` is at least as new as the newest *source*
+row the score depends on (build/test/security/file timestamps + `last_indexed`),
+the cached row is served as-is; otherwise the score is recomputed and persisted.
+Repeated tab loads are therefore instant, and the numbers refresh exactly when
+underlying data changes (e.g. after a repo sync pulls new commits). A stat dash:
+`summary()` — project count, buildable projects (have a build command),
+open unresolved findings, average portfolio health — served by
+`GET /portfolio/summary` (Sprint 15, used by the Dashboard page).
 
 **Endpoints:** `GET /portfolio/scores`, `GET /portfolio/best-candidates?min_score=70`,
-`GET /portfolio/feature-matrix` (see §2.7).
+`GET /portfolio/feature-matrix`, `GET /portfolio/summary` (see §2.7).
 
 **Frontend:** `/portfolio` route (nav item "Portfolio") — `pages/Portfolio.tsx`
 (health-score grid, best candidates, feature matrix), `components/HealthCard.tsx`,
 `components/FeatureMatrix.tsx`, `api/portfolio.ts`. Names are joined from
-`GET /projects/`.
+`GET /projects/`. The Dashboard page shows the summary numbers; the header shows
+the last repo-sync pill (see §13.4).
 
 **Deferred to Sprint 10.5 (Observatory):** the `ProjectGalaxy` / `ProjectTimeline` /
 `ArchitectureMap` components — now shipped, see §14.6.
@@ -1980,8 +2003,9 @@ relationships aren't persisted, so they're intentionally absent.
 
 | Date | Version | Change | Author |
 |------|---------|--------|--------|
+| 2026-08-07 | 1.15 | Sprint 15 (Performance tuning + final polish): §14.5 scoring rewritten (build = 21 static + 9 proven / tests = 24 static + 6 proven — static survives failed runs; docs green ≥50%) + caching (`_fresh_row` serves the stored `PortfolioScore` until a source row is newer) + `GET /portfolio/summary` (dashboard stats); §13.4 GitHub sync — HEAD change detection before/after pull (only moved repos re-indexed, all-clean passes skip the scan, knowledge auto-index narrowed to changed repos), runs persisted to new `SyncRun` table surfaced by `GET /system/sync` (read-only); §2.3 `GET /rag/index/status` (embedded vs total files per project); scanner skips self-scan false positives (`data/`, `fixtures/`, template `.env` names; real `.env` still flagged). Frontend: Dashboard real stats (portfolio summary), header sync pill (Layout), Knowledge page index progress. Tests: 268 backend (new change-detection/persistence in `test_sync_service.py`, `/system/sync` in `test_system_service.py`, `/rag/index/status` in `test_rag_api.py`, scoring/cache/`is_test_file_path` in `test_portfolio.py`, scanner tests) + 58 vitest (Layout pill, Dashboard stats, KnowledgeExplorer) | User + AI |
 | 2026-08-07 | 1.14 | Sprint 12.2 (Bugs + UI pages): §11 world sim unblocked — events/expansion: new step 2.5 **recruitment** (`event_generator.py`, food-secure settlements scale roles with population: farmers `pop//6` capped by new `FARM_CAPACITY` per terrain, builders/merchants/explorers pop//12//30//60; starving settlements recruit nobody), food store capped at `pop × MAX_FOOD_DAYS` (§11.3, bounds +6%/road trade growth so SQLite ints never overflow), expansion stops at `MAX_ACTIVE_SETTLEMENTS = 60`, raids restricted to road-connected pairs (O(roads) vs O(n²)), skill bonuses clamp at level 10 (+45% production / +90% rebuild); worlds now naturally reach ~60 settlements/58 roads (was dead at ~130 pop / 0 roads because farmers were fixed at bootstrap); new `test_roads_appear_from_natural_growth`. **Indexer encoding hardening**: `indexer.py`/`framework_detector.py`/`command_extractor.py` read text/json as UTF-8 with `errors="replace"` and catch `UnicodeDecodeError` so a non-UTF-8 `requirements.txt` (MLBattles) can't abort indexing; regression `test_index_project_survives_non_utf8_requirements`. **Knowledge auto-index after sync**: `sync_service._queue_knowledge_index` — after a pass, projects that still have files with `embedding_id IS NULL` get a `run_index_knowledge` Celery task queued per project (best-effort: skipped with `"ollama-unavailable"` when Ollama is down, never fails the sync); `rag_service.ingest_files` marks unreadable files with `embedding_id = record.id` and commits even with zero embeds so the pending query doesn't re-queue forever; CLI `sentinel sync` prints the knowledge line; 2 new tests. Frontend: placeholder content removed — real `/projects`, `/builds`, `/security` pages (`pages/Projects.tsx|Builds.tsx|Security.tsx`, `api/tests.ts`, etc) with expandable file lists, per-project run + history + log/finding drill-downs; `ArchitectureMap.test.tsx` race fixed (`findByText`). Tests: 256 backend (95.08% cov), 48 vitest. Docs: §11.3/§11.4/§11.5, §13.4 sync notes, changelogs v1.14 | User + AI agent |
-| 2026-08-07 | 1.13 | Sprint 12.1 (Repo auto-sync + Pi-hole v6 auth fix + SMB revert): §13.4 rewritten — laptop projects now come from **GitHub auto-sync** instead of an SMB share: `RepoSyncService` (`services/sync_service.py`) lists repos via GitHub API (read-only PAT, `SENTINEL_GITHUB_TOKEN`, paged `GET /user/repos`), `git clone`s missing repos and `git pull --ff-only` existing checkouts under `SENTINEL_PROJECTS_DIR` (local target → `/data/projects`), then re-indexes; CLI `sentinel sync` + Celery beat `repo-sync` (`SENTINEL_SYNC_INTERVAL_MINUTES`, default 15); git never prompts (`GIT_TERMINAL_PROMPT=0`), fail-fast stderr captured per repo. Pi-hole System-page client fixed (v6 session auth): `POST /api/auth` with `SENTINEL_PIHOLE_PASSWORD` → `X-FTL-SID` header (new `SENTINEL_PIHOLE_PASSWORD` config; v5 `SENTINEL_PIHOLE_API_TOKEN`/`X-FTL-API-KEY` removed); read-only, Rule 2. Compose/`.env.example` pass `SENTINEL_GITHUB_TOKEN`/`SENTINEL_SYNC_INTERVAL_MINUTES`/`SENTINEL_PIHOLE_PASSWORD` to backend + worker; env table §4 updated. Desktop SMB plumbing reverted. Tests: 251 backend (95.2% cov) — new `test_sync_service.py` (MockTransport + run_command stubs: clone/pull/failed/per-repo errors, unconfigured skip, GitHub error), `test_system_service.py` reworked (session auth happy path, bad password 401, X-FTL-SID asserted), CLI sync tests. Docs: laptop.md, AGENTS.md, changelogs v1.13 | User + AI agent |
+| 2026-08-07 | 1.13 | Sprint 12.1 (Repo auto-sync + Pi-hole v6 auth fix + SMB revert): §13.4 rewritten — laptop projects now come from **GitHub auto-sync** instead of an SMB share: `RepoSyncService`: `RepoSyncService` (`services/sync_service.py`) lists repos via GitHub API (read-only PAT, `SENTINEL_GITHUB_TOKEN`, paged `GET /user/repos`), `git clone`s missing repos and `git pull --ff-only` existing checkouts under `SENTINEL_PROJECTS_DIR` (local target → `/data/projects`), then re-indexes; CLI `sentinel sync` + Celery beat `repo-sync` (`SENTINEL_SYNC_INTERVAL_MINUTES`, default 15); git never prompts (`GIT_TERMINAL_PROMPT=0`), fail-fast stderr captured per repo. Pi-hole System-page client fixed (v6 session auth): `POST /api/auth` with `SENTINEL_PIHOLE_PASSWORD` → `X-FTL-SID` header (new `SENTINEL_PIHOLE_PASSWORD` config; v5 `SENTINEL_PIHOLE_API_TOKEN`/`X-FTL-API-KEY` removed); read-only, Rule 2. Compose/`.env.example` pass `SENTINEL_GITHUB_TOKEN`/`SENTINEL_SYNC_INTERVAL_MINUTES`/`SENTINEL_PIHOLE_PASSWORD` to backend + worker; env table §4 updated. Desktop SMB plumbing reverted. Tests: 251 backend (95.2% cov) — new `test_sync_service.py` (MockTransport + run_command stubs: clone/pull/failed/per-repo errors, unconfigured skip, GitHub error), `test_system_service.py` reworked (session auth happy path, bad password 401, X-FTL-SID asserted), CLI sync tests. Docs: laptop.md, AGENTS.md, changelogs v1.13 | User + AI agent |
 | 2026-08-06 | 1.12 | Sprint 12 (Home Server + System page): §13.4 new home-server runbook — laptop runs full stack from one compose file; `frontend` nginx container (docker/frontend/Dockerfile multi-stage → nginx, `8080:80`, `/api` + WS proxy to backend) serves the dashboard at `http://192.168.4.40:8080`; dev overrides moved to explicit `docker-compose.dev.yml` (prod default); `SENTINEL_API_PORT`/`SENTINEL_PROJECTS_DIR`/`SENTINEL_OLLAMA_HOST` env-overridable (SMB projects share = no second copy). Backend: startup validation `services/startup_check.py` (database/chroma/watch dirs/ollama), System page surface — `OllamaQueryLog` table, `generate_with_metrics` (eval_count/eval_duration → tokens/sec), `OllamaStatus`/`PiHoleStatus`/`system_overview`, router `api/v1/system.py` (read-only), Pi-hole v6 read-only client (`X-FTL-API-KEY`). CLI finalized per §12.6: `portfolio` wired to `PortfolioService`, new `docs <id>`, `world-sim start`. Packaging: `scripts/build.py` + `scripts/release.py` (zip + sha256). Frontend: `/system` page + nav item + `ErrorBoundary`. Tests: §12 update — test_compose (prod/dev split + frontend service), test_system_service (8), test_startup_check (5), test_packaging (5), System page vitest (4), ErrorBoundary vitest (3), e2e system.spec (2); 238 backend / 36 vitest / 9 e2e | User + AI agent |
 | 2026-08-05 | 1.10.1 | Sprint 10.5 (Observatory): new §2.11 endpoint docs (`GET /observatory/galaxy|timeline?days=|architecture/{id}`), new §14.6 Observatory — `ObservatoryService` (`backend/app/services/observatory_service.py`): galaxy = project nodes + shared tech nodes (framework + `Dependency.name`, 2+ projects: tech, links tech-sorted), timeline = `project-created`/`commit`/`build`/`test`/`finding` from `created_at`/`GitCommit.timestamp`/`BuildLog.started_at`/`TestResult.run_at`/`SecurityFinding.detected_at`, naive-UTC cutoff, descending, cap 500, messages clipped to 120 chars; architecture = recursive tree from indexed file paths (dirs-first, count = files beneath, leaf = 1, root = total files), 404 on unknown project. Router `api/v1/observatory.py` registered in `main.py`; schemas `observatory.py` (`GalaxyGraph`/`GalaxyNode`/`GalaxyLink`, `Timeline`/`TimelineEvent`, `ArchitectureNode`, exported). Tests: `tests/test_observatory.py` (11 tests: galaxy shared-tech filtering, timeline window/order/cap/exclusion, tree nesting + counts, `_clip`, API galaxy/timeline/architecture + 404, in-memory SQLite, dependency override). §2.6 stale never-built `/projects/{id}/timeline` replaced by a pointer to §2.11. Full suite 152 green; black/isort/flake8 clean on new files; `npm run build` clean. Frontend: `/observatory` route + nav item, `pages/Observatory.tsx` (Galaxy + Timeline + Architecture sections), `components/ProjectGalaxy.tsx` (plain SVG node-link graph), `ProjectTimeline.tsx` (kind-colored dots + days-window selector), `ArchitectureMap.tsx` (project dropdown + indented tree), `api/observatory.ts` on shared axios client; `types/index.ts` observatory interfaces | User + AI agent |
 | 2026-08-05 | 1.10 | Sprint 10 (Portfolio Intelligence): §2.7 rewritten to the shipped endpoints (`/portfolio/scores`, `/best-candidates?min_score=`, `/feature-matrix`), new §14.5 Portfolio Intelligence — `PortfolioService` (`backend/app/services/portfolio_service.py`, deterministic 30/30/25/15 formula, missing = 0; build latest log success/failure/pending, tests pass ratio, security severity penalties, docs = README/Markdown/`docs/` file ratio; recompute-on-read + upsert to `PortfolioScore`), router `backend/app/api/v1/portfolio.py` registered in `main.py`, `tests/test_portfolio.py` (12 tests, in-memory SQLite, API via dependency override). Frontend: `pages/Portfolio.tsx` (health grid, best candidates, feature matrix), `components/HealthCard.tsx`, `components/FeatureMatrix.tsx`, `api/portfolio.ts` aligned to backend schemas, `/portfolio` route now real (nav item already existed). Observatory (galaxy/timeline/architecture) deferred to Sprint 10.5 | User + AI agent |

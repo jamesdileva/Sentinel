@@ -28,8 +28,20 @@ export interface FeatureMatrix {
   matrix: string[][];
 }
 
+export interface PortfolioSummary {
+  projects: number;
+  buildable: number;
+  open_findings: number;
+  avg_health: number;
+}
+
 export async function getScores(): Promise<PortfolioScore[]> {
   const { data } = await api.get<PortfolioScore[]>("/v1/portfolio/scores");
+  return data;
+}
+
+export async function getSummary(): Promise<PortfolioSummary> {
+  const { data } = await api.get<PortfolioSummary>("/v1/portfolio/summary");
   return data;
 }
 

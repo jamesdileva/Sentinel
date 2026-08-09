@@ -145,6 +145,29 @@ def test_rag_index_unknown_project_404(tmp_db):
     assert resp.status_code == 404
 
 
+def test_rag_index_status_counts(tmp_db):
+    """Sprint 15: index/status reports embedded vs total files; project_id
+    narrows the result set."""
+    project_id = _seed(tmp_db)
+    client = TestClient(app)
+    resp = client.get("/api/v1/rag/index/status")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["project_id"] is None
+    entry = body["projects"][project_id]
+    assert entry["files"] > 0
+    assert entry["embedded"] == 0  # never embedded in this fixture
+    assert body["files_total"] == entry["files"]
+    assert body["files_embedded"] == 0
+
+    scoped = client.get(
+        "/api/v1/rag/index/status", params={"project_id": project_id}
+    ).json()
+    assert scoped["project_id"] == project_id
+    assert list(scoped["projects"].keys()) == [project_id]
+    assert scoped["files_total"] == body["files_total"]
+
+
 def test_list_summaries_empty(tmp_db):
     project_id = _seed(tmp_db)
     client = TestClient(app)

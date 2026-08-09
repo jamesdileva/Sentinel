@@ -1,6 +1,12 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
-import { ragIndex, ragSearch, type RagResult } from "../api/rag";
+import {
+  getIndexStatus,
+  ragIndex,
+  ragSearch,
+  type RagIndexStatus,
+  type RagResult,
+} from "../api/rag";
 import RagChat from "../components/RagChat";
 import { useUI } from "../contexts/UIContext";
 import { useProjectList } from "../hooks/useProjects";
@@ -18,7 +24,49 @@ export default function KnowledgeExplorer() {
   const [results, setResults] = useState<RagResult[]>([]);
   const [searchError, setSearchError] = useState<string | null>(null);
 
+  const [indexStatus, setIndexStatus] = useState<RagIndexStatus | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    getIndexStatus()
+      .then((data) => {
+        if (active) setIndexStatus(data);
+      })
+      .catch(() => {
+        if (active) setIndexStatus(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
   const selectedProject = projects.find((p) => p.id === selectedProjectId);
+
+  function indexStatusLine(): string | null {
+    if (!indexStatus) return null;
+    if (selectedProjectId) {
+      const entry = indexStatus.projects[selectedProjectId];
+      if (!entry) return null;
+      return entry.embedded === entry.files
+        ? `All ${entry.files} files embedded ✓`
+        : `${entry.embedded} of ${entry.files} files embedded`;
+    }
+    return indexStatus.files_total > 0
+      ? `${indexStatus.files_embedded} of ${indexStatus.files_total} files embedded across projects`
+      : "No files indexed yet";
+  }
+
+  function indexStatusComplete(): boolean {
+    if (!indexStatus) return false;
+    if (selectedProjectId) {
+      const entry = indexStatus.projects[selectedProjectId];
+      return entry != null && entry.embedded === entry.files;
+    }
+    return (
+      indexStatus.files_total > 0 &&
+      indexStatus.files_embedded === indexStatus.files_total
+    );
+  }
 
   async function handleSearch(event: React.FormEvent) {
     event.preventDefault();
@@ -95,11 +143,21 @@ export default function KnowledgeExplorer() {
             {indexing ? "Indexing…" : "Index knowledge"}
           </button>
         </div>
-        {selectedProject && (
-          <p className="mt-2 text-xs text-slate-400 dark:text-slate-500">
-            Scoped to <span className="font-medium">{selectedProject.name}</span> — run
-            "Index knowledge" first so search and chat have data.
+        {indexStatusLine() ? (
+          <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+            {indexStatusLine()}
+            {!indexStatusComplete() && (
+              <> — run "Index knowledge" to refresh or complete it.</>
+            )}
           </p>
+        ) : (
+          selectedProject && (
+            <p className="mt-2 text-xs text-slate-400 dark:text-slate-500">
+              Scoped to{" "}
+              <span className="font-medium">{selectedProject.name}</span> — run
+              "Index knowledge" first so search and chat have data.
+            </p>
+          )
         )}
       </div>
 

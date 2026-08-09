@@ -175,6 +175,43 @@ def test_security_scanner_clean_project(tmp_db):
         assert findings == []
 
 
+def test_security_scanner_skips_false_positives(tmp_db, tmp_path):
+    """Sprint 15: data/, fixtures/, .env templates and test files are not
+    application source — scanning them must not produce findings."""
+    root = tmp_path / "app-project"
+    (root / "data" / "pihole" / "etc-pihole").mkdir(parents=True)
+    (root / "data" / "pihole" / "etc-pihole" / "tls.pem").write_text(
+        "-----BEGIN PRIVATE KEY-----", encoding="utf-8"
+    )
+    (root / "fixtures").mkdir()
+    (root / "fixtures" / "sample.py").write_text(
+        'AWS_ACCESS_KEY = "AKIA1234567890ABCDEF"', encoding="utf-8"
+    )
+    (root / ".env.example").write_text(
+        "SENTINEL_GITHUB_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxx", encoding="utf-8"
+    )
+    (root / "tests").mkdir()
+    (root / "tests" / "test_stuff.py").write_text(
+        "def test_compiles():\n    exec('x = 1')\n", encoding="utf-8"
+    )
+    (root / "app").mkdir()
+    (root / "app" / "real.py").write_text(
+        "TOKEN = 'ghp_abcdefghijklmnopqrst'\n", encoding="utf-8"
+    )
+    (root / "pyproject.toml").write_text(
+        "[tool.pytest.ini_options]\n", encoding="utf-8"
+    )
+
+    with Session(connection.get_engine()) as session:
+        project = IndexerService(session).index_project(str(root))
+        findings = SecurityScanner(session).scan_project(project)
+        # Only the real code secret is flagged — no data/, fixtures/,
+        # .env.example, and no exec() inside test files.
+        assert len(findings) == 1
+        assert findings[0].type == "secret"
+        assert findings[0].file_path.replace("\\", "/") == "app/real.py"
+
+
 # --- API integration (eager Celery) ---
 
 

@@ -212,3 +212,21 @@ class ConfigEntry(SQLModel, table=True):
     key: str = Field(primary_key=True)
     value: dict = Field(default_factory=dict, sa_column=Column(JSON))
     updated_at: datetime.datetime = Field(default_factory=_utcnow)
+
+
+class SyncRun(SQLModel, table=True):
+    """Persisted GitHub repo sync outcomes (Sprint 15).
+
+    One row per `repo-sync` run; the dashboard header pill and
+    GET /api/v1/system/sync read the most recent row. Nothing else uses it.
+    """
+
+    id: str = Field(default_factory=_uuid, primary_key=True)
+    status: str = "success"  # success | error | skipped
+    ran_at: datetime.datetime = Field(default_factory=_utcnow)
+    cloned: list = Field(default_factory=list, sa_column=Column(JSON))
+    pulled: list = Field(default_factory=list, sa_column=Column(JSON))
+    failed: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    indexed: int = 0
+    knowledge_queued: int = 0
+    detail: str | None = None

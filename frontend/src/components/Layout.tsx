@@ -1,10 +1,28 @@
+import { useEffect, useState } from "react";
 import { NavLink, Outlet } from "react-router";
 
 import { useUI } from "../contexts/UIContext";
 import { NAV_ITEMS } from "./nav";
+import { getSyncStatus } from "../api/system";
+import type { SyncStatus } from "../api/system";
 
 export default function Layout() {
   const { dark, toggleDark, sidebarOpen, setSidebarOpen } = useUI();
+  const [sync, setSync] = useState<SyncStatus | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    getSyncStatus()
+      .then((data) => {
+        if (active) setSync(data);
+      })
+      .catch(() => {
+        if (active) setSync(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const sidebar = (
     <nav className="flex h-full flex-col gap-1 p-4">
@@ -66,6 +84,7 @@ export default function Layout() {
           <h1 className="flex-1 text-sm font-semibold uppercase tracking-widest text-slate-500 dark:text-slate-400">
             Dashboard
           </h1>
+          {sync?.configured && <SyncPill sync={sync} />}
           <button
             type="button"
             onClick={toggleDark}
@@ -83,6 +102,48 @@ export default function Layout() {
 
       <Toasts />
     </div>
+  );
+}
+
+function SyncPill({ sync }: { sync: SyncStatus }) {
+  const last = sync.last_run;
+  let label = "Sync not run";
+  let cls =
+    "border-slate-300 bg-white text-slate-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400";
+  if (last) {
+    if (last.status === "success") {
+      const time = last.ran_at
+        ? new Date(last.ran_at).toLocaleString(undefined, {
+            month: "short",
+            day: "numeric",
+            hour: "2-digit",
+            minute: "2-digit",
+          })
+        : "";
+      label = `Synced ${time}`;
+      cls =
+        "border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-300";
+    } else if (last.status === "error") {
+      label = "Sync failed";
+      cls =
+        "border-red-300 bg-red-50 text-red-700 dark:border-red-800 dark:bg-red-950 dark:text-red-300";
+    } else {
+      label = "Sync skipped";
+      cls =
+        "border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-300";
+    }
+  }
+  return (
+    <span
+      title={
+        last?.status === "error" && last.detail
+          ? last.detail
+          : last?.detail ?? undefined
+      }
+      className={`hidden items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium sm:inline-flex ${cls}`}
+    >
+      {label}
+    </span>
   );
 }
 

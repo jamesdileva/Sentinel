@@ -22,6 +22,10 @@ vi.mock("../hooks/useWebSocket", () => ({
   useWebSocket: vi.fn(),
 }));
 
+vi.mock("../api/portfolio", () => ({
+  getSummary: vi.fn(),
+}));
+
 import {
   useBuilds,
 } from "../contexts/BuildContext";
@@ -32,11 +36,13 @@ import {
   useProjectList,
 } from "../hooks/useProjects";
 import { useWebSocket } from "../hooks/useWebSocket";
+import { getSummary } from "../api/portfolio";
 
 const mockUseBuilds = vi.mocked(useBuilds);
 const mockUseUI = vi.mocked(useUI);
 const mockUseProjectList = vi.mocked(useProjectList);
 const mockUseWebSocket = vi.mocked(useWebSocket);
+const mockGetSummary = vi.mocked(getSummary);
 
 function makeProject(overrides: Partial<Project> = {}): Project {
   return {
@@ -88,15 +94,41 @@ describe("Dashboard", () => {
       refresh: vi.fn(),
     });
     mockUseWebSocket.mockReturnValue({ status: "open", lastMessage: null });
+    mockGetSummary.mockResolvedValue({
+      projects: 1,
+      buildable: 1,
+      open_findings: 0,
+      avg_health: 92.5,
+    });
   });
 
-  it("shows summary stats and project cards", () => {
+  it("shows summary stats and project cards", async () => {
     render(<Dashboard />);
     expect(screen.getByText("Projects")).toBeInTheDocument();
     expect(screen.getAllByText("1")).toHaveLength(2);
     expect(screen.getByText("Builds")).toBeInTheDocument();
     expect(screen.getByText("Findings")).toBeInTheDocument();
     expect(screen.getByText("alpha")).toBeInTheDocument();
+  });
+
+  it("shows real portfolio numbers from the summary endpoint", async () => {
+    mockGetSummary.mockResolvedValue({
+      projects: 3,
+      buildable: 2,
+      open_findings: 1,
+      avg_health: 52.5,
+    });
+    render(<Dashboard />);
+    expect(await screen.findByText("52.5")).toBeInTheDocument();
+    expect(screen.getAllByText("1").length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText("2 of 3 buildable")).toBeInTheDocument();
+  });
+
+  it("falls back to em dashes when the summary fetch fails", async () => {
+    mockGetSummary.mockRejectedValue(new Error("backend down"));
+    render(<Dashboard />);
+    expect(await screen.findByText("Health")).toBeInTheDocument();
+    expect(screen.getAllByText("—")).toHaveLength(2);
   });
 
   it("renders an error banner and retries on click", async () => {

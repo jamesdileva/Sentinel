@@ -8,8 +8,7 @@ Uses its own SQLite file and its own SQLAlchemy metadata so the main
 import datetime
 import uuid
 
-from sqlalchemy import JSON, Column, MetaData
-from sqlalchemy import create_engine
+from sqlalchemy import JSON, Column, MetaData, create_engine
 from sqlmodel import Field, SQLModel
 
 from app.core.config import settings
@@ -82,7 +81,9 @@ class WorldEventRow(SQLModel, table=True):
     title: str
     narrative: str
     severity: int = 1  # 1-10
-    affected_settlements: list[str] = Field(default_factory=list, sa_column=Column(JSON))
+    affected_settlements: list[str] = Field(
+        default_factory=list, sa_column=Column(JSON)
+    )
     created_at: datetime.datetime = Field(default_factory=_utcnow)
 
 

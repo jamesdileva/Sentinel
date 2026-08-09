@@ -24,7 +24,11 @@ from app.db.models import (
 )
 from app.db.models import TestResult as TestResultRow
 from app.main import app
-from app.services.portfolio_service import PortfolioService, is_doc_path
+from app.services.portfolio_service import (
+    PortfolioService,
+    is_doc_path,
+    is_test_file_path,
+)
 
 
 def make_engine():
@@ -39,8 +43,18 @@ def make_engine():
 
 def seed(engine) -> dict[str, Project]:
     """Three projects: alpha (healthy), beta (broken), gamma (untouched)."""
-    alpha = Project(name="alpha", path="/repo/alpha", language="python")
-    beta = Project(name="beta", path="/repo/beta", language="go")
+    alpha = Project(
+        name="alpha",
+        path="/repo/alpha",
+        language="python",
+        stack={"commands": {"build": "python -m build", "test": "pytest"}},
+    )
+    beta = Project(
+        name="beta",
+        path="/repo/beta",
+        language="go",
+        stack={"commands": {"build": "go build", "test": "go test"}},
+    )
     gamma = Project(name="gamma", path="/repo/gamma", language="rust")
     with Session(engine, expire_on_commit=False) as session:
         session.add_all([alpha, beta, gamma])
@@ -165,6 +179,7 @@ def test_health_score_healthy_project():
     engine = make_engine()
     projects = seed(engine)
     svc = make_service(engine)
+    # build 21+9 + tests 24+6 + security 25 + docs 15*50% = 92.5 (Sprint 15)
     assert svc.compute_health_score(projects["alpha"]) == 92.5
 
 
@@ -172,7 +187,9 @@ def test_health_score_broken_project():
     engine = make_engine()
     projects = seed(engine)
     svc = make_service(engine)
-    assert svc.compute_health_score(projects["beta"]) == 45.0
+    # build 21 (static survives failed run) + tests 24 (static) + security 15
+    # (critical unresolved) + docs 15*33% = 65.0 (Sprint 15)
+    assert svc.compute_health_score(projects["beta"]) == 65.0
 
 
 def test_health_score_untouched_project_is_zero():
@@ -208,6 +225,60 @@ def test_scores_persists_all_projects():
 
 
 # ---------------------------------------------------------------------------
+# Sprint 15: change-driven cache + summary
+# ---------------------------------------------------------------------------
+
+
+def test_score_row_is_cached_until_sources_change():
+    """A second read with no newer source rows serves the cached score without
+    recomputing; adding a build log recomputes because the epoch advanced."""
+    engine = make_engine()
+    projects = seed(engine)
+    svc = make_service(engine)
+
+    svc.scores()  # prime the cache
+    with Session(engine) as session:
+        original = session.exec(
+            select(PortfolioScore).where(
+                PortfolioScore.project_id == projects["alpha"].id
+            )
+        ).first()
+        assert original is not None
+        assert original.portfolio_score == 92.5
+
+    # No sources changed -> cached row untouched (same id/timestamp content).
+    row = svc._fresh_row(projects["alpha"])
+    assert row.id == original.id
+
+    # A new build log (newer than the stored score) -> recompute.
+    with Session(engine, expire_on_commit=False) as session:
+        session.add(
+            BuildLog(
+                project_id=projects["alpha"].id,
+                started_at=datetime.datetime.now(datetime.timezone.utc)
+                + datetime.timedelta(hours=1),
+                success=False,
+            )
+        )
+        session.commit()
+    row = svc._fresh_row(projects["alpha"])
+    assert row.build_status == "failing"
+    # static 21 survives + tests 30 + security 25 + docs 7.5
+    assert row.portfolio_score == 83.5
+
+
+def test_summary_counts():
+    engine = make_engine()
+    seed(engine)
+    svc = make_service(engine)
+    summary = svc.summary()
+    assert summary["projects"] == 3
+    assert summary["buildable"] == 2  # alpha + beta have commands.build
+    assert summary["open_findings"] == 1  # only beta's unresolved critical
+    assert summary["avg_health"] == round((92.5 + 65.0 + 0.0) / 3, 1)
+
+
+# ---------------------------------------------------------------------------
 # candidates + matrix
 # ---------------------------------------------------------------------------
 
@@ -239,9 +310,21 @@ def test_feature_matrix_symbols():
     matrix = svc.feature_matrix()
     assert matrix.features == ["build", "test", "docs", "security", "screenshots"]
     assert matrix.projects == ["alpha", "beta", "gamma"]
-    assert matrix.matrix[0] == ["✓", "✓", "⚠", "✓", "✗"]
+    # docs at 50% is green (Sprint 15 threshold)
+    assert matrix.matrix[0] == ["✓", "✓", "✓", "✓", "✗"]
     assert matrix.matrix[1] == ["⚠", "⚠", "⚠", "⚠", "✗"]
     assert matrix.matrix[2] == ["✗", "✗", "✗", "✗", "✗"]
+
+
+def test_is_test_file_path():
+    assert is_test_file_path("tests/test_main.py")
+    assert is_test_file_path("tests/x_test.go")
+    assert is_test_file_path("__tests__/App.test.tsx")
+    assert is_test_file_path("src/app.spec.ts")
+    assert is_test_file_path("src/test_util.py")
+    assert is_test_file_path("src/app_test.py")
+    assert not is_test_file_path("src/main.py")
+    assert not is_test_file_path("README.md")
 
 
 # ---------------------------------------------------------------------------
@@ -282,4 +365,14 @@ def test_api_feature_matrix(api_client):
     assert response.status_code == 200
     body = response.json()
     assert body["projects"] == ["alpha", "beta", "gamma"]
-    assert body["matrix"][0] == ["✓", "✓", "⚠", "✓", "✗"]
+    assert body["matrix"][0] == ["✓", "✓", "✓", "✓", "✗"]
+
+
+def test_api_summary(api_client):
+    response = api_client.get("/api/v1/portfolio/summary")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["projects"] == 3
+    assert body["buildable"] == 2
+    assert body["open_findings"] == 1
+    assert body["avg_health"] == 52.5

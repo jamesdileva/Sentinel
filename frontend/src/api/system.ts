@@ -44,7 +44,29 @@ export interface SystemOverview {
   pihole: PiHoleStatus;
 }
 
+export interface SyncRun {
+  status: "success" | "error" | "skipped";
+  ran_at: string | null;
+  cloned: string[];
+  pulled: string[];
+  failed: Record<string, string>;
+  indexed: number;
+  knowledge_queued: number;
+  detail: string | null;
+}
+
+export interface SyncStatus {
+  configured: boolean;
+  last_run: SyncRun | null;
+  interval_minutes: number;
+}
+
 export async function getSystemOverview(): Promise<SystemOverview> {
   const { data } = await api.get<SystemOverview>("/v1/system/overview");
+  return data;
+}
+
+export async function getSyncStatus(): Promise<SyncStatus> {
+  const { data } = await api.get<SyncStatus>("/v1/system/sync");
   return data;
 }

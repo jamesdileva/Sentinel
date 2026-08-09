@@ -1,8 +1,12 @@
+import { useEffect, useState } from "react";
+
 import { useBuilds } from "../contexts/BuildContext";
 import { useUI } from "../contexts/UIContext";
 import { useProjectList } from "../hooks/useProjects";
 import { useWebSocket } from "../hooks/useWebSocket";
 import type { WsStatus } from "../hooks/useWebSocket";
+import { getSummary } from "../api/portfolio";
+import type { PortfolioSummary } from "../api/portfolio";
 
 function wsLabel(status: WsStatus): string {
   if (status === "open") return "live";
@@ -19,12 +23,31 @@ export default function Dashboard() {
       if (message.type === "welcome") toast("Connected to live job updates");
     },
   });
+  const [summary, setSummary] = useState<PortfolioSummary | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    getSummary()
+      .then((data) => {
+        if (active) setSummary(data);
+      })
+      .catch(() => {
+        if (active) setSummary(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const stats = [
     { label: "Projects", value: loading ? "…" : String(projects.length) },
     { label: "Builds", value: String(activeJobs.length) },
-    { label: "Findings", value: "0" },
-    { label: "Health", value: "—" },
+    { label: "Findings", value: summary ? String(summary.open_findings) : "—" },
+    {
+      label: "Health",
+      value: summary ? String(summary.avg_health) : "—",
+      hint: summary ? `${summary.buildable} of ${summary.projects} buildable` : undefined,
+    },
   ];
 
   return (
@@ -52,6 +75,11 @@ export default function Dashboard() {
             <p className="mt-2 text-3xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">
               {stat.value}
             </p>
+            {stat.hint && (
+              <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">
+                {stat.hint}
+              </p>
+            )}
           </div>
         ))}
       </div>

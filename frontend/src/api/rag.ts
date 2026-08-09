@@ -36,6 +36,18 @@ export interface KnowledgeSummary {
   generated_at: string | null;
 }
 
+export interface ProjectIndexStatus {
+  files: number;
+  embedded: number;
+}
+
+export interface RagIndexStatus {
+  project_id: string | null;
+  projects: Record<string, ProjectIndexStatus>;
+  files_total: number;
+  files_embedded: number;
+}
+
 export async function ragSearch(
   query: string,
   projectId?: string,
@@ -82,5 +94,14 @@ export async function listSummaries(
     `/v1/projects/${projectId}/summaries`,
     { params: { type } },
   );
+  return data;
+}
+
+export async function getIndexStatus(
+  projectId?: string,
+): Promise<RagIndexStatus> {
+  const { data } = await api.get<RagIndexStatus>("/v1/rag/index/status", {
+    params: projectId ? { project_id: projectId } : undefined,
+  });
   return data;
 }

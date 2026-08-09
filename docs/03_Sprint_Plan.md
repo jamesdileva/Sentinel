@@ -1015,54 +1015,52 @@ Deferred to **Sprint 10.5**: `GET /observatory/galaxy|timeline|architecture`
 
 ## Phase 12: Final Polish (Sprint 15)
 
-### Sprint 15 — Performance Tuning & Final Polish
+### Sprint 15 — Performance Tuning & Final Polish (v1.15)
 
-**Objective:** Optimize performance, fix outstanding issues, and ensure the system is production-ready.
+**Objective:** Remove the last performance hotspots (sync, portfolio reads),
+close outstanding fix-ups, and put real numbers on the Dashboard.
 
-**Files Created:**
-- `backend/app/utils/cache.py`
-- `frontend/src/components/VirtualizedList.tsx`
-- `docs/RELEASING.md`
+**Backend Changes (shipped):**
+- **Sync change detection**: `RepoSyncService` records each repo's HEAD
+  (`git rev-parse --short HEAD`) before/after `git pull --ff-only`; only repos
+  whose HEAD moved are re-indexed, and an all-clean pass skips the scan
+  entirely (no dir walks, no re-parse, portfolio caches stay fresh). Knowledge
+  auto-index (v1.14) is narrowed to changed repos only.
+- **Sync persistence**: every run is stored in a new `SyncRun` table and read
+  back by `GET /api/v1/system/sync` (config + last run + interval).
+- **Portfolio scoring rework**: build = 21 static (command detected) + 9 proven
+  (passed); tests = 24 static (test files detected) + 6 proven (green run);
+  the static part survives a failed run. Docs matrix green threshold lowered to
+  50%. New `GET /portfolio/summary` (projects/buildable/open findings/avg health).
+- **Portfolio change-driven cache**: reads serve the `PortfolioScore` row while
+  it is newer than every source row (build/test/repo/finding timestamps);
+  recompute only when data actually changed.
+- **Scanner false-positive skip** (self-scan): ignored name parts `data`,
+  `fixtures`, templates; real `.env` detections still flagged.
+- **RAG index status**: `GET /rag/index/status` — embedded vs total files per
+  project (or all), no jobs triggered.
 
-**Files Modified:**
-- `backend/app/services/*` (add caching where needed)
-- `frontend/src/components/*` (optimize rendering)
+**Frontend (shipped):**
+- Dashboard stat cards now show real numbers (project count, active jobs,
+  open findings, average health + buildable hint) via `/portfolio/summary`.
+- Header sync pill (Layout): last repo-sync outcome — `Synced <time>` /
+  `Sync failed` (title = detail) / `Sync not run` / hidden when unconfigured.
+- Knowledge page shows per-project index progress
+  ("X of Y files embedded", `✓` when complete).
 
-**Database Changes:**
-- Add indexes for frequently queried columns
-- Optimize query patterns
+**Acceptance Criteria (v1.15, all met):**
+- Repo sync with zero changes runs in seconds and touches no data (skipped
+  re-index + no knowledge queueing; verified by unit tests)
+- Dashboard shows real portfolio stats; portfolio tab keeps serving from cache
+  instead of recompute-per-read
+- All new endpoints/services/utilities covered by tests (python + vitest)
 
-**Backend Changes:**
-- Add Redis-based caching for expensive computations
-- Optimize repository queries with eager loading
-- Add request timeout middleware
-- Implement response compression (gzip)
+**Definition of Done:** Sprint 15 changelog rows in docs/01, /02, /03; §14.5
+and §13.4 updated; full backend + frontend suites green.
 
-**Frontend Changes:**
-- Add virtualized lists for large result sets
-- Optimize re-renders with React.memo/useCallback
-- Add progressive loading for dashboards
-- Implement offline-first patterns where applicable
-
-**API Endpoints:** Existing endpoints optimized.
-
-**Acceptance Criteria:**
-- Dashboard loads in < 3 seconds with 10+ projects
-- RAG queries return in < 5 seconds
-- Portfolio scoring completes in < 10 seconds
-- No unnecessary re-renders in frontend
-- Memory usage stable over 24-hour period
-
-**Manual Testing:**
-1. Add 10+ projects to the system
-2. Load Dashboard → measure load time
-3. Query RAG with complex question → measure response time
-4. Compute portfolio scores for all projects → measure time
-5. Leave running overnight → check memory/CPU stability
-
-**Definition of Done:** System meets performance targets, no memory leaks, all UI interactions smooth.
-
-**Estimated Time:** 120 minutes
+> Status: **shipped v1.15** (user-approved scope: only change-triggered
+> re-indexing; portfolio cache read-first; real dashboard stats; sync pill;
+> knowledge status; scanner false-positive skip)
 
 **Dependencies:** All previous sprints.
 

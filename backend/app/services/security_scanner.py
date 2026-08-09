@@ -54,7 +54,32 @@ _STATIC_PATTERNS: list[tuple[str, re.Pattern[str], Severity]] = [
     ),
 ]
 
-_IGNORED_NAME_PARTS = (".git", ".venv", "venv", "node_modules", "__pycache__")
+_IGNORED_NAME_PARTS = (
+    ".git",
+    ".venv",
+    "venv",
+    "node_modules",
+    "__pycache__",
+    # Runtime data and test scaffolding are not application source: private
+    # keys under data/ (e.g. Pi-hole tls.pem), scanner test fixtures, and
+    # example/template env files all produce false positives.
+    "data",
+    "fixtures",
+)
+
+# Env template files are meant to be committed with placeholder values
+# (e.g. .env.example with `ghp_xxxxx`); never flag them as secrets.
+_ENV_TEMPLATE_NAMES = (".env.example", ".env.sample", ".env.template", ".env.dist")
+
+
+# Test files legitimately exercise eval()/exec()-style constructs (fixtures,
+# fake runners); only flag dynamic-execution in real source code.
+def _is_test_file(rel: Path) -> bool:
+    parts = [p.lower() for p in rel.parts]
+    if "test" in parts or "tests" in parts or "__tests__" in parts:
+        return True
+    name = rel.name.lower()
+    return name.startswith("test_") or name.endswith("_test.py")
 
 
 class SecurityScanner:
@@ -114,6 +139,8 @@ class SecurityScanner:
             rel = file_path.relative_to(root)
             if any(part in _IGNORED_NAME_PARTS for part in rel.parts):
                 continue
+            if file_path.name.lower() in _ENV_TEMPLATE_NAMES:
+                continue
             try:
                 content = file_path.read_text(encoding="utf-8", errors="replace")
             except OSError:
@@ -145,6 +172,8 @@ class SecurityScanner:
         for file_path in root.rglob("*.py"):
             rel = file_path.relative_to(root)
             if any(part in _IGNORED_NAME_PARTS for part in rel.parts):
+                continue
+            if _is_test_file(rel):
                 continue
             try:
                 content = file_path.read_text(encoding="utf-8", errors="replace")

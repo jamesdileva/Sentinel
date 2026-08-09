@@ -7,9 +7,11 @@ in the API process (Ollama is local); indexing runs as an async Celery job.
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlmodel import Session
+from sqlalchemy import func
+from sqlmodel import Session, select
 
 from app.db.connection import get_session
+from app.db.models import ProjectFile
 from app.repositories import KnowledgeSummaryRepository, ProjectRepository
 from app.schemas import (
     JobEnvelope,
@@ -74,6 +76,39 @@ def rag_index(
         args=[project.id, payload.with_summary], task_id=job_id
     )
     return JobEnvelope(job_id=job_id, status="queued")
+
+
+@router.get("/rag/index/status")
+def rag_index_status(
+    project_id: str | None = None,
+    session: Session = Depends(get_session),
+) -> dict:
+    """Index progress: embedded vs total files, per project or across all
+    projects (Sprint 15). Read-only; no job is triggered here."""
+    stmt = (
+        select(
+            ProjectFile.project_id,
+            func.count(ProjectFile.id),
+            func.count(ProjectFile.embedding_id),
+        )
+        .group_by(ProjectFile.project_id)
+        .order_by(ProjectFile.project_id)
+    )
+    if project_id:
+        stmt = stmt.where(ProjectFile.project_id == project_id)
+    per_project: dict[str, dict] = {}
+    files_total = 0
+    files_embedded = 0
+    for pid, files, embedded in session.exec(stmt).all():
+        per_project[str(pid)] = {"files": int(files), "embedded": int(embedded)}
+        files_total += int(files)
+        files_embedded += int(embedded)
+    return {
+        "project_id": project_id,
+        "projects": per_project,
+        "files_total": files_total,
+        "files_embedded": files_embedded,
+    }
 
 
 @router.get(
