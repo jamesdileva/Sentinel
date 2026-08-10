@@ -26,10 +26,29 @@ describe("ProjectGalaxy", () => {
 
     const { container } = render(<ProjectGalaxy />);
 
-    expect(await screen.findByText("React")).toBeInTheDocument();
-    expect(screen.getByText(/18\.x/)).toBeInTheDocument();
+    // The label appears on the node and in the tech summary list.
+    expect((await screen.findAllByText("React")).length).toBeGreaterThanOrEqual(
+      1,
+    );
+    expect(screen.getAllByText(/18\.x/).length).toBeGreaterThanOrEqual(1);
     expect(container.querySelectorAll("circle")).toHaveLength(2);
     expect(container.querySelectorAll("line")).toHaveLength(1);
+  });
+
+  it("labels nodes and shows a legend", async () => {
+    mockGetGalaxy.mockResolvedValue({
+      nodes: [
+        { id: "alpha", kind: "project", label: "alpha", detail: null },
+        { id: "react", kind: "tech", label: "React", detail: "18.x" },
+      ],
+      links: [{ source: "alpha", target: "react", tech: "React" }],
+    });
+
+    render(<ProjectGalaxy />);
+    await screen.findAllByText("React");
+    expect(screen.getAllByText("alpha").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("Project")).toBeInTheDocument();
+    expect(screen.getByText("Technology / dependency")).toBeInTheDocument();
   });
 
   it("applies a larger radius to project nodes", async () => {
@@ -42,7 +61,7 @@ describe("ProjectGalaxy", () => {
     });
 
     const { container } = render(<ProjectGalaxy />);
-    await screen.findByText("Rust");
+    await screen.findAllByText("Rust");
 
     const circles = container.querySelectorAll("circle");
     const projectNode = circles[0];
@@ -54,6 +73,8 @@ describe("ProjectGalaxy", () => {
   it("shows an error badge when the request fails", async () => {
     mockGetGalaxy.mockRejectedValue(new Error("boom"));
     render(<ProjectGalaxy />);
-    expect(await screen.findByText(/Galaxy failed to load: Error: boom/)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/Galaxy failed to load: Error: boom/),
+    ).toBeInTheDocument();
   });
 });

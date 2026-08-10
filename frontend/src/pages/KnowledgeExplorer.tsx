@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import {
   getIndexStatus,
@@ -10,10 +10,14 @@ import {
 import RagChat from "../components/RagChat";
 import { useUI } from "../contexts/UIContext";
 import { useProjectList } from "../hooks/useProjects";
+import { useActivity } from "../hooks/useActivity";
+
+const REFRESH_THROTTLE_MS = 3_000;
 
 export default function KnowledgeExplorer() {
   const { projects, loading: projectsLoading } = useProjectList();
   const { toast } = useUI();
+  const { events: activity } = useActivity();
 
   const [selectedProjectId, setSelectedProjectId] = useState("");
   const [withSummary, setWithSummary] = useState(false);
@@ -25,6 +29,7 @@ export default function KnowledgeExplorer() {
   const [searchError, setSearchError] = useState<string | null>(null);
 
   const [indexStatus, setIndexStatus] = useState<RagIndexStatus | null>(null);
+  const lastRefresh = useRef(0);
 
   useEffect(() => {
     let active = true;
@@ -39,6 +44,20 @@ export default function KnowledgeExplorer() {
       active = false;
     };
   }, []);
+
+  useEffect(() => {
+    const latest = activity[0];
+    if (!latest) return;
+    if (!["knowledge", "index", "ollama"].includes(latest.kind)) return;
+    const now = Date.now();
+    if (now - lastRefresh.current < REFRESH_THROTTLE_MS) return;
+    lastRefresh.current = now;
+    getIndexStatus()
+      .then(setIndexStatus)
+      .catch(() => {
+        /* keep the last known progress */
+      });
+  }, [activity]);
 
   const selectedProject = projects.find((p) => p.id === selectedProjectId);
 
@@ -79,7 +98,9 @@ export default function KnowledgeExplorer() {
       setResults(response.results);
     } catch (err) {
       setSearchError(
-        err instanceof Error ? err.message : "Search failed. Is the knowledge indexed?",
+        err instanceof Error
+          ? err.message
+          : "Search failed. Is the knowledge indexed?",
       );
       setResults([]);
     } finally {
@@ -92,10 +113,15 @@ export default function KnowledgeExplorer() {
     setIndexing(true);
     try {
       const job = await ragIndex(selectedProjectId, withSummary);
-      toast(`Knowledge indexing queued (job ${job.job_id.slice(0, 8)}…)`, "success");
+      toast(
+        `Knowledge indexing queued (job ${job.job_id.slice(0, 8)}…)`,
+        "success",
+      );
     } catch (err) {
       toast(
-        err instanceof Error ? err.message : "Failed to queue knowledge indexing.",
+        err instanceof Error
+          ? err.message
+          : "Failed to queue knowledge indexing.",
         "error",
       );
     } finally {

@@ -1,6 +1,7 @@
 """Application settings, loaded from environment variables (SENTINEL_*) and .env.
 
-See docs/02_Implementation_Guide.md §4.2 for the full variable reference.
+The .env file lives at the repo root (next to run.py); the docs, laptop.md,
+and .env.example all agree. See docs/02_Implementation_Guide.md §4.2.
 """
 
 from pathlib import Path
@@ -15,7 +16,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="SENTINEL_",
-        env_file=BASE_DIR.parent / ".env",
+        env_file=BASE_DIR / ".env",
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -50,6 +51,7 @@ class Settings(BaseSettings):
         ".pytest_cache/",
     ]
     auto_scan_on_startup: bool = True
+    auto_index_knowledge: bool = True  # queue RAG indexing for new/unembedded projects
 
     api_key: str = ""
     schedule_interval_minutes: int = 60

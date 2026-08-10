@@ -51,9 +51,12 @@ def run_backend_tests() -> int:
 
 
 def lint_backend() -> int:
-    ok = run_python(["-m", "black", "--check", "app", "tests"])
+    ok = run_python(["-m", "black", "--check", "app", "tests"]) == 0
     ok = run_python(["-m", "isort", "--check-only", "app", "tests"]) == 0 and ok
-    ok = run_python(["-m", "flake8", "app", "tests"]) == 0 and ok
+    ok = (
+        run_python(["-m", "flake8", "--max-line-length=100", "app", "tests"]) == 0
+        and ok
+    )
     return 0 if ok else 1
 
 
@@ -107,10 +110,10 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
     if not args.skip_tests:
-        ok = run_backend_tests()
+        ok = run_backend_tests() == 0
         ok = run_frontend_tests() == 0 and ok
         ok = lint_backend() == 0 and ok
-        if ok != 0:
+        if not ok:
             sys.exit("Tests failed. Aborting build.")
     ok = build_frontend() == 0
 

@@ -22,16 +22,22 @@ vi.mock("../hooks/useProjects", () => ({
   useProjectList: vi.fn(),
 }));
 
+vi.mock("../hooks/useActivity", () => ({
+  useActivity: vi.fn(),
+}));
+
 import KnowledgeExplorer from "./KnowledgeExplorer";
 import { getIndexStatus, ragIndex, ragSearch } from "../api/rag";
 import { useUI } from "../contexts/UIContext";
 import { useProjectList } from "../hooks/useProjects";
+import { useActivity } from "../hooks/useActivity";
 
 const mockGetIndexStatus = vi.mocked(getIndexStatus);
 const mockRagIndex = vi.mocked(ragIndex);
 const mockRagSearch = vi.mocked(ragSearch);
 const mockUseUI = vi.mocked(useUI);
 const mockUseProjectList = vi.mocked(useProjectList);
+const mockUseActivity = vi.mocked(useActivity);
 
 function makeProject(overrides: Partial<Project> = {}): Project {
   return {
@@ -67,6 +73,8 @@ describe("KnowledgeExplorer", () => {
       error: null,
       refresh: vi.fn(),
     });
+    mockUseActivity.mockReturnValue({ events: [], status: "closed" });
+    mockGetIndexStatus.mockClear();
     mockGetIndexStatus.mockResolvedValue({
       project_id: null,
       projects: { p1: { files: 4, embedded: 2 } },
@@ -130,5 +138,33 @@ describe("KnowledgeExplorer", () => {
       expect.stringContaining("Knowledge indexing queued"),
       "success",
     );
+  });
+
+  it("refreshes progress when an indexing activity event arrives", async () => {
+    mockUseActivity.mockReturnValue({
+      events: [
+        {
+          id: "e1",
+          kind: "knowledge",
+          message: "Knowledge indexing finished for alpha",
+          detail: null,
+          data: {},
+          created_at: "2026-08-06T12:01:00Z",
+        },
+      ],
+      status: "open",
+    });
+    mockGetIndexStatus.mockResolvedValue({
+      project_id: null,
+      projects: { p1: { files: 4, embedded: 4 } },
+      files_total: 4,
+      files_embedded: 4,
+    });
+
+    render(<KnowledgeExplorer />);
+    expect(
+      await screen.findByText(/4 of 4 files embedded across projects/),
+    ).toBeInTheDocument();
+    expect(mockGetIndexStatus).toHaveBeenCalledTimes(2);
   });
 });

@@ -6,6 +6,7 @@ app/tasks/build_tasks.py.
 """
 
 from app.core.logging import get_logger
+from app.services import activity_bus
 from app.services.sync_service import run_sync
 
 logger = get_logger(__name__)
@@ -15,10 +16,44 @@ def run_repo_sync() -> dict:
     """Clone/pull GitHub repos into watch dirs, then re-index (Rule 3 deterministic)."""
     logger.info("repo sync task starting")
     result = run_sync()
+    cloned = result.get("cloned", [])
+    pulled = result.get("pulled", [])
+    failed = result.get("failed", {})
     logger.info(
         "repo sync done: %d cloned, %d updated, %d failed",
-        len(result.get("cloned", [])),
-        len(result.get("pulled", [])),
-        len(result.get("failed", {})),
+        len(cloned),
+        len(pulled),
+        len(failed),
     )
+    if failed:
+        activity_bus.publish_event(
+            "sync",
+            f"Repo sync failed — {len(failed)} repo(s) failed",
+            detail=(
+                f"{len(cloned)} cloned, {len(pulled)} updated; "
+                f"{', '.join(str(k) for k in failed)}"
+            ),
+            data={"cloned": len(cloned), "pulled": len(pulled), "failed": list(failed)},
+        )
+    elif not cloned and not pulled:
+        activity_bus.publish_event(
+            "sync",
+            "Repo sync: nothing changed, nothing re-indexed",
+            data={"cloned": 0, "pulled": 0, "indexed": 0},
+        )
+    else:
+        activity_bus.publish_event(
+            "sync",
+            f"Repo sync: {len(cloned)} cloned, {len(pulled)} updated",
+            detail=(
+                f"{result.get('indexed', 0)} project(s) indexed, "
+                f"{result.get('knowledge', {}).get('queued', 0)} knowledge "
+                "job(s) queued"
+            ),
+            data={
+                "cloned": len(cloned),
+                "pulled": len(pulled),
+                "indexed": result.get("indexed", 0),
+            },
+        )
     return result

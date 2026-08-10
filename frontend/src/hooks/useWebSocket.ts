@@ -43,6 +43,12 @@ export function useWebSocket(
   }, [reconnect]);
 
   const connect = useCallback(() => {
+    if (typeof WebSocket === "undefined") {
+      // jsdom and other non-browser environments have no WebSocket; degrade
+      // to "closed" so callers can fall back to HTTP polling.
+      setStatus("closed");
+      return;
+    }
     setStatus("connecting");
     const socket = new WebSocket(wsUrl(path));
     socketRef.current = socket;
@@ -64,7 +70,10 @@ export function useWebSocket(
     socket.onclose = () => {
       setStatus("closed");
       if (!reconnectRef.current) return;
-      const delay = Math.min(1000 * 2 ** attemptRef.current++, MAX_RECONNECT_DELAY_MS);
+      const delay = Math.min(
+        1000 * 2 ** attemptRef.current++,
+        MAX_RECONNECT_DELAY_MS,
+      );
       timerRef.current = window.setTimeout(connect, delay);
     };
     socket.onerror = () => {

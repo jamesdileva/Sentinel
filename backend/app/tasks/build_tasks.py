@@ -11,6 +11,7 @@ from sqlmodel import Session
 from app.core.logging import get_logger
 from app.db.connection import get_engine
 from app.db.models import BuildLog, Project
+from app.services import activity_bus
 from app.services.build_runner import BuildRunner
 from app.services.security_scanner import SecurityScanner
 from app.services.test_runner import TestRunner
@@ -32,6 +33,12 @@ def run_build_task(project_id: str, log_id: str) -> dict:
         if log is None:
             log = BuildLog(id=log_id, project_id=project.id)
         log = BuildRunner(session).run_build(project, log=log)
+        activity_bus.publish_event(
+            "build",
+            f"Build {'passed' if log.success else 'failed'} for {project.name}",
+            detail=f"exit code {log.exit_code}",
+            data={"project_id": project.id, "success": bool(log.success)},
+        )
         return {
             "job_id": log.id,
             "project_id": project.id,
@@ -46,6 +53,20 @@ def run_tests_task(project_id: str) -> dict:
     with Session(get_engine()) as session:
         project = TestRunner.get_project(session, project_id)
         result = TestRunner(session).run_tests(project)
+        errors = getattr(result, "errors", 0)
+        outcome = "passed" if result.failed == 0 and errors == 0 else "failed"
+        activity_bus.publish_event(
+            "test",
+            f"Tests {outcome} for {project.name}",
+            detail=(
+                f"{result.passed} passed, {result.failed} failed, " f"{errors} errors"
+            ),
+            data={
+                "project_id": project.id,
+                "passed": result.passed,
+                "failed": result.failed,
+            },
+        )
         return {
             "job_id": result.id,
             "project_id": project.id,
@@ -61,6 +82,11 @@ def run_security_scan_task(project_id: str) -> dict:
     with Session(get_engine()) as session:
         project = SecurityScanner.get_project(session, project_id)
         findings = SecurityScanner(session).scan_project(project)
+        activity_bus.publish_event(
+            "security",
+            f"Security scan of {project.name} found {len(findings)} finding(s)",
+            data={"project_id": project.id, "count": len(findings)},
+        )
         return {"project_id": project.id, "count": len(findings)}
 
 

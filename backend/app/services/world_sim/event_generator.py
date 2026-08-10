@@ -13,7 +13,6 @@ from dataclasses import dataclass, field
 
 from app.services.world_sim import names
 from app.services.world_sim.rules_engine import (
-    DISASTER_PLAGUE,
     DISASTER_TYPES,
     DISCOVERY_CHANCE,
     DISCOVERY_EXPLORER_BONUS,
@@ -24,7 +23,6 @@ from app.services.world_sim.rules_engine import (
     RAID_CHANCE,
     RAID_DISTANCE,
     SOCIAL_CHANCE,
-    TERRAIN_DISASTER_MODIFIER,
     SettlementState,
     construction_needed,
     daily_consumption,

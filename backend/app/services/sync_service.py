@@ -192,37 +192,52 @@ class RepoSyncService:
         """
         if not changed:
             return {"queued": 0, "skipped": "no-changes"}
-        changed_dirs = [self._local_path(name) for name in changed]
+        return queue_knowledge_index_unembedded(
+            [self._local_path(name) for name in changed]
+        )
 
-        try:
-            if not OllamaService().is_available():
-                logger.info("Knowledge indexing skipped: Ollama unavailable")
-                return {"queued": 0, "skipped": "ollama-unavailable"}
-        except Exception:  # noqa: BLE001 — a probe failure means "not available"
-            logger.info("Knowledge indexing skipped: Ollama probe failed")
+
+def queue_knowledge_index_unembedded(paths: list[str] | None = None) -> dict:
+    """Best-effort RAG indexing for projects with unembedded files (v1.17).
+
+    Shared by the repo-sync pass (path-filtered to changed repos) and the
+    initial startup scan (no filter — every newly discovered project).
+    Never raises: Ollama down or a DB hiccup degrades to {"queued": 0,
+    "skipped": ...} and a later sync/scan retries it.
+    """
+    if paths is not None and not paths:
+        return {"queued": 0, "skipped": "no-changes"}
+    try:
+        if not OllamaService().is_available():
+            logger.info("Knowledge indexing skipped: Ollama unavailable")
             return {"queued": 0, "skipped": "ollama-unavailable"}
+    except Exception:  # noqa: BLE001 — a probe failure means "not available"
+        logger.info("Knowledge indexing skipped: Ollama probe failed")
+        return {"queued": 0, "skipped": "ollama-unavailable"}
 
-        try:
-            from app.db.models import Project, ProjectFile
-            from app.services.job_scheduler import scheduler as job_scheduler
+    try:
+        from app.db.models import Project, ProjectFile
+        from app.services.job_scheduler import scheduler as job_scheduler
 
-            with Session(get_engine()) as session:
-                unembedded = session.exec(
-                    select(ProjectFile.project_id)
-                    .join(Project, ProjectFile.project_id == Project.id)
-                    .where(ProjectFile.embedding_id.is_(None))
-                    .where(Project.path.in_(changed_dirs))
-                    .distinct()
-                ).all()
-            for project_id in unembedded:
-                try:
-                    job_scheduler.submit("run_index_knowledge", args=[project_id])
-                except Exception:  # noqa: BLE001 — one bad queue must not kill the run
-                    logger.warning("Knowledge queuing failed for %s", project_id)
-            return {"queued": len(unembedded), "skipped": None}
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Knowledge indexing step failed: %s", exc)
-            return {"queued": 0, "skipped": f"error: {exc}"}
+        stmt = (
+            select(ProjectFile.project_id)
+            .join(Project, ProjectFile.project_id == Project.id)
+            .where(ProjectFile.embedding_id.is_(None))
+            .distinct()
+        )
+        if paths:
+            stmt = stmt.where(Project.path.in_(paths))
+        with Session(get_engine()) as session:
+            unembedded = session.exec(stmt).all()
+        for project_id in unembedded:
+            try:
+                job_scheduler.submit("run_index_knowledge", args=[project_id])
+            except Exception:  # noqa: BLE001 — one bad queue must not kill the run
+                logger.warning("Knowledge queuing failed for %s", project_id)
+        return {"queued": len(unembedded), "skipped": None}
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Knowledge indexing step failed: %s", exc)
+        return {"queued": 0, "skipped": f"error: {exc}"}
 
 
 def persist_sync_run(

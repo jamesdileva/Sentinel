@@ -4,11 +4,25 @@ import { NavLink, Outlet } from "react-router";
 import { useUI } from "../contexts/UIContext";
 import { NAV_ITEMS } from "./nav";
 import { getSyncStatus } from "../api/system";
-import type { SyncStatus } from "../api/system";
+import type { SyncStatus, ActivityEvent } from "../api/system";
+import { useActivity } from "../hooks/useActivity";
+import type { ActivityStatus } from "../hooks/useActivity";
+
+const KIND_LABEL: Record<string, string> = {
+  sync: "Sync",
+  index: "Index",
+  knowledge: "Knowledge",
+  build: "Build",
+  test: "Tests",
+  security: "Scan",
+  ollama: "Ollama",
+  job: "Job",
+};
 
 export default function Layout() {
   const { dark, toggleDark, sidebarOpen, setSidebarOpen } = useUI();
   const [sync, setSync] = useState<SyncStatus | null>(null);
+  const { events, status } = useActivity();
 
   useEffect(() => {
     let active = true;
@@ -84,7 +98,7 @@ export default function Layout() {
           <h1 className="flex-1 text-sm font-semibold uppercase tracking-widest text-slate-500 dark:text-slate-400">
             Dashboard
           </h1>
-          {sync?.configured && <SyncPill sync={sync} />}
+          {sync && <SyncPill sync={sync} />}
           <button
             type="button"
             onClick={toggleDark}
@@ -94,6 +108,8 @@ export default function Layout() {
             {dark ? "☀" : "☾"}
           </button>
         </header>
+
+        <StatusBar events={events} status={status} />
 
         <main className="p-4 sm:p-6 lg:p-8">
           <Outlet />
@@ -105,7 +121,78 @@ export default function Layout() {
   );
 }
 
+function StatusBar({
+  events,
+  status,
+}: {
+  events: ActivityEvent[];
+  status: ActivityStatus;
+}) {
+  const last = events[0];
+  const ollama = events.find((event) => event.kind === "ollama");
+  const tokensPerSecond = (() => {
+    const data = ollama?.data ?? {};
+    const ms = Number(data.eval_duration_ns);
+    const tokens = Number(data.tokens);
+    if (!ms || !tokens) return null;
+    return Math.round((tokens / ms) * 1_000_000_000);
+  })();
+
+  return (
+    <div className="flex min-h-7 items-center gap-3 overflow-x-auto border-b border-slate-200 bg-white/60 px-4 py-1 text-xs text-slate-500 backdrop-blur dark:border-slate-800 dark:bg-slate-900/60 dark:text-slate-400">
+      <span className="flex shrink-0 items-center gap-1.5">
+        <span
+          className={`h-1.5 w-1.5 rounded-full ${
+            status === "open"
+              ? "bg-emerald-500"
+              : status === "connecting"
+                ? "bg-amber-500"
+                : "bg-red-500"
+          }`}
+          aria-hidden="true"
+        />
+        {status === "open"
+          ? "live"
+          : status === "connecting"
+            ? "connecting"
+            : "offline"}
+      </span>
+
+      {ollama && tokensPerSecond !== null && (
+        <span className="shrink-0 font-mono text-[11px] text-indigo-600 dark:text-indigo-400">
+          Ollama {String(ollama.data.purpose ?? "query")} · {tokensPerSecond}{" "}
+          tok/s
+        </span>
+      )}
+
+      {last ? (
+        <span className="truncate" title={last.detail ?? undefined}>
+          <span className="font-semibold text-slate-600 dark:text-slate-300">
+            {KIND_LABEL[last.kind] ?? last.kind}
+          </span>
+          : {last.message}
+          <span className="ml-2 text-slate-400 dark:text-slate-500">
+            {new Date(last.created_at).toLocaleTimeString()}
+          </span>
+        </span>
+      ) : (
+        <span className="truncate italic">No activity yet</span>
+      )}
+    </div>
+  );
+}
+
 function SyncPill({ sync }: { sync: SyncStatus }) {
+  if (!sync.configured) {
+    return (
+      <span
+        title="Repo sync is not configured (set SENTINEL_GITHUB_TOKEN in .env)"
+        className="hidden items-center gap-1.5 rounded-full border border-slate-300 bg-white px-2.5 py-0.5 text-xs font-medium text-slate-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-500 sm:inline-flex"
+      >
+        Sync not configured
+      </span>
+    );
+  }
   const last = sync.last_run;
   let label = "Sync not run";
   let cls =
@@ -138,7 +225,7 @@ function SyncPill({ sync }: { sync: SyncStatus }) {
       title={
         last?.status === "error" && last.detail
           ? last.detail
-          : last?.detail ?? undefined
+          : (last?.detail ?? undefined)
       }
       className={`hidden items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium sm:inline-flex ${cls}`}
     >

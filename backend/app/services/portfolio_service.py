@@ -314,8 +314,8 @@ class PortfolioService:
             list(
                 self.session.exec(
                     select(SecurityFinding).where(
-                        SecurityFinding.resolved == False
-                    )  # noqa: E712
+                        SecurityFinding.resolved == False  # noqa: E712
+                    )
                 ).all()
             )
         )

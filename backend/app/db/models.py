@@ -165,19 +165,56 @@ class KnowledgeSummary(SQLModel, table=True):
 
 
 class OllamaQueryLog(SQLModel, table=True):
-    """Deterministic record of each Ollama generation (System page, Sprint 12).
+    """Deterministic record of each Ollama call (System page, Sprint 12).
 
     Powers tokens/sec and latency readouts. Written on every RAG answer and
     project summary; no AI involvement — just Ollama's own counters.
+    `purpose` labels what the call served (query / summary / rag-index).
     """
 
     id: str = Field(default_factory=_uuid, primary_key=True)
     model: str
+    purpose: str = "query"
     prompt_chars: int = 0
     response_chars: int = 0
     eval_count: int = 0
     eval_duration_ns: int = 0
     total_duration_ns: int = 0
+    created_at: datetime.datetime = Field(default_factory=_utcnow)
+
+
+class ActivityEvent(SQLModel, table=True):
+    """Bounded history backing the live activity stream (Sprint 16/v1.17).
+
+    Written by the in-process activity bus for every notable event (sync,
+    indexing, builds, security, Ollama usage); the /api/v1/ws/jobs channel
+    broadcasts them live and GET /api/v1/system/activity reads the tail so
+    the dashboard can show what happened while no one was looking.
+    """
+
+    id: str = Field(default_factory=_uuid, primary_key=True)
+    kind: str  # sync | index | build | test | security | ollama | job | system
+    message: str
+    detail: str | None = None
+    data: dict | None = Field(default=None, sa_column=Column(JSON))
+    created_at: datetime.datetime = Field(default_factory=_utcnow)
+
+
+class ChatMessage(SQLModel, table=True):
+    """One persisted message in a project-scoped chat room (v1.17).
+
+    Lets the Knowledge chat survive tab switches and restarts: rows are
+    written per exchange and replayed when the room is opened again.
+    """
+
+    id: str = Field(default_factory=_uuid, primary_key=True)
+    project_id: str = ""
+    role: str  # user | assistant
+    text: str
+    sources: list | None = Field(default=None, sa_column=Column(JSON))
+    model: str | None = None
+    confidence: float | None = None
+    error: str | None = None  # failure message when no answer was produced
     created_at: datetime.datetime = Field(default_factory=_utcnow)
 
 

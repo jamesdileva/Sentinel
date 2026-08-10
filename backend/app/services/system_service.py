@@ -65,13 +65,15 @@ class OllamaStatus:
         eval_count: int,
         eval_duration_ns: int,
         total_duration_ns: int,
+        purpose: str = "query",
     ) -> None:
-        """Persist a deterministic record of an Ollama generation (no AI)."""
+        """Persist a deterministic record of an Ollama call (no AI)."""
         if self.session is None:
             return
         self.session.add(
             OllamaQueryLog(
                 model=model,
+                purpose=purpose,
                 prompt_chars=len(prompt),
                 response_chars=len(response),
                 eval_count=eval_count,
@@ -90,6 +92,7 @@ class OllamaStatus:
         return [
             {
                 "model": row.model,
+                "purpose": row.purpose,
                 "prompt_chars": row.prompt_chars,
                 "response_chars": row.response_chars,
                 "eval_count": row.eval_count,

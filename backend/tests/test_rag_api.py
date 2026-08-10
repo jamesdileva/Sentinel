@@ -13,7 +13,6 @@ from app.main import app
 from app.services.chroma_manager import ChromaManager
 from app.services.indexer import IndexerService
 from app.services.rag_service import RagService
-from app.tasks.rag_tasks import run_index_knowledge
 
 
 def _fake_embedder(text: str) -> list[float]:
@@ -192,3 +191,80 @@ def test_list_summaries_unknown_project_404(tmp_db):
     client = TestClient(app)
     resp = client.get("/api/v1/projects/does-not-exist/summaries")
     assert resp.status_code == 404
+
+
+# ── v1.17: persisted per-project chat rooms ───────────────────────────
+
+
+def test_chat_save_and_replay(tmp_db):
+    """Chat exchanges persist per project and replay newest-last, with
+    provenance (model, confidence, sources) and error flags intact."""
+    project_id = _seed(tmp_db)
+    client = TestClient(app)
+    question = {"role": "user", "text": "what is this?"}
+    answer = {
+        "role": "assistant",
+        "text": "A test answer",
+        "sources": ["file_summaries:main.py"],
+        "model": "gemma2",
+        "confidence": 0.9,
+    }
+    failure = {"role": "assistant", "text": "", "error": "Ollama unreachable"}
+
+    assert (
+        client.post(f"/api/v1/rag/chat/{project_id}", json=question).status_code == 201
+    )
+    saved = client.post(f"/api/v1/rag/chat/{project_id}", json=answer).json()
+    assert saved["id"]
+    assert saved["project_id"] == project_id
+    assert saved["model"] == "gemma2"
+    assert saved["confidence"] == 0.9
+    assert saved["sources"] == ["file_summaries:main.py"]
+    client.post(f"/api/v1/rag/chat/{project_id}", json=failure)
+
+    history = client.get(f"/api/v1/rag/chat/{project_id}").json()
+    assert [m["role"] for m in history] == ["user", "assistant", "assistant"]
+    assert history[-1]["error"] == "Ollama unreachable"
+    assert history[0]["created_at"]
+
+    scoped_limit = client.get(
+        f"/api/v1/rag/chat/{project_id}", params={"limit": 2}
+    ).json()
+    assert len(scoped_limit) == 2
+
+
+def test_chat_histories_are_project_scoped(tmp_db):
+    """Two projects must never see each other's messages."""
+    from app.db.models import Project
+
+    project_a = _seed(tmp_db)
+    with Session(get_engine()) as session:
+        session.add(
+            Project(
+                id="project-b",
+                name="Beta",
+                path="C:/other/dup",
+                language="python",
+            )
+        )
+        session.commit()
+        project_b = "project-b"
+        assert project_b != project_a
+    client = TestClient(app)
+    client.post(
+        f"/api/v1/rag/chat/{project_a}",
+        json={"role": "user", "text": "secret of A"},
+    )
+    history_b = client.get(f"/api/v1/rag/chat/{project_b}").json()
+    assert history_b == []
+
+
+def test_chat_unknown_project_404(tmp_db):
+    client = TestClient(app)
+    assert (
+        client.post(
+            "/api/v1/rag/chat/nope", json={"role": "user", "text": "hi"}
+        ).status_code
+        == 404
+    )
+    assert client.get("/api/v1/rag/chat/nope").status_code == 404

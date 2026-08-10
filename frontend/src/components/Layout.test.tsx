@@ -8,12 +8,19 @@ import { UIProvider } from "../contexts/UIContext";
 
 vi.mock("../api/system", () => ({
   getSyncStatus: vi.fn(),
+  getActivity: vi.fn(),
+}));
+
+vi.mock("../hooks/useActivity", () => ({
+  useActivity: vi.fn(),
 }));
 
 import { getSyncStatus } from "../api/system";
 import type { SyncStatus } from "../api/system";
+import { useActivity } from "../hooks/useActivity";
 
 const mockGetSyncStatus = vi.mocked(getSyncStatus);
+const mockUseActivity = vi.mocked(useActivity);
 
 function makeSync(overrides: Partial<SyncStatus> = {}): SyncStatus {
   return {
@@ -51,6 +58,8 @@ describe("Layout", () => {
   beforeEach(() => {
     mockGetSyncStatus.mockReset();
     mockGetSyncStatus.mockResolvedValue(makeSync());
+    mockUseActivity.mockReset();
+    mockUseActivity.mockReturnValue({ events: [], status: "closed" });
   });
 
   it("renders the brand, nav links, and outlet", async () => {
@@ -114,11 +123,41 @@ describe("Layout", () => {
     expect(await screen.findByText("Sync not run")).toBeInTheDocument();
   });
 
-  it("hides the pill when repo sync is not configured", async () => {
-    mockGetSyncStatus.mockResolvedValue(makeSync({ configured: false, last_run: null }));
+  it("shows 'Sync not configured' when repo sync is unconfigured", async () => {
+    mockGetSyncStatus.mockResolvedValue(
+      makeSync({ configured: false, last_run: null }),
+    );
     renderLayout();
-    await screen.findByText("Home page");
-    expect(screen.queryByText("Sync not run")).not.toBeInTheDocument();
-    expect(screen.queryByText(/Synced/)).not.toBeInTheDocument();
+    const pill = await screen.findByText("Sync not configured");
+    expect(pill).toBeInTheDocument();
+    expect(pill).toHaveAttribute(
+      "title",
+      expect.stringContaining("SENTINEL_GITHUB_TOKEN"),
+    );
+  });
+
+  it("renders the global status bar with the latest activity", async () => {
+    mockUseActivity.mockReturnValue({
+      events: [
+        {
+          id: "e1",
+          kind: "sync",
+          message: "Synced 2 repositories",
+          detail: null,
+          data: {},
+          created_at: "2026-08-06T12:00:00Z",
+        },
+      ],
+      status: "open",
+    });
+    renderLayout();
+    expect(
+      await screen.findByText(
+        (_content, element) =>
+          element?.textContent?.startsWith("Sync: Synced 2 repositories") ??
+          false,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText("live")).toBeInTheDocument();
   });
 });

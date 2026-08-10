@@ -332,9 +332,25 @@ All endpoints live under `http://127.0.0.1:8000/api/v1/`. Relative paths below o
 - Query: `?project_id=optional` (narrow the report to one project)
 - Returns: `{"project_id": null, "projects": {"<project_id>": {"files": N, "embedded": M}}, "files_total": N, "files_embedded": M}` — embedded = files with an `embedding_id` set; drives the "X of Y files embedded" line in the Knowledge page
 
-**GET `/projects/{id}/summaries`** — Get AI-generated project summaries
+****GET `/projects/{id}/summaries`** — Get AI-generated project summaries
 - Query: `?type=architecture`
 - Returns: list of KnowledgeSummary objects
+
+**GET/POST `/rag/chat/{project_id}` — Persisted per-project chat room (v1.17)**
+- `GET` returns chat history newest-last (`?limit=`, cap 500); `POST` saves one
+  exchange (`role: user|assistant`, `text`, `sources[]`, `model`, `confidence`,
+  `error` when the answer failed) — the Knowledge chat survives tab switches
+  and restarts
+- Module: `app/db/models.py::ChatMessage`, handler `app/api/v1/rag.py`
+
+**GET `/system/activity` — Recent activity events (v1.17)**
+- Query: `?limit=` (cap 500); returns `{"events": [...]}` newest-first, each
+  `{id, kind, message, detail, data, created_at}`
+- Kinds: `sync`, `index`, `knowledge`, `build`, `test`, `security`, `ollama`,
+  `job`; served from the bounded `activity_event` table (in-memory tail as
+  fallback). Same events stream live on `/api/v1/ws/jobs` (`{type: "activity",
+  event: {...}}` frames + 30 s heartbeat). Module:
+  `app/services/activity_bus.py`
 
 ### 2.4. Automation
 
@@ -902,6 +918,7 @@ Read from the repo-root `.env` (Sprint 15: no containers — the backend process
 | `SENTINEL_OLLAMA_MODEL` | `gemma2` | LLM model for project AI |
 | `SENTINEL_EMBEDDING_MODEL` | `nomic-embed-text` | Embedding model |
 | `SENTINEL_WATCH_DIRS` | `<home>` (current user) | Comma-separated project directories (v1.16.2: defaults to `Path.home()` so the laptop works out of the box) |
+| `SENTINEL_AUTO_INDEX_KNOWLEDGE` | `true` | v1.17: after the startup scan, queue RAG indexing for projects with unembedded files (Ollama-gated) |
 | `SENTINEL_API_KEY` | (empty) | Optional API key for authentication |
 | `SENTINEL_SCHEDULE_INTERVAL` | `60` | Minutes between automation runs |
 | `SENTINEL_GITHUB_TOKEN` | (empty) | Read-only PAT for `repo-sync` (clone/pull from GitHub) |
@@ -1848,6 +1865,7 @@ relationships aren't persisted, so they're intentionally absent.
 
 | Date | Version | Change | Author |
 |------|---------|--------|--------|
+| 2026-08-09 | 1.17 | Sprint 17 (Observability & UX pass). **Activity bus**: `app/services/activity_bus.py` — `publish_event(kind, message, detail, data)` persists to the bounded `activity_event` table (5000-row ceiling, lock-serialized) + enriches the live channel; `GET /system/activity` (newest first, cap 500) and WS `/api/v1/ws/jobs` frames `{type: "activity", event: {...}}` + 30 s heartbeat. Publishers: job scheduler (queued/running/finished/failed), sync, build/test/security tasks, rag index start/finish, `rag_service._generate_with_metrics` (kind `ollama`, `purpose` = query/summary/…, data carries model/purpose/tokens/eval_duration_ns for tok/s). **Chat persistence**: `ChatMessage` table + `GET/POST /rag/chat/{project_id}`; RagChat replays + saves every exchange (best-effort). **Auto knowledge-index**: `SENTINEL_AUTO_INDEX_KNOWLEDGE` (default true) — startup scan queues `run_index_knowledge` for projects with unembedded files via shared `queue_knowledge_index_unembedded()` (Ollama-gated); sync pass refactored onto the same helper. **Frontend**: global StatusBar (live dot, latest event, Ollama purpose + tok/s), sync pill visible when unconfigured ("Sync not configured"), Dashboard live activity log (poll fallback in `useActivity`), KnowledgeExplorer live progress refresh (3 s throttle), ProjectGalaxy node labels + legend, HealthCard per-criterion reasons + screenshots chip. **.env path fix**: `config.py` env_file was `BASE_DIR.parent / ".env"` (home) since Sprint 0 — repo-root `.env` never loaded natively; now `BASE_DIR / ".env"` (regression test pins it). **Gate repair**: `scripts/build.py` masked failures (raw exit 0 is falsy in the `and` chain) and ran flake8 at default 79 cols — booleanized + `--max-line-length=100`; stragglers cleared. Tests: 271 backend / 94.49 %, 63 vitest, gate exits 0 | AI agent |
 | 2026-08-08 | 1.16.2 | Dashboard actually served: `app/main.py` still pointed at `frontend/dist` while the build is staged at `backend/app/static` — on a Node-less laptop every non-API path 404'd. Now serves the staged build (dev fallback to `frontend/dist`) and `/` returns dashboard HTML instead of the Sprint-1 health JSON (health stays at `/health` + `/api/v1/health`). SPA-fallback + root tests added; 257 backend green. Docs: venv-path commands tightened (`.\.venv\Scripts\python.exe run.py` — PowerShell ExecutionPolicy blocks `Activate.ps1`, activation never required): §5.2 + §13, laptop.md, AGENTS.md. Watch-dir default changed from hardcoded `C:\Users\j` to the current user's home (`Path.home()`) — laptop `C:\Users\james` found with no config; env override unchanged | AI agent |
 | 2026-08-08 | 1.16.1 | Pi-hole decommissioned on the laptop (docs/laptop.md `Moving off Docker`): router DNS back to Automatic, docker system prune -a --volumes wipes the old stack + Pi-hole, Docker Desktop uninstalled, old Sentinel task removed; laptop now needs only Python (repo ships the staged dashboard in ackend/app/static — no Node). Docs: laptop.md migration section added, 01 §9.2/§10 and 02 §13 updated (Pi-hole retired, DNS Automatic) | User |
 | 2026-08-08 | 1.16 | Sprint 15.1 (Native deployment, decommission Docker). Compose/Docker layer removed: docker-compose*.yml, docker/, scripts/dev.py deleted; 

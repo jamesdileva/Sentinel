@@ -10,6 +10,7 @@ from app.schemas.build import (
     JobStatus,
     build_status_from_log,
 )
+from app.schemas.chat import ChatMessageCreate, ChatMessageRead
 from app.schemas.git import FeatureTimelineItem, GitCommitRead
 from app.schemas.job import JobEnvelope
 from app.schemas.knowledge import KnowledgeSummaryRead
@@ -62,6 +63,8 @@ __all__ = [
     "ArchitectureNode",
     "BuildLogRead",
     "BuildTrigger",
+    "ChatMessageCreate",
+    "ChatMessageRead",
     "FeatureMatrix",
     "FeatureTimelineItem",
     "GalaxyGraph",

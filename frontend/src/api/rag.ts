@@ -105,3 +105,46 @@ export async function getIndexStatus(
   });
   return data;
 }
+
+// ── v1.17: persisted per-project chat rooms ────────────────────────────
+
+export interface StoredChatMessage {
+  id: string;
+  project_id: string;
+  role: "user" | "assistant";
+  text: string;
+  sources: string[] | null;
+  model: string | null;
+  confidence: number | null;
+  error: string | null;
+  created_at: string;
+}
+
+export async function getChatHistory(
+  projectId: string,
+  limit = 100,
+): Promise<StoredChatMessage[]> {
+  const { data } = await api.get<StoredChatMessage[]>(
+    `/v1/rag/chat/${projectId}`,
+    { params: { limit } },
+  );
+  return data;
+}
+
+export async function saveChatMessage(
+  projectId: string,
+  message: {
+    role: "user" | "assistant";
+    text: string;
+    sources?: string[];
+    model?: string | null;
+    confidence?: number | null;
+    error?: string | null;
+  },
+): Promise<StoredChatMessage> {
+  const { data } = await api.post<StoredChatMessage>(
+    `/v1/rag/chat/${projectId}`,
+    message,
+  );
+  return data;
+}

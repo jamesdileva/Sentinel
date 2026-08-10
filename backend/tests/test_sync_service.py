@@ -11,7 +11,12 @@ import httpx
 import pytest
 
 from app.services import sync_service
-from app.services.sync_service import RepoSyncService, latest_sync_run, run_sync
+from app.services.sync_service import (
+    RepoSyncService,
+    latest_sync_run,
+    queue_knowledge_index_unembedded,
+    run_sync,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -360,3 +365,103 @@ def test_sync_skips_knowledge_when_ollama_unavailable(tmp_path, tmp_db, monkeypa
     )
     result = client.sync()
     assert result["knowledge"] == {"queued": 0, "skipped": "ollama-unavailable"}
+
+
+# ── v1.17: startup auto knowledge-index (config-gated) ────────────────
+
+
+def test_auto_index_queues_all_unembedded(tmp_db, monkeypatch):
+    """`queue_knowledge_index_unembedded()` with no path filter targets every
+    project with unembedded files — used by the startup scan (v1.17)."""
+    from sqlmodel import Session
+
+    from app.db.connection import get_engine
+    from app.db.models import Project, ProjectFile
+
+    with Session(get_engine()) as session:
+        session.add(
+            Project(
+                id="p1",
+                name="Alpha",
+                path="C:/watch/a",
+                language="python",
+            )
+        )
+        session.add(
+            ProjectFile(
+                project_id="p1", path="main.py", id="f1", absolute_path="main.py"
+            )
+        )
+        session.add(
+            Project(
+                id="p2",
+                name="Beta",
+                path="C:/watch/b",
+                language="rust",
+            )
+        )
+        session.add(
+            ProjectFile(project_id="p2", path="lib.rs", id="f2", absolute_path="lib.rs")
+        )
+        session.commit()
+
+    queued: list[str] = []
+
+    def fake_submit(name, args=None, task_id=None):
+        queued.append(args[0])
+
+    from app.services.job_scheduler import scheduler as job_scheduler
+
+    monkeypatch.setattr(job_scheduler, "submit", fake_submit)
+    monkeypatch.setattr(sync_service.OllamaService, "is_available", lambda self: True)
+
+    result = queue_knowledge_index_unembedded()
+    assert result == {"queued": 2, "skipped": None}
+    assert sorted(queued) == ["p1", "p2"]
+
+
+def test_auto_index_empty_paths_window_is_noop():
+    """An explicit empty path window must not queue anything (normalized
+    'no-changes' behaviour of the sync path)."""
+    assert queue_knowledge_index_unembedded(paths=[]) == {
+        "queued": 0,
+        "skipped": "no-changes",
+    }
+
+
+def test_auto_index_path_filter_restricts_projects(tmp_db, monkeypatch):
+    """The sync pass passes the changed repos' paths; projects outside that
+    window must never be touched (their embeddings are already current)."""
+    from sqlmodel import Session
+
+    from app.db.connection import get_engine
+    from app.db.models import Project, ProjectFile
+
+    with Session(get_engine()) as session:
+        session.add(
+            Project(id="p1", name="Alpha", path="C:/watch/a", language="python")
+        )
+        session.add(
+            ProjectFile(
+                project_id="p1", path="main.py", id="f1", absolute_path="main.py"
+            )
+        )
+        session.add(Project(id="p2", name="Beta", path="C:/other/x", language="python"))
+        session.add(
+            ProjectFile(project_id="p2", path="x.py", id="f2", absolute_path="x.py")
+        )
+        session.commit()
+
+    queued: list[str] = []
+
+    def fake_submit(name, args=None, task_id=None):
+        queued.append(args[0])
+
+    from app.services.job_scheduler import scheduler as job_scheduler
+
+    monkeypatch.setattr(job_scheduler, "submit", fake_submit)
+    monkeypatch.setattr(sync_service.OllamaService, "is_available", lambda self: True)
+
+    result = queue_knowledge_index_unembedded(paths=["C:/watch/a"])
+    assert result == {"queued": 1, "skipped": None}
+    assert queued == ["p1"]

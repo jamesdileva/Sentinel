@@ -10,9 +10,11 @@ from sqlalchemy import func
 from sqlmodel import Session, select
 
 from app.db.connection import get_session
-from app.db.models import ProjectFile
+from app.db.models import ChatMessage, ProjectFile
 from app.repositories import KnowledgeSummaryRepository, ProjectRepository
 from app.schemas import (
+    ChatMessageCreate,
+    ChatMessageRead,
     JobEnvelope,
     KnowledgeSummaryRead,
     RagIndexRequest,
@@ -120,3 +122,46 @@ def list_summaries(
     """AI-generated project summaries (provenance: model + generated_at)."""
     _project_or_404(project_id, session)
     return KnowledgeSummaryRepository(session).get_by_project(project_id, type)
+
+
+@router.get("/rag/chat/{project_id}", response_model=list[ChatMessageRead])
+def chat_history(
+    project_id: str,
+    limit: int = 100,
+    session: Session = Depends(get_session),
+) -> list[object]:
+    """Persisted chat room for a project (v1.17): newest-last so the client
+    can render the transcript in order. Cap: 500 messages per page."""
+    _project_or_404(project_id, session)
+    stmt = (
+        select(ChatMessage)
+        .where(ChatMessage.project_id == project_id)
+        .order_by(ChatMessage.created_at.asc(), ChatMessage.id.asc())
+        .limit(max(1, min(limit, 500)))
+    )
+    return session.exec(stmt).all()
+
+
+@router.post("/rag/chat/{project_id}", response_model=ChatMessageRead, status_code=201)
+def chat_save(
+    project_id: str,
+    payload: ChatMessageCreate,
+    session: Session = Depends(get_session),
+) -> ChatMessage:
+    """Persist one exchange of the project chat room. The client saves the
+    question (`role="user"`) and the grounded answer (`role="assistant"`)
+    exactly as produced by /rag/query."""
+    _project_or_404(project_id, session)
+    message = ChatMessage(
+        project_id=project_id,
+        role=payload.role,
+        text=payload.text,
+        sources=payload.sources,
+        model=payload.model,
+        confidence=payload.confidence,
+        error=payload.error,
+    )
+    session.add(message)
+    session.commit()
+    session.refresh(message)
+    return message

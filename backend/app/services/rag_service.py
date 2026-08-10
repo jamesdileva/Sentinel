@@ -223,7 +223,7 @@ class RagService:
             framework=project.framework or "unknown",
             context=context or "No file content available.",
         )
-        content = self._generate_with_metrics(prompt)
+        content = self._generate_with_metrics(prompt, purpose="summary")
         if not content:
             return 0
         summary = KnowledgeSummary(
@@ -330,7 +330,7 @@ class RagService:
             for i, s in enumerate(sources, start=1)
         )
         prompt = _ANSWER_TEMPLATE.format(context=context, question=question)
-        answer = self._generate_with_metrics(prompt)
+        answer = self._generate_with_metrics(prompt, purpose="rag-query")
         confidence = round(
             max(0.0, min(1.0, 1.0 - min(s.distance for s in sources))), 4
         )
@@ -344,18 +344,33 @@ class RagService:
 
     # --- internals -------------------------------------------------------
 
-    def _generate_with_metrics(self, prompt: str) -> str:
-        """Generate and record deterministic metrics (System page t/s readout)."""
+    def _generate_with_metrics(self, prompt: str, purpose: str = "query") -> str:
+        """Generate, record deterministic metrics, and publish an Ollama event."""
         if self._llm is not self.ollama.generate:
             return self._llm(prompt)
         try:
-            result = self.ollama.generate_with_metrics(prompt)
+            result = self.ollama.generate_with_metrics(prompt, purpose=purpose)
         except Exception:  # noqa: BLE001  (fall back to the plain path)
             return self._llm(prompt)
+        from app.services import activity_bus
         from app.services.system_service import OllamaStatus
 
+        tokens = result["eval_count"]
+        latency_ms = round(result["total_duration_ns"] / 1_000_000, 1)
+        activity_bus.publish_event(
+            "ollama",
+            f"Ollama {purpose} for {tokens} tokens in {latency_ms} ms",
+            detail=f"model {result['model']}",
+            data={
+                "model": result["model"],
+                "purpose": purpose,
+                "tokens": tokens,
+                "eval_duration_ns": result["eval_duration_ns"],
+            },
+        )
         OllamaStatus(session=self.session).record_query(
             model=result["model"],
+            purpose=purpose,
             prompt=prompt,
             response=result["response"],
             eval_count=result["eval_count"],

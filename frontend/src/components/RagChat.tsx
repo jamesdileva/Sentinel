@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState, useEffect } from "react";
 
-import { ragQuery } from "../api/rag";
+import { ragQuery, getChatHistory, saveChatMessage } from "../api/rag";
 import ChatMessage, { type ChatMessageData } from "./ChatMessage";
 
 interface RagChatProps {
@@ -11,6 +11,7 @@ export default function RagChat({ projectId }: RagChatProps) {
   const [messages, setMessages] = useState<ChatMessageData[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [historyLoaded, setHistoryLoaded] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const nextId = useRef(1);
 
@@ -20,52 +21,116 @@ export default function RagChat({ projectId }: RagChatProps) {
     }
   }, [messages, loading]);
 
+  useEffect(() => {
+    let active = true;
+    setMessages([]);
+    nextId.current = 1;
+    setHistoryLoaded(false);
+    if (!projectId) {
+      setHistoryLoaded(true);
+      return;
+    }
+    getChatHistory(projectId)
+      .then((rows) => {
+        if (!active) return;
+        setMessages(
+          rows.map((row) => ({
+            id: nextId.current++,
+            role: row.role,
+            text: row.text,
+            sources: (row.sources ?? []).map((source) => ({
+              source,
+              content: "",
+              project_id: projectId,
+              file_path: null,
+              distance: 0,
+            })),
+            model: row.model ?? undefined,
+            generatedAt: row.created_at,
+            confidence: row.confidence ?? undefined,
+            error: Boolean(row.error),
+          })),
+        );
+      })
+      .catch(() => {
+        // History is best-effort: a failed replay just starts a fresh chat.
+      })
+      .finally(() => {
+        if (active) setHistoryLoaded(true);
+      });
+    return () => {
+      active = false;
+    };
+  }, [projectId]);
+
+  const persist = useCallback(
+    (
+      role: "user" | "assistant",
+      text: string,
+      extra?: Partial<ChatMessageData>,
+    ) => {
+      if (!projectId) return;
+      saveChatMessage(projectId, {
+        role,
+        text,
+        sources: extra?.sources?.map((s) => s.file_path || s.source),
+        model: extra?.model ?? null,
+        confidence: extra?.confidence ?? null,
+        error: extra?.error ? "answer failed" : null,
+      }).catch(() => {
+        // Persistence is best-effort — a failed save must not disturb the chat.
+      });
+    },
+    [projectId],
+  );
+
   const handleSubmit = useCallback(
     async (event: React.FormEvent) => {
       event.preventDefault();
       const question = input.trim();
       if (!question || loading) return;
 
-      setMessages((current) => [
-        ...current,
-        { id: nextId.current++, role: "user", text: question } as ChatMessageData,
-      ]);
+      const userMessage = {
+        id: nextId.current++,
+        role: "user" as const,
+        text: question,
+      } as ChatMessageData;
+      setMessages((current) => [...current, userMessage]);
+      persist("user", question);
       setInput("");
       setLoading(true);
 
       const id = nextId.current++;
       try {
         const response = await ragQuery(question, projectId);
-        setMessages((current) => [
-          ...current,
-          {
-            id,
-            role: "assistant",
-            text: response.answer,
-            sources: response.sources,
-            model: response.model,
-            generatedAt: response.generated_at,
-            confidence: response.confidence,
-          } as ChatMessageData,
-        ]);
+        const answer = {
+          id,
+          role: "assistant" as const,
+          text: response.answer,
+          sources: response.sources,
+          model: response.model,
+          generatedAt: response.generated_at,
+          confidence: response.confidence,
+        } as ChatMessageData;
+        setMessages((current) => [...current, answer]);
+        persist("assistant", response.answer, answer);
       } catch (err) {
-        setMessages((current) => [
-          ...current,
-          {
-            id,
-            role: "assistant",
-            text:
-              err instanceof Error
-                ? `Sorry, I couldn't answer that: ${err.message}`
-                : "Sorry, I couldn't answer that.",
-            error: true,
-          } as ChatMessageData,
-        ]);
+        const answer = {
+          id,
+          role: "assistant" as const,
+          text:
+            err instanceof Error
+              ? `Sorry, I couldn't answer that: ${err.message}`
+              : "Sorry, I couldn't answer that.",
+          error: true,
+        } as ChatMessageData;
+        setMessages((current) => [...current, answer]);
+        persist("assistant", answer.text, answer);
       } finally {
         setLoading(false);
       }
     },
-    [input, loading, projectId],
+    [input, loading, projectId, persist],
   );
 
   return (
@@ -82,7 +147,9 @@ export default function RagChat({ projectId }: RagChatProps) {
       <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto p-4">
         {messages.length === 0 && (
           <p className="pt-8 text-center text-sm text-slate-400 dark:text-slate-500">
-            Ask anything, e.g. "What does this project do?"
+            {historyLoaded
+              ? 'Ask anything, e.g. "What does this project do?"'
+              : "Loading chat…"}
           </p>
         )}
         {messages.map((message) => (
@@ -97,7 +164,10 @@ export default function RagChat({ projectId }: RagChatProps) {
         )}
       </div>
 
-      <form onSubmit={handleSubmit} className="border-t border-slate-200 p-3 dark:border-slate-800">
+      <form
+        onSubmit={handleSubmit}
+        className="border-t border-slate-200 p-3 dark:border-slate-800"
+      >
         <div className="flex gap-2">
           <input
             type="text"

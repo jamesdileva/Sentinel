@@ -9,7 +9,6 @@ without letting timers fire.
 import pytest
 
 from app.core.config import settings
-from app.services import job_scheduler as job_scheduler_module
 from app.services.job_scheduler import JobScheduler, _build_registry
 
 EXPECTED_TASKS = {

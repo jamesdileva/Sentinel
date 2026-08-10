@@ -6,7 +6,7 @@ renders the same map without storing a grid.
 """
 
 import random
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from app.services.world_sim.skill_system import production_bonus
 

@@ -110,7 +110,8 @@ class SecurityScanner:
             )
         ).all()
         existing_by_key: dict[tuple, SecurityFinding] = {
-            self._fingerprint(project.id, self._row_to_dict(row)): row for row in existing
+            self._fingerprint(project.id, self._row_to_dict(row)): row
+            for row in existing
         }
 
         new_rows: list[SecurityFinding] = []

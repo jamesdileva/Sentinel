@@ -41,10 +41,15 @@ class OllamaService:
         model: str | None = None,
         max_tokens: int = 500,
         temperature: float = 0.3,
+        purpose: str = "query",
     ) -> str:
         """Generate a text completion for the given prompt."""
         return self.generate_with_metrics(
-            prompt, model=model, max_tokens=max_tokens, temperature=temperature
+            prompt,
+            model=model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            purpose=purpose,
         )["response"]
 
     def generate_with_metrics(
@@ -53,12 +58,15 @@ class OllamaService:
         model: str | None = None,
         max_tokens: int = 500,
         temperature: float = 0.3,
+        purpose: str = "query",
     ) -> dict:
         """Generate and return text plus Ollama's own perf counters.
 
         The `metrics` dict carries eval_count / eval_duration / total_duration
         (nanoseconds) as reported by Ollama — used by the System page to show
-        tokens/sec without any guesswork (docs/02 §7.3).
+        tokens/sec without any guesswork (docs/02 §7.3). `purpose` labels what
+        the call was for (query / summary / index…) so the activity stream can
+        say WHY Ollama is busy (v1.17).
         """
         model = model or settings.ollama_model
         payload = {
@@ -77,6 +85,7 @@ class OllamaService:
             return {
                 "response": str(data.get("response", "")).strip(),
                 "model": data.get("model") or model,
+                "purpose": purpose,
                 "eval_count": int(data.get("eval_count") or 0),
                 "eval_duration_ns": int(data.get("eval_duration") or 0),
                 "total_duration_ns": int(data.get("total_duration") or 0),

@@ -3,14 +3,18 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import RagChat from "./RagChat";
-import { ragQuery } from "../api/rag";
+import { getChatHistory, ragQuery, saveChatMessage } from "../api/rag";
 import type { RagResponse } from "../api/rag";
 
 vi.mock("../api/rag", () => ({
   ragQuery: vi.fn(),
+  getChatHistory: vi.fn(),
+  saveChatMessage: vi.fn(),
 }));
 
 const mockRagQuery = vi.mocked(ragQuery);
+const mockGetChatHistory = vi.mocked(getChatHistory);
+const mockSaveChatMessage = vi.mocked(saveChatMessage);
 
 function response(overrides: Partial<RagResponse> = {}): RagResponse {
   return {
@@ -34,6 +38,78 @@ function response(overrides: Partial<RagResponse> = {}): RagResponse {
 describe("RagChat", () => {
   beforeEach(() => {
     mockRagQuery.mockReset();
+    mockGetChatHistory.mockReset();
+    mockGetChatHistory.mockResolvedValue([]);
+    mockSaveChatMessage.mockReset();
+    mockSaveChatMessage.mockResolvedValue({} as never);
+  });
+
+  it("loads and replays the persisted chat room", async () => {
+    mockGetChatHistory.mockResolvedValue([
+      {
+        id: "m1",
+        project_id: "p1",
+        role: "user",
+        text: "What does this do?",
+        sources: null,
+        model: null,
+        confidence: null,
+        error: null,
+        created_at: "2026-08-06T12:00:00Z",
+      },
+      {
+        id: "m2",
+        project_id: "p1",
+        role: "assistant",
+        text: "The project uses FastAPI.",
+        sources: ["file_summaries:backend/app/main.py"],
+        model: "gemma2",
+        confidence: 0.9,
+        error: null,
+        created_at: "2026-08-06T12:00:01Z",
+      },
+    ]);
+    render(<RagChat projectId="p1" />);
+    expect(mockGetChatHistory).toHaveBeenCalledWith("p1");
+    expect(
+      await screen.findByText("The project uses FastAPI."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("What does this do?")).toBeInTheDocument();
+    expect(screen.getByText(/gemma2/)).toBeInTheDocument();
+  });
+
+  it("persists each user question and assistant answer", async () => {
+    mockRagQuery.mockResolvedValue(response());
+
+    const user = userEvent.setup();
+    render(<RagChat projectId="p1" />);
+    await screen.findByText('Ask anything, e.g. "What does this project do?"');
+
+    await user.type(
+      screen.getByPlaceholderText("Ask a question…"),
+      "What does this do?",
+    );
+    await user.click(screen.getByRole("button", { name: "Ask" }));
+    await screen.findByText("The project uses FastAPI.");
+
+    expect(mockSaveChatMessage).toHaveBeenCalledWith("p1", {
+      role: "user",
+      text: "What does this do?",
+      sources: undefined,
+      model: null,
+      confidence: null,
+      error: null,
+    });
+    expect(mockSaveChatMessage).toHaveBeenCalledWith(
+      "p1",
+      expect.objectContaining({
+        role: "assistant",
+        text: "The project uses FastAPI.",
+        sources: ["backend/app/main.py"],
+        model: "gemma2",
+        confidence: 0.97,
+      }),
+    );
   });
 
   it("streams a question and answer exchange", async () => {
@@ -48,7 +124,9 @@ describe("RagChat", () => {
     expect(screen.getByText("What does this do?")).toBeInTheDocument();
     expect(mockRagQuery).toHaveBeenCalledWith("What does this do?", "p1");
 
-    expect(await screen.findByText("The project uses FastAPI.")).toBeInTheDocument();
+    expect(
+      await screen.findByText("The project uses FastAPI."),
+    ).toBeInTheDocument();
     expect(screen.getByText(/gemma2/)).toBeInTheDocument();
     expect(screen.getByText("Sources (1)")).toBeInTheDocument();
     expect(screen.getByText("backend/app/main.py")).toBeInTheDocument();
@@ -73,7 +151,9 @@ describe("RagChat", () => {
     expect(screen.getByPlaceholderText("Ask a question…")).toBeDisabled();
 
     resolve(response());
-    expect(await screen.findByText("The project uses FastAPI.")).toBeInTheDocument();
+    expect(
+      await screen.findByText("The project uses FastAPI."),
+    ).toBeInTheDocument();
     expect(screen.queryByText("Thinking…")).not.toBeInTheDocument();
   });
 

@@ -21,6 +21,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 
 from app.core.config import settings
 from app.core.logging import get_logger
+from app.services import activity_bus
 
 logger = get_logger(__name__)
 
@@ -73,6 +74,12 @@ class JobScheduler:
             self._run(job_id, name, func, args or [])
             return job_id
         logger.info("job %s (%s) submitted", job_id, name)
+        activity_bus.publish_event(
+            "job",
+            f"{name} queued",
+            detail=f"job {job_id}",
+            data={"job_id": job_id, "name": name, "state": "queued"},
+        )
         self._executor.submit(self._run, job_id, name, func, args or [])
         return job_id
 
@@ -133,11 +140,29 @@ class JobScheduler:
 
     @staticmethod
     def _run(job_id: str, name: str, func: Callable, args: list) -> None:
+        activity_bus.publish_event(
+            "job",
+            f"{name} running",
+            detail=f"job {job_id}",
+            data={"job_id": job_id, "name": name, "state": "running"},
+        )
         try:
             result = func(*args)
             logger.info("%s (%s) finished: %r", name, job_id, result)
+            activity_bus.publish_event(
+                "job",
+                f"{name} finished",
+                detail=f"job {job_id}",
+                data={"job_id": job_id, "name": name, "state": "finished"},
+            )
         except Exception:  # noqa: BLE001 — a worker job must never crash the process
             logger.exception("%s (%s) failed", name, job_id)
+            activity_bus.publish_event(
+                "job",
+                f"{name} failed",
+                detail=f"job {job_id}",
+                data={"job_id": job_id, "name": name, "state": "failed"},
+            )
 
     @property
     def beat_jobs(self) -> dict:

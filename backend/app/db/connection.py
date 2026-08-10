@@ -42,11 +42,36 @@ def get_engine():
     return _engine
 
 
+def _migrate_columns(engine) -> None:
+    """Add columns introduced after a DB was first created.
+
+    `create_all` cannot ALTER existing tables; existing home-server DBs miss
+    newer columns (e.g. ollama_query_log.purpose from v1.17), so check and
+    ALTER once at startup. New databases get everything via create_all.
+    """
+    try:
+        inspector = __import__("sqlalchemy").inspect(engine)
+        if not inspector.has_table("ollama_query_log"):
+            return
+        columns = {c["name"] for c in inspector.get_columns("ollama_query_log")}
+        if "purpose" not in columns:
+            with engine.begin() as conn:
+                conn.exec_driver_sql(
+                    "ALTER TABLE ollama_query_log "
+                    "ADD COLUMN purpose VARCHAR(80) NOT NULL DEFAULT 'query'"
+                )
+            logger.info("Migrated ollama_query_log: added purpose column")
+    except Exception:  # noqa: BLE001 — never block startup on a migration fault
+        logger.exception("Schema migration skipped (non-fatal)")
+
+
 def init_db() -> None:
-    """Create all tables defined in app.db.models."""
+    """Create all tables defined in app.db.models, then migrate older ones."""
     from app import db  # noqa: F401  (ensure models are imported)
 
-    SQLModel.metadata.create_all(get_engine())
+    engine = get_engine()
+    SQLModel.metadata.create_all(engine)
+    _migrate_columns(engine)
     logger.info("Database initialized: %s", settings.db_path)
 
 

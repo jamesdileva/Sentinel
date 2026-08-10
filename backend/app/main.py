@@ -52,6 +52,8 @@ def _background_initial_scan() -> None:
 
     Runs in a daemon thread so server startup never blocks on indexing.
     Indexing is deterministic and bounded: only dirs containing `.git`.
+    When `auto_index_knowledge` is on (default), projects found with
+    unembedded files are queued for RAG indexing (Ollama-gated).
     """
     from sqlmodel import Session
 
@@ -63,6 +65,19 @@ def _background_initial_scan() -> None:
         logger.info("Initial scan complete: %d project(s) indexed", len(projects))
     except Exception:
         logger.exception("Background initial scan failed")
+        return
+    if settings.auto_index_knowledge and projects:
+        try:
+            from app.services.sync_service import queue_knowledge_index_unembedded
+
+            knowledge = queue_knowledge_index_unembedded()
+            logger.info(
+                "Auto knowledge indexing: %d job(s) queued (%s)",
+                knowledge.get("queued", 0),
+                knowledge.get("skipped") or "ok",
+            )
+        except Exception:  # noqa: BLE001 — startup must never fail on this
+            logger.exception("Auto knowledge indexing failed")
 
 
 @asynccontextmanager

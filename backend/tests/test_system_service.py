@@ -85,9 +85,6 @@ def test_system_ollama_endpoint(tmp_db, monkeypatch):
 def test_system_sync_endpoint(tmp_db, monkeypatch):
     """Sprint 15: /system/sync reports the sync config and the persisted last
     run (or None) — read-only, nothing is triggered here."""
-    from sqlmodel import Session
-
-    from app.db.connection import get_engine
     from app.services.sync_service import persist_sync_run
 
     monkeypatch.setattr(settings, "github_token", "test-token")

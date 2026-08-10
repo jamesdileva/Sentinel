@@ -58,3 +58,20 @@ export async function getSyncStatus(): Promise<SyncStatus> {
   const { data } = await api.get<SyncStatus>("/v1/system/sync");
   return data;
 }
+
+export interface ActivityEvent {
+  id: string;
+  kind: string;
+  message: string;
+  detail: string | null;
+  /** Free-form event payload (e.g. ollama: model/purpose/tokens). */
+  data: Record<string, unknown>;
+  created_at: string;
+}
+
+export async function getActivity(limit = 100): Promise<ActivityEvent[]> {
+  const { data } = await api.get<ActivityEvent[]>("/v1/system/activity", {
+    params: { limit },
+  });
+  return data;
+}

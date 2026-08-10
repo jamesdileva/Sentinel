@@ -36,3 +36,11 @@ def sync_status(session: Session = Depends(get_session)) -> dict:
 def ollama_status(session: Session = Depends(get_session)) -> dict:
     """Ollama availability, installed models, and recent generation metrics."""
     return OllamaStatus(session=session).report()
+
+
+@router.get("/activity")
+def activity(limit: int = 50) -> dict:
+    """Tail of the persisted activity stream (newest first)."""
+    from app.services import activity_bus
+
+    return {"events": activity_bus.recent_events(limit=min(limit, 500))}

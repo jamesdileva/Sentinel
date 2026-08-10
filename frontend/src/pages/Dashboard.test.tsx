@@ -18,30 +18,24 @@ vi.mock("../hooks/useProjects", () => ({
   useProjectList: vi.fn(),
 }));
 
-vi.mock("../hooks/useWebSocket", () => ({
-  useWebSocket: vi.fn(),
+vi.mock("../hooks/useActivity", () => ({
+  useActivity: vi.fn(),
 }));
 
 vi.mock("../api/portfolio", () => ({
   getSummary: vi.fn(),
 }));
 
-import {
-  useBuilds,
-} from "../contexts/BuildContext";
-import {
-  useUI,
-} from "../contexts/UIContext";
-import {
-  useProjectList,
-} from "../hooks/useProjects";
-import { useWebSocket } from "../hooks/useWebSocket";
+import { useBuilds } from "../contexts/BuildContext";
+import { useUI } from "../contexts/UIContext";
+import { useProjectList } from "../hooks/useProjects";
+import { useActivity } from "../hooks/useActivity";
 import { getSummary } from "../api/portfolio";
 
 const mockUseBuilds = vi.mocked(useBuilds);
 const mockUseUI = vi.mocked(useUI);
 const mockUseProjectList = vi.mocked(useProjectList);
-const mockUseWebSocket = vi.mocked(useWebSocket);
+const mockUseActivity = vi.mocked(useActivity);
 const mockGetSummary = vi.mocked(getSummary);
 
 function makeProject(overrides: Partial<Project> = {}): Project {
@@ -93,7 +87,7 @@ describe("Dashboard", () => {
       error: null,
       refresh: vi.fn(),
     });
-    mockUseWebSocket.mockReturnValue({ status: "open", lastMessage: null });
+    mockUseActivity.mockReturnValue({ events: [], status: "closed" });
     mockGetSummary.mockResolvedValue({
       projects: 1,
       buildable: 1,
@@ -148,13 +142,33 @@ describe("Dashboard", () => {
     expect(refresh).toHaveBeenCalledTimes(1);
   });
 
-  it("shows the websocket channel status", () => {
-    mockUseWebSocket.mockReturnValue({
-      status: "connecting",
-      lastMessage: { type: "welcome" },
+  it("shows the live activity feed with connection status", () => {
+    mockUseActivity.mockReturnValue({
+      events: [
+        {
+          id: "e1",
+          kind: "ollama",
+          message: "Ollama rag-query for 120 tokens",
+          detail: null,
+          data: { model: "gemma2", purpose: "rag-query", tokens: 120 },
+          created_at: "2026-08-06T12:00:00Z",
+        },
+      ],
+      status: "open",
     });
     render(<Dashboard />);
-    expect(screen.getByText("Channel: welcome")).toBeInTheDocument();
+    expect(screen.getByText("Live activity")).toBeInTheDocument();
+    expect(
+      screen.getByText("Ollama rag-query for 120 tokens"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("live")).toBeInTheDocument();
+    expect(screen.getByText("ollama")).toBeInTheDocument();
+  });
+
+  it("shows an empty state while no activity has happened", () => {
+    mockUseActivity.mockReturnValue({ events: [], status: "connecting" });
+    render(<Dashboard />);
+    expect(screen.getByText(/Nothing happened yet/)).toBeInTheDocument();
     expect(screen.getByText("connecting")).toBeInTheDocument();
   });
 });

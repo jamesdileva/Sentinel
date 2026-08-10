@@ -8,6 +8,7 @@ from sqlmodel import Session
 
 from app.core.logging import get_logger
 from app.db.connection import get_engine
+from app.services import activity_bus
 from app.services.rag_service import RagService
 
 logger = get_logger(__name__)
@@ -18,5 +19,19 @@ def run_index_knowledge(project_id: str, with_summary: bool = False) -> dict:
     logger.info("rag index task starting for %s", project_id)
     with Session(get_engine()) as session:
         project = RagService.get_project(session, project_id)
+        activity_bus.publish_event(
+            "index",
+            f"Knowledge indexing started for {project.name}",
+            data={"project_id": project.id},
+        )
         counts = RagService(session).index_project(project, with_summary=with_summary)
+        total = sum(counts.values())
+        activity_bus.publish_event(
+            "index",
+            f"Knowledge indexing finished for {project.name} "
+            f"({total} chunk(s) embedded)",
+            detail=", ".join(f"{k}={v}" for k, v in counts.items() if v)
+            or "nothing new",
+            data={"project_id": project.id, "counts": counts},
+        )
         return {"project_id": project.id, "counts": counts}
