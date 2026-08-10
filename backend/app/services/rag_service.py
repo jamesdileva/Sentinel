@@ -71,11 +71,18 @@ class RagService:
     # --- ingestion -------------------------------------------------------
 
     def index_project(
-        self, project: Project, with_summary: bool = False
+        self,
+        project: Project,
+        with_summary: bool = False,
+        progress: Callable[[int, int], None] | None = None,
     ) -> dict[str, int]:
-        """Ingest every knowledge source for a project. Returns counts per collection."""
+        """Ingest every knowledge source for a project. Returns counts per collection.
+
+        `progress(done, total)` is invoked as files are embedded so callers
+        (the scheduler task) can publish throttled progress events (v1.17.1).
+        """
         counts: dict[str, int] = {}
-        counts["file_summaries"] = self.ingest_files(project)
+        counts["file_summaries"] = self.ingest_files(project, progress=progress)
         counts["git_commits"] = self.ingest_git_commits(project)
         counts["test_logs"] = self.ingest_test_results(project)
         counts["security_reports"] = self.ingest_security_findings(project)
@@ -87,20 +94,37 @@ class RagService:
         )
         return counts
 
-    def ingest_files(self, project: Project) -> int:
-        """Embed the first chunk of each indexed file into the file_summaries collection."""
+    def ingest_files(
+        self,
+        project: Project,
+        progress: Callable[[int, int], None] | None = None,
+    ) -> int:
+        """Embed the first chunk of each *unembedded* file (incremental, v1.17.1).
+
+        Files whose `embedding_id` is already set are skipped — a re-index
+        only embeds new files instead of re-embedding the whole project
+        (the laptop's second auto-index pass was re-doing all 2.9k files).
+        `embedding_id` is committed only *after* the Chroma upsert, so a crash
+        mid-run leaves untouched files unmarked and they are retried later.
+        """
         files = ProjectFileRepository(self.session).get_by_project(project.id)
+        total = len(files)
+        pending = [record for record in files if record.embedding_id is None]
         embeds: list[list[float]] = []
         docs: list[str] = []
         metas: list[dict[str, Any]] = []
         embedded: list[object] = []
-        for record in files:
+        done = total - len(pending)
+        for index, record in enumerate(pending):
             content = _read_local_file(record.absolute_path)
             if not content:
                 # Nothing to embed; still mark the file so the "pending
                 # knowledge" query (repo sync, Sprint 12.2) doesn't re-queue
                 # this project forever.
                 record.embedding_id = record.id
+                done += 1
+                if progress:
+                    progress(done, total)
                 continue
             doc = f"{record.path}\n\n{_truncate(content)}"
             embeds.append(self._embed(doc))
@@ -114,6 +138,9 @@ class RagService:
             )
             record.embedding_id = record.id
             embedded.append(record)
+            done += 1
+            if progress and (done % 25 == 0 or done == total):
+                progress(done, total)
         if not embeds:
             self.session.commit()
             return 0

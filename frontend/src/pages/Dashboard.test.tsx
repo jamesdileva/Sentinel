@@ -165,6 +165,29 @@ describe("Dashboard", () => {
     expect(screen.getByText("ollama")).toBeInTheDocument();
   });
 
+  it("surfaces the event detail line (v1.17.1 logging pass)", () => {
+    mockUseActivity.mockReturnValue({
+      events: [
+        {
+          id: "e1",
+          kind: "sync",
+          message: "Repo sync skipped — SENTINEL_GITHUB_TOKEN is not configured",
+          detail: "Set SENTINEL_GITHUB_TOKEN in .env and restart, or press Sync now.",
+          data: { configured: false },
+          created_at: "2026-08-06T12:00:00Z",
+        },
+      ],
+      status: "open",
+    });
+    render(<Dashboard />);
+    expect(
+      screen.getByText("Repo sync skipped — SENTINEL_GITHUB_TOKEN is not configured"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Set SENTINEL_GITHUB_TOKEN in .env and restart, or press Sync now."),
+    ).toBeInTheDocument();
+  });
+
   it("shows an empty state while no activity has happened", () => {
     mockUseActivity.mockReturnValue({ events: [], status: "connecting" });
     render(<Dashboard />);

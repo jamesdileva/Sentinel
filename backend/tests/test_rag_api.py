@@ -170,6 +170,37 @@ def test_rag_index_status_counts(tmp_db):
     assert scoped["files_total"] == body["files_total"]
 
 
+def test_reindex_embeds_only_unembedded_files(tmp_db, tmp_path):
+    """v1.17.1: a second index run skips files whose `embedding_id` is set —
+    no wholesale re-embedding (the laptop's post-restart auto-index was
+    re-embedding all 2.9k files). Progress is reported per completion."""
+    project_id = _seed(tmp_db)
+    with Session(get_engine()) as session:
+        project = RagService.get_project(session, project_id)
+        progress: list[tuple[int, int]] = []
+
+        service = RagService(
+            session=session,
+            embedder=_fake_embedder,
+            llm=_fake_llm,
+            chroma=ChromaManager(path=tmp_path / "chroma"),
+        )
+        first = service.index_project(
+            project, progress=lambda done, total: progress.append((done, total))
+        )
+        assert first["file_summaries"] > 0
+        # final progress tick reports the whole file set done
+        assert progress and progress[-1][0] == progress[-1][1]
+        assert progress[-1][0] >= first["file_summaries"]
+
+        progress.clear()
+        second = service.index_project(
+            project, progress=lambda done, total: progress.append((done, total))
+        )
+        assert second["file_summaries"] == 0  # everything already embedded
+        assert progress == []  # no new file work happened
+
+
 def test_list_summaries_empty(tmp_db):
     project_id = _seed(tmp_db)
     client = TestClient(app)

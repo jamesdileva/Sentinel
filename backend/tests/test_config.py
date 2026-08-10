@@ -15,6 +15,13 @@ def test_watch_dirs_default_to_home_directory():
     assert fresh.watch_dirs == [str(Path.home())]
 
 
+def test_sync_interval_defaults_to_daily():
+    """v1.17.1: repo sync runs on startup, then once a day (was every 15 min);
+    the header 'Sync now' button covers anything in between."""
+    fresh = Settings(_env_file=None)
+    assert fresh.sync_interval_minutes == 1440
+
+
 def test_values_load_from_dotenv_file(tmp_path):
     env_file = tmp_path / ".env"
     env_file.write_text(

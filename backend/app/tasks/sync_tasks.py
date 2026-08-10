@@ -16,6 +16,15 @@ def run_repo_sync() -> dict:
     """Clone/pull GitHub repos into watch dirs, then re-index (Rule 3 deterministic)."""
     logger.info("repo sync task starting")
     result = run_sync()
+    if not result.get("configured"):
+        # v1.17.1: the "skipped" pill was opaque — say why on the live feed.
+        activity_bus.publish_event(
+            "sync",
+            "Repo sync skipped — SENTINEL_GITHUB_TOKEN is not configured",
+            detail="Set SENTINEL_GITHUB_TOKEN in .env and restart, or press Sync now.",
+            data={"configured": False},
+        )
+        return result
     cloned = result.get("cloned", [])
     pulled = result.get("pulled", [])
     failed = result.get("failed", {})
@@ -31,7 +40,7 @@ def run_repo_sync() -> dict:
             f"Repo sync failed — {len(failed)} repo(s) failed",
             detail=(
                 f"{len(cloned)} cloned, {len(pulled)} updated; "
-                f"{', '.join(str(k) for k in failed)}"
+                f"{', '.join(f'{k}: {str(v)}' for k, v in failed.items())}"
             ),
             data={"cloned": len(cloned), "pulled": len(pulled), "failed": list(failed)},
         )
@@ -39,6 +48,7 @@ def run_repo_sync() -> dict:
         activity_bus.publish_event(
             "sync",
             "Repo sync: nothing changed, nothing re-indexed",
+            detail="All repos already up to date with GitHub.",
             data={"cloned": 0, "pulled": 0, "indexed": 0},
         )
     else:

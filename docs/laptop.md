@@ -77,9 +77,10 @@ Repos are found under `SENTINEL_WATCH_DIRS`; it **defaults to the current
 user's home directory** (`~`, i.e. `C:\Users\james` on this laptop), so you do
 NOT need to set it — the repos just need to live under `~` (or set
 `SENTINEL_WATCH_DIRS=C:\Users\james` in `.env` if you prefer an explicit
-value). The `repo-sync` beat keeps GitHub checkouts current every 15 minutes
-(`SENTINEL_SYNC_INTERVAL_MINUTES`) and auto-queues knowledge (RAG) indexing
-when Ollama is up.
+value). The `repo-sync` beat keeps GitHub checkouts current every 24 h
+(`SENTINEL_SYNC_INTERVAL_MINUTES` — a sync also runs once at startup, and the
+header "Sync now" button forces one immediately) and auto-queues knowledge
+(RAG) indexing when Ollama is up.
 
 ## Daily operations
 

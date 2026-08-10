@@ -73,7 +73,9 @@ class Settings(BaseSettings):
 
     # Repo auto-sync (Sprint 12.1): clone/pull projects from GitHub.
     github_token: str = ""  # read-only PAT; lists repos + optional private access
-    sync_interval_minutes: int = 15
+    # v1.17.1: daily cadence — startup always syncs once, then every 24h unless
+    # the user presses the header "Sync now" button (POST /api/v1/system/sync).
+    sync_interval_minutes: int = 1440
 
 
 settings = Settings()

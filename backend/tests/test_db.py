@@ -45,6 +45,53 @@ def test_init_db_idempotent(tmp_db):
     assert EXPECTED_TABLES.issubset(_table_names(tmp_db))
 
 
+def test_migrate_columns_adds_purpose_to_old_db(tmp_db):
+    """v1.17.1 regression: a DB created before v1.17 has no
+    `ollamaquerylog.purpose` (SQLAlchemy's actual table name for the
+    OllamaQueryLog model); `init_db()` must ALTER it in (idempotently),
+    otherwise /system/overview 500s on every read — the v1.17 migration
+    probed the wrong spellings and never matched."""
+    with connection.get_engine().begin() as conn:
+        conn.exec_driver_sql("DROP TABLE ollamaquerylog")
+        conn.exec_driver_sql(
+            "CREATE TABLE ollamaquerylog ("
+            "id VARCHAR(32) PRIMARY KEY NOT NULL, "
+            "model VARCHAR(100) NOT NULL, "
+            "prompt_chars INTEGER NOT NULL DEFAULT 0, "
+            "response_chars INTEGER NOT NULL DEFAULT 0, "
+            "eval_count INTEGER NOT NULL DEFAULT 0, "
+            "eval_duration_ns INTEGER NOT NULL DEFAULT 0, "
+            "total_duration_ns INTEGER NOT NULL DEFAULT 0, "
+            "created_at DATETIME NOT NULL)"
+        )
+        conn.exec_driver_sql(
+            "INSERT INTO ollamaquerylog (id, model, created_at) "
+            "VALUES ('q1', 'gemma2', '2026-08-01 00:00:00')"
+        )
+
+    connection.init_db()  # create_all skips the existing table; migrate alters
+
+    from sqlalchemy import inspect
+
+    columns = {
+        c["name"]
+        for c in inspect(connection.get_engine()).get_columns("ollamaquerylog")
+    }
+    assert "purpose" in columns
+    with connection.get_engine().connect() as conn:
+        row = conn.exec_driver_sql(
+            "SELECT purpose FROM ollamaquerylog WHERE id = 'q1'"
+        ).one()
+    assert row[0] == "query"
+
+    connection.init_db()  # second run must be a no-op, not an error
+    columns = {
+        c["name"]
+        for c in inspect(connection.get_engine()).get_columns("ollamaquerylog")
+    }
+    assert "purpose" in columns
+
+
 def test_foreign_keys_enforced(tmp_db):
     with Session(connection.get_engine()) as session:
         orphan = ProjectFile(

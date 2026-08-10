@@ -2,14 +2,17 @@
 
 Dashboard page: Ollama status (availability, models, tokens/sec from recent
 generations) and sync status. These are status reads only; per docs/01 Rule 2
-nothing here changes server state.
+nothing here changes server state — except POST /system/sync, which queues the
+deterministic repo-sync job on explicit user action (the header button).
 """
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session
 
 from app.core.config import settings
 from app.db.connection import get_session
+from app.schemas import JobEnvelope
+from app.services.job_scheduler import scheduler
 from app.services.sync_service import latest_sync_run
 from app.services.system_service import OllamaStatus, system_overview
 
@@ -30,6 +33,23 @@ def sync_status(session: Session = Depends(get_session)) -> dict:
         "last_run": latest_sync_run(session),
         "interval_minutes": settings.sync_interval_minutes,
     }
+
+
+@router.post("/sync", status_code=202, response_model=JobEnvelope)
+def sync_now() -> JobEnvelope:
+    """Queue a repo sync now (header "Sync now" button, v1.17.1).
+
+    State-changing, but Rule 3-deterministic: it only clones/pulls known
+    repos and re-indexes — no AI, no irreversible action. Rejected with 409
+    when SENTINEL_GITHUB_TOKEN is not configured.
+    """
+    if not settings.github_token:
+        raise HTTPException(
+            status_code=409,
+            detail="SENTINEL_GITHUB_TOKEN is not configured — repo sync cannot run",
+        )
+    job_id = scheduler.submit("run_repo_sync")
+    return JobEnvelope(job_id=job_id, status="queued")
 
 
 @router.get("/ollama")

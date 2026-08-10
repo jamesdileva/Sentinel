@@ -352,6 +352,16 @@ All endpoints live under `http://127.0.0.1:8000/api/v1/`. Relative paths below o
   event: {...}}` frames + 30 s heartbeat). Module:
   `app/services/activity_bus.py`
 
+**POST `/system/sync` — Manual repo sync (v1.17.1)**
+- Body: `{"full": bool}` — `full: true` clears the cached repo list and
+  re-fetches from GitHub (new repos appear immediately); the default
+  `full: false` re-checks the previously known repos by `git pull --ff-only`
+- Returns: the same `SyncRun` shape as `GET /system/sync`
+  (`{"configured", "started_at", "finished_at", "cloned", "pulled", "failed",
+  "message"}`); a 409 is returned when a sync is already running. Runs in a
+  worker thread with progress events on the activity feed. Module:
+  `app/services/sync_task.py`
+
 ### 2.4. Automation
 
 **GET `/automation/jobs`** — List scheduled and running jobs
@@ -922,7 +932,7 @@ Read from the repo-root `.env` (Sprint 15: no containers — the backend process
 | `SENTINEL_API_KEY` | (empty) | Optional API key for authentication |
 | `SENTINEL_SCHEDULE_INTERVAL` | `60` | Minutes between automation runs |
 | `SENTINEL_GITHUB_TOKEN` | (empty) | Read-only PAT for `repo-sync` (clone/pull from GitHub) |
-| `SENTINEL_SYNC_INTERVAL_MINUTES` | `15` | Minutes between repo auto-syncs |
+| `SENTINEL_SYNC_INTERVAL_MINUTES` | `1440` | Minutes between repo auto-syncs (v1.17.1: every 24 h — startup always syncs once, then daily unless the header "Sync now" button is pressed) |
 
 ---
 
@@ -1699,8 +1709,12 @@ them from GitHub — no SMB share or manual second copy needed:
 2. `SENTINEL_WATCH_DIRS` contains every `.git` checkout (default: the current
    user's home directory — the laptop user's `C:\Users\james` is found
    automatically, no setup).
-3. The beat schedule syncs on `SENTINEL_SYNC_INTERVAL_MINUTES` (default
-   15): new repos are `git clone`d, existing checkouts `git pull --ff-only`.
+3. The beat schedule syncs on `SENTINEL_SYNC_INTERVAL_MINUTES` (v1.17.1
+   default `1440` = every 24 h): new repos are `git clone`d, existing
+   checkouts `git pull --ff-only`. A sync always runs once at startup; the
+   header "Sync now" button (`POST /system/sync`) or `sentinel sync` (inside
+   `backend`) runs one pass immediately (agent-safe, Rule 3 — git only, never
+   AI).
    **Change detection (v1.15):** a repo's HEAD is recorded (`git rev-parse --short
    HEAD`) before and after each pull — only repos whose HEAD actually moved are
    re-indexed, and when nothing changed anywhere the whole scan is skipped
@@ -1865,6 +1879,7 @@ relationships aren't persisted, so they're intentionally absent.
 
 | Date | Version | Change | Author |
 |------|---------|--------|--------|
+| 2026-08-09 | 1.17.1 | Regression-fix & ops pass after the first living week. **Scanner false positive fixed**: `\bexec\s*\(` matched `session.exec(` because a dot is a word boundary — 17 of the laptop's 20 findings were SQLModel ORM calls in clean repos; attribute calls are now ignored (only bare identifiers match). **Sync feedback**: an unconfigured sync now publishes *why* on the live feed ("Repo sync skipped — token not configured"), and nothing-changed passes carry a `detail`; new `POST /system/sync` (`{"full": bool}`) + header "Sync now" button run a background pass (409 when already running, activity events per pass; §2.2). **Migration bug fixed**: `migrate_columns` only added missing columns to the *first* affected table — `ollamaquerylog.purpose` was silently absent (would crash chat history past the 5000-row ceiling); migrated tables are now verified via `PRAGMA table_info` and repaired per table. **Sync cadence**: `SENTINEL_SYNC_INTERVAL_MINUTES` default 15 → 1440 (daily; startup still syncs once). **C++ builds deferred** to Sprint 18 (Rule 4 — parser scope is out of control). Tests: regression tests for all four | AI agent |
 | 2026-08-09 | 1.17 | Sprint 17 (Observability & UX pass). **Activity bus**: `app/services/activity_bus.py` — `publish_event(kind, message, detail, data)` persists to the bounded `activity_event` table (5000-row ceiling, lock-serialized) + enriches the live channel; `GET /system/activity` (newest first, cap 500) and WS `/api/v1/ws/jobs` frames `{type: "activity", event: {...}}` + 30 s heartbeat. Publishers: job scheduler (queued/running/finished/failed), sync, build/test/security tasks, rag index start/finish, `rag_service._generate_with_metrics` (kind `ollama`, `purpose` = query/summary/…, data carries model/purpose/tokens/eval_duration_ns for tok/s). **Chat persistence**: `ChatMessage` table + `GET/POST /rag/chat/{project_id}`; RagChat replays + saves every exchange (best-effort). **Auto knowledge-index**: `SENTINEL_AUTO_INDEX_KNOWLEDGE` (default true) — startup scan queues `run_index_knowledge` for projects with unembedded files via shared `queue_knowledge_index_unembedded()` (Ollama-gated); sync pass refactored onto the same helper. **Frontend**: global StatusBar (live dot, latest event, Ollama purpose + tok/s), sync pill visible when unconfigured ("Sync not configured"), Dashboard live activity log (poll fallback in `useActivity`), KnowledgeExplorer live progress refresh (3 s throttle), ProjectGalaxy node labels + legend, HealthCard per-criterion reasons + screenshots chip. **.env path fix**: `config.py` env_file was `BASE_DIR.parent / ".env"` (home) since Sprint 0 — repo-root `.env` never loaded natively; now `BASE_DIR / ".env"` (regression test pins it). **Gate repair**: `scripts/build.py` masked failures (raw exit 0 is falsy in the `and` chain) and ran flake8 at default 79 cols — booleanized + `--max-line-length=100`; stragglers cleared. Tests: 271 backend / 94.49 %, 63 vitest, gate exits 0 | AI agent |
 | 2026-08-08 | 1.16.2 | Dashboard actually served: `app/main.py` still pointed at `frontend/dist` while the build is staged at `backend/app/static` — on a Node-less laptop every non-API path 404'd. Now serves the staged build (dev fallback to `frontend/dist`) and `/` returns dashboard HTML instead of the Sprint-1 health JSON (health stays at `/health` + `/api/v1/health`). SPA-fallback + root tests added; 257 backend green. Docs: venv-path commands tightened (`.\.venv\Scripts\python.exe run.py` — PowerShell ExecutionPolicy blocks `Activate.ps1`, activation never required): §5.2 + §13, laptop.md, AGENTS.md. Watch-dir default changed from hardcoded `C:\Users\j` to the current user's home (`Path.home()`) — laptop `C:\Users\james` found with no config; env override unchanged | AI agent |
 | 2026-08-08 | 1.16.1 | Pi-hole decommissioned on the laptop (docs/laptop.md `Moving off Docker`): router DNS back to Automatic, docker system prune -a --volumes wipes the old stack + Pi-hole, Docker Desktop uninstalled, old Sentinel task removed; laptop now needs only Python (repo ships the staged dashboard in ackend/app/static — no Node). Docs: laptop.md migration section added, 01 §9.2/§10 and 02 §13 updated (Pi-hole retired, DNS Automatic) | User |

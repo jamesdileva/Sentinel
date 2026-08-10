@@ -111,10 +111,20 @@ def recent_events(limit: int = 50) -> list[dict]:
                     "message": row.message,
                     "detail": row.detail,
                     "data": row.data or {},
-                    "created_at": row.created_at.isoformat() if row.created_at else "",
+                    "created_at": _iso_utc(row.created_at),
                 }
                 for row in rows
             ]
     except Exception:  # noqa: BLE001 — transient failures degrade to memory tail
         logger.debug("activity fetch failed, falling back to memory", exc_info=True)
         return list(_MEMORY_TAIL)[::-1]
+
+
+def _iso_utc(value: datetime.datetime | None) -> str:
+    """Serialize a stored (naive UTC) timestamp with an explicit offset so
+    browsers render it in the user's local timezone, not UTC wall-clock."""
+    if value is None:
+        return ""
+    if value.tzinfo is None:
+        return value.replace(tzinfo=datetime.timezone.utc).isoformat()
+    return value.isoformat()

@@ -4,6 +4,7 @@ Schema definition lives in `app.db.models`; tables are created via `init_db()`
 (Sprint 2 wires it into application startup).
 """
 
+import time
 from pathlib import Path
 
 from sqlalchemy import event
@@ -23,6 +24,7 @@ def _enable_foreign_keys(dbapi_connection, _connection_record) -> None:
     """SQLite does not enforce foreign keys by default; enable per connection."""
     cursor = dbapi_connection.cursor()
     cursor.execute("PRAGMA foreign_keys=ON")
+    cursor.execute("PRAGMA busy_timeout=30000")
     cursor.close()
 
 
@@ -48,21 +50,48 @@ def _migrate_columns(engine) -> None:
     `create_all` cannot ALTER existing tables; existing home-server DBs miss
     newer columns (e.g. ollama_query_log.purpose from v1.17), so check and
     ALTER once at startup. New databases get everything via create_all.
+
+    v1.17.1 fix: the original check used `has_table("ollama_query_log")`, but
+    SQLAlchemy names the table `ollamaquerylog` (class name lowercased) — the
+    migration never matched, so pre-v1.17 DBs kept missing `purpose` and
+    /system/overview 500'd. Now both spellings are probed.
+
+    A migration is retried (SQLite can be transiently locked while other
+    writers hold the file) and failures are logged loudly — a failed extra
+    column must never silently wedge a read path.
     """
-    try:
-        inspector = __import__("sqlalchemy").inspect(engine)
-        if not inspector.has_table("ollama_query_log"):
+    attempts = 3
+    for attempt in range(1, attempts + 1):
+        try:
+            inspector = __import__("sqlalchemy").inspect(engine)
+            table = next(
+                (
+                    name
+                    for name in ("ollama_query_log", "ollamaquerylog")
+                    if inspector.has_table(name)
+                ),
+                None,
+            )
+            if table is None:
+                return
+            columns = {c["name"] for c in inspector.get_columns(table)}
+            if "purpose" not in columns:
+                with engine.begin() as conn:
+                    conn.exec_driver_sql(
+                        f"ALTER TABLE {table} "
+                        "ADD COLUMN purpose VARCHAR(80) NOT NULL DEFAULT 'query'"
+                    )
+                logger.info("Migrated %s: added purpose column", table)
             return
-        columns = {c["name"] for c in inspector.get_columns("ollama_query_log")}
-        if "purpose" not in columns:
-            with engine.begin() as conn:
-                conn.exec_driver_sql(
-                    "ALTER TABLE ollama_query_log "
-                    "ADD COLUMN purpose VARCHAR(80) NOT NULL DEFAULT 'query'"
+        except Exception:  # noqa: BLE001 — one bad attempt should not kill startup
+            if attempt < attempts:
+                time.sleep(1.0)
+            else:
+                logger.exception(
+                    "Schema migration failed after %d attempts — reads on new "
+                    "columns will degrade until the DB is migrated",
+                    attempts,
                 )
-            logger.info("Migrated ollama_query_log: added purpose column")
-    except Exception:  # noqa: BLE001 — never block startup on a migration fault
-        logger.exception("Schema migration skipped (non-fatal)")
 
 
 def init_db() -> None:

@@ -8,7 +8,7 @@ from sqlmodel import Session
 
 from app.db.connection import get_engine
 from app.db.models import BuildLog, Project
-from app.tasks import build_tasks, rag_tasks, world_sim_tasks
+from app.tasks import build_tasks, rag_tasks, sync_tasks, world_sim_tasks
 
 
 class FakeLog:
@@ -57,12 +57,54 @@ def test_run_index_knowledge(tmp_db, monkeypatch):
         def get_project(session, project_id):
             return FakeProject()
 
-        def index_project(self, project, with_summary=False):
+        def index_project(self, project, with_summary=False, progress=None):
+            if progress:
+                progress(3, 3)
             return {"files": 3, "commits": 1}
 
     monkeypatch.setattr(rag_tasks, "RagService", FakeRag)
     result = rag_tasks.run_index_knowledge("p-fake")
     assert result == {"project_id": "p-fake", "counts": {"files": 3, "commits": 1}}
+
+
+# --- sync_tasks ----------------------------------------------------------------
+
+
+def test_run_repo_sync_unconfigured_publishes_reason(tmp_db, monkeypatch):
+    """v1.17.1: an unconfigured sync must say *why* on the live feed — the
+    old 'nothing changed' message disguised the missing token."""
+    published: list[dict] = []
+    monkeypatch.setattr(
+        sync_tasks, "run_sync", lambda: {"configured": False, "skipped": True}
+    )
+    monkeypatch.setattr(
+        sync_tasks.activity_bus,
+        "publish_event",
+        lambda *a, **kw: published.append({"args": a, "kwargs": kw}),
+    )
+    result = sync_tasks.run_repo_sync()
+    assert result["skipped"] is True
+    assert len(published) == 1
+    assert published[0]["args"][0] == "sync"
+    assert "not configured" in published[0]["args"][1]
+
+
+def test_run_repo_sync_nothing_changed_has_detail(tmp_db, monkeypatch):
+    published: list[dict] = []
+    monkeypatch.setattr(
+        sync_tasks,
+        "run_sync",
+        lambda: {"configured": True, "cloned": [], "pulled": [], "failed": {}},
+    )
+    monkeypatch.setattr(
+        sync_tasks.activity_bus,
+        "publish_event",
+        lambda *a, **kw: published.append({"args": a, "kwargs": kw}),
+    )
+    sync_tasks.run_repo_sync()
+    assert published[0]["args"][0] == "sync"
+    assert "nothing changed" in published[0]["args"][1]
+    assert published[0]["kwargs"]["detail"]
 
 
 # --- build_tasks ----------------------------------------------------------------

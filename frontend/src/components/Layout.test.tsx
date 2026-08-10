@@ -9,17 +9,19 @@ import { UIProvider } from "../contexts/UIContext";
 vi.mock("../api/system", () => ({
   getSyncStatus: vi.fn(),
   getActivity: vi.fn(),
+  postSyncNow: vi.fn(),
 }));
 
 vi.mock("../hooks/useActivity", () => ({
   useActivity: vi.fn(),
 }));
 
-import { getSyncStatus } from "../api/system";
+import { getSyncStatus, postSyncNow } from "../api/system";
 import type { SyncStatus } from "../api/system";
 import { useActivity } from "../hooks/useActivity";
 
 const mockGetSyncStatus = vi.mocked(getSyncStatus);
+const mockPostSyncNow = vi.mocked(postSyncNow);
 const mockUseActivity = vi.mocked(useActivity);
 
 function makeSync(overrides: Partial<SyncStatus> = {}): SyncStatus {
@@ -58,6 +60,8 @@ describe("Layout", () => {
   beforeEach(() => {
     mockGetSyncStatus.mockReset();
     mockGetSyncStatus.mockResolvedValue(makeSync());
+    mockPostSyncNow.mockReset();
+    mockPostSyncNow.mockResolvedValue({ job_id: "job-abc", status: "queued" });
     mockUseActivity.mockReset();
     mockUseActivity.mockReturnValue({ events: [], status: "closed" });
   });
@@ -134,6 +138,40 @@ describe("Layout", () => {
       "title",
       expect.stringContaining("SENTINEL_GITHUB_TOKEN"),
     );
+    expect(screen.queryByRole("button", { name: "Sync now" })).not.toBeInTheDocument();
+  });
+
+  it("queues a repo sync from the header button (v1.17.1)", async () => {
+    const user = userEvent.setup();
+    renderLayout();
+    await screen.findByText(/^Synced /);
+    await user.click(screen.getByRole("button", { name: "Sync now" }));
+    expect(mockPostSyncNow).toHaveBeenCalledTimes(1);
+    expect(
+      await screen.findByText(/Repo sync queued \(job job-abc…\)/),
+    ).toBeInTheDocument();
+  });
+
+  it("refreshes the sync pill when a sync activity event arrives", async () => {
+    mockGetSyncStatus
+      .mockResolvedValueOnce(makeSync({ last_run: null }))
+      .mockResolvedValueOnce(makeSync({ last_run: null }));
+    mockUseActivity.mockReturnValue({
+      events: [
+        {
+          id: "e1",
+          kind: "sync",
+          message: "Repo sync: 1 cloned, 0 updated",
+          detail: null,
+          data: {},
+          created_at: "2026-08-06T12:00:00Z",
+        },
+      ],
+      status: "open",
+    });
+    renderLayout();
+    await screen.findByText("Sync not run");
+    expect(mockGetSyncStatus).toHaveBeenCalledTimes(2);
   });
 
   it("renders the global status bar with the latest activity", async () => {

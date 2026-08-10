@@ -41,15 +41,19 @@ _SECRET_PATTERNS: list[tuple[str, re.Pattern[str], Severity]] = [
 ]
 
 # Static analysis checks: name -> (regex, severity) applied to Python sources.
+# The negative lookbehind matters (v1.17.1 bug): `\bexec\s*\(` matched
+# `session.exec(` — the "." before exec IS a word boundary — so every
+# SQLModel project was flagged 10+ times for its ORM calls. Now only
+# bare eval()/exec() constructs are flagged.
 _STATIC_PATTERNS: list[tuple[str, re.Pattern[str], Severity]] = [
     (
         "Use of eval()",
-        re.compile(r"\beval\s*\("),
+        re.compile(r"(?<!\.)\beval\s*\("),
         Severity.MEDIUM,
     ),
     (
         "Use of exec()",
-        re.compile(r"\bexec\s*\("),
+        re.compile(r"(?<!\.)\bexec\s*\("),
         Severity.MEDIUM,
     ),
 ]
@@ -80,6 +84,34 @@ def _is_test_file(rel: Path) -> bool:
         return True
     name = rel.name.lower()
     return name.startswith("test_") or name.endswith("_test.py")
+
+
+# Placeholder/example values look like secrets but are not (v1.17.1): the
+# scanner used to flag `.env.example`-style values and fake test tokens such as
+# `ghp_abcdefghijklmnopqrst` and `ghp_xxxxxxxxxxxxxxxxxxxx` in fixtures.
+_PLACEHOLDER_MARKERS = (
+    "xxx",
+    "example",
+    "placeholder",
+    "dummy",
+    "fake",
+    "test",
+    "sample",
+    "changeme",
+)
+
+
+def _is_placeholder_value(value: str) -> bool:
+    """True when a candidate secret is a placeholder, not a real credential.
+
+    Rejects values that are all the same character (ghp_xxx…), and values
+    whose body contains a placeholder marker (`example`, `test`, `xxx`…).
+    """
+    body = value.split("_", 1)[1] if "_" in value else value
+    if len(set(body.lower())) <= 1:
+        return True
+    lowered = value.lower()
+    return any(marker in lowered for marker in _PLACEHOLDER_MARKERS)
 
 
 class SecurityScanner:
@@ -207,12 +239,19 @@ class SecurityScanner:
                 continue
             if file_path.name.lower() in _ENV_TEMPLATE_NAMES:
                 continue
+            if _is_test_file(rel):
+                # v1.17.1: test files routinely hold fixture/fake tokens
+                # (integration-test API keys, `ghp_…` samples); consistent
+                # with static analysis, they are not application source.
+                continue
             try:
                 content = file_path.read_text(encoding="utf-8", errors="replace")
             except OSError:
                 continue
             for name, pattern, severity in _SECRET_PATTERNS:
                 for match in pattern.finditer(content):
+                    if _is_placeholder_value(match.group(0)):
+                        continue
                     line_no = content[: match.start()].count("\n") + 1
                     findings.append(
                         {

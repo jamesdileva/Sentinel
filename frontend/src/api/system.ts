@@ -69,9 +69,29 @@ export interface ActivityEvent {
   created_at: string;
 }
 
+export interface ActivityResponse {
+  events: ActivityEvent[];
+}
+
+/**
+ * Latest persisted activity, newest first. The backend wraps rows in an
+ * `events` key (v1.17.1 fixed the shape mismatch that made the dashboard
+ * history silently empty).
+ */
 export async function getActivity(limit = 100): Promise<ActivityEvent[]> {
-  const { data } = await api.get<ActivityEvent[]>("/v1/system/activity", {
+  const { data } = await api.get<ActivityResponse>("/v1/system/activity", {
     params: { limit },
   });
+  return data.events ?? [];
+}
+
+/**
+ * Queue a repo sync now (header "Sync now" button, v1.17.1). Rejected with
+ * 409 when SENTINEL_GITHUB_TOKEN is not configured.
+ */
+export async function postSyncNow(): Promise<{ job_id: string; status: string }> {
+  const { data } = await api.post<{ job_id: string; status: string }>(
+    "/v1/system/sync",
+  );
   return data;
 }

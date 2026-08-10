@@ -215,6 +215,87 @@ def test_security_scanner_skips_false_positives(tmp_db, tmp_path):
         assert findings[0].file_path.replace("\\", "/") == "app/real.py"
 
 
+def test_static_analysis_ignores_attribute_calls(tmp_db, tmp_path):
+    """v1.17.1 regression: '\\bexec\\s*\\(' matched `session.exec(` because a
+    dot is a word boundary — every SQLModel project was flagged for its ORM
+    calls (17 of the laptop's 20 findings were this false positive)."""
+    root = tmp_path / "orm-project"
+    root.mkdir()
+    (root / "service.py").write_text(
+        "from sqlmodel import Session, select\n\n"
+        "def query(session: Session):\n"
+        "    return session.exec(select(Model)).all()\n"
+        "    obj.eval(1, 2)\n",
+        encoding="utf-8",
+    )
+    (root / "pyproject.toml").write_text("[tool.pytest.ini_options]\n")
+
+    from app.services.security_scanner import _STATIC_PATTERNS
+
+    content = (root / "service.py").read_text(encoding="utf-8")
+    for _name, pattern, _severity in _STATIC_PATTERNS:
+        assert pattern.findall(content) == []
+
+    with Session(connection.get_engine()) as session:
+        project = IndexerService(session).index_project(str(root))
+        assert SecurityScanner(session).scan_project(project) == []
+
+
+def test_static_analysis_still_flags_bare_exec(tmp_db, tmp_path):
+    root = tmp_path / "exec-project"
+    root.mkdir()
+    (root / "danger.py").write_text(
+        "command = user_input()\nresult = exec(command)\nvalue = eval('1+1')\n",
+        encoding="utf-8",
+    )
+    (root / "pyproject.toml").write_text("[tool.pytest.ini_options]\n")
+
+    with Session(connection.get_engine()) as session:
+        project = IndexerService(session).index_project(str(root))
+        findings = SecurityScanner(session).scan_project(project)
+        titles = {f.title for f in findings}
+    assert {"Use of exec()", "Use of eval()"} <= titles
+
+
+def test_placeholder_secrets_are_not_flagged(tmp_db, tmp_path):
+    """v1.17.1: example/placeholder values (all-same-char tokens, `xxx`,
+    `example`, test fixtures) are not real secrets."""
+    root = tmp_path / "template-project"
+    root.mkdir()
+    (root / "config.py").write_text(
+        "OPENAI = 'sk-xxx'\n"
+        "TOKEN = 'ghp_xxxxxxxxxxxxxxxxxxxx'\n"
+        "API = 'AIzaSyEXAMPLEaaaaaaaaaaa'\n",
+        encoding="utf-8",
+    )
+    (root / "pyproject.toml").write_text("[tool.pytest.ini_options]\n")
+
+    with Session(connection.get_engine()) as session:
+        project = IndexerService(session).index_project(str(root))
+        findings = SecurityScanner(session).scan_project(project)
+        secret_flags = [f for f in findings if f.type == "secret"]
+    assert secret_flags == []
+
+
+def test_secret_scanning_skips_test_files(tmp_db, tmp_path):
+    """v1.17.1: fake credentials in test files (the laptop's
+    'test_automation.py has keys' finding) must not be flagged — consistent
+    with static analysis."""
+    root = tmp_path / "test-secrets-project"
+    root.mkdir()
+    (root / "tests").mkdir()
+    (root / "tests" / "test_auth.py").write_text(
+        "TOKEN = 'ghp_abcdefghijklmnopqrst'\n", encoding="utf-8"
+    )
+    (root / "pyproject.toml").write_text("[tool.pytest.ini_options]\n")
+
+    with Session(connection.get_engine()) as session:
+        project = IndexerService(session).index_project(str(root))
+        findings = SecurityScanner(session).scan_project(project)
+        secret_flags = [f for f in findings if f.type == "secret"]
+    assert secret_flags == []
+
+
 # --- API integration (eager Celery) ---
 
 

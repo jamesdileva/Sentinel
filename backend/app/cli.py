@@ -371,8 +371,18 @@ def sync():
         )
     typer.echo(
         f"Indexed {result['indexed']} project(s). "
-        f"Next auto-sync in {settings.sync_interval_minutes} minute(s)."
+        f"Next auto-sync in {_humanize_minutes(settings.sync_interval_minutes)}."
     )
+
+
+def _humanize_minutes(minutes: int) -> str:
+    """'1440' reads badly; say '24 hours' (v1.17.1 daily cadence)."""
+    if minutes % 1440 == 0:
+        days = minutes // 1440
+        return f"{days} day(s)" if days == 1 else f"{days} days"
+    if minutes % 60 == 0:
+        return f"{minutes // 60} hour(s)"
+    return f"{minutes} minute(s)"
 
 
 @app.command()

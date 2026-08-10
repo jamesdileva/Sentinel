@@ -9,14 +9,31 @@ const MAX_EVENTS = 200;
 const FALLBACK_POLL_MS = 15_000;
 
 /**
- * Live activity feed (v1.17): prefers the /api/v1/ws/jobs channel and falls
- * back to polling /system/activity every 15s while the socket is not open
- * (server down, tests, restricted environments).
+ * Live activity feed (v1.17+): persists across page switches.
+ *
+ * v1.17.1: on mount the persisted history (`GET /system/activity`) is loaded
+ * once, so the feed is never empty when you navigate here — then live events
+ * merge in over `/api/v1/ws/jobs`. While the socket is closed (server down,
+ * tests, restricted environments) a 15s poll of /system/activity stands in.
  */
 export function useActivity() {
   const [events, setEvents] = useState<ActivityEvent[]>([]);
   const { status, lastMessage } = useWebSocket("/api/v1/ws/jobs");
   const pollTimer = useRef<number | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    getActivity(MAX_EVENTS)
+      .then((history) => {
+        if (active) setEvents((current) => mergeEvents(current, history));
+      })
+      .catch(() => {
+        /* history unavailable — live events will still flow in */
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (lastMessage?.type !== "activity") return;

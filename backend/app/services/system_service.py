@@ -12,6 +12,7 @@ eval_count / eval_duration counters, persisted for every generation
 
 import datetime
 
+from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import Session, select
 
 from app.core.config import settings
@@ -24,7 +25,15 @@ logger = get_logger(__name__)
 
 
 def _dt(value: datetime.datetime) -> str:
-    return value.isoformat()
+    """Serialize timestamps with an explicit UTC offset.
+
+    Rows are stored naive-UTC; a bare `isoformat()` has no offset and browsers
+    parse it as *local* time (the v1.17 sync pill showed UTC wall-clock
+    numbers instead of the machine's timezone).
+    """
+    if value is not None and value.tzinfo is None:
+        return value.replace(tzinfo=datetime.timezone.utc).isoformat()
+    return value.isoformat() if value is not None else ""
 
 
 def _tokens_per_second(row: OllamaQueryLog) -> float | None:
@@ -87,7 +96,16 @@ class OllamaStatus:
         if self.session is None:
             return []
         limit = limit or settings.max_recent_ollama_queries
-        rows = list(self.session.exec(select(OllamaQueryLog)))
+        try:
+            rows = list(self.session.exec(select(OllamaQueryLog)))
+        except SQLAlchemyError:
+            # Defensive (v1.17.1): a pre-migration DB without newer columns
+            # (e.g. ollama_query_log.purpose) must degrade to empty, not 500.
+            logger.warning(
+                "Ollama query log read failed (schema not migrated yet?)",
+                exc_info=True,
+            )
+            return []
         rows.sort(key=lambda r: r.created_at, reverse=True)
         return [
             {

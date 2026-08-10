@@ -275,9 +275,12 @@ def latest_sync_run(session: Session) -> dict | None:
     row = session.exec(stmt).first()
     if row is None:
         return None
+    ran_at = row.ran_at
+    if ran_at is not None and ran_at.tzinfo is None:  # stored naive UTC
+        ran_at = ran_at.replace(tzinfo=datetime.timezone.utc)
     return {
         "status": row.status,
-        "ran_at": row.ran_at.isoformat() if row.ran_at else None,
+        "ran_at": ran_at.isoformat() if ran_at else None,
         "cloned": row.cloned,
         "pulled": row.pulled,
         "failed": row.failed,

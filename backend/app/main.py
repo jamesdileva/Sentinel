@@ -48,16 +48,42 @@ DASHBOARD_INDEX = (
 
 
 def _background_initial_scan() -> None:
-    """Discover and index known repositories (.git) under watch dirs.
+    """Startup pass (v1.17.1): sync → scan → auto knowledge-index.
 
-    Runs in a daemon thread so server startup never blocks on indexing.
-    Indexing is deterministic and bounded: only dirs containing `.git`.
-    When `auto_index_knowledge` is on (default), projects found with
-    unembedded files are queued for RAG indexing (Ollama-gated).
+    Runs in a daemon thread so server startup never blocks:
+    * If a GitHub token is configured, one repo sync runs first (clone/pull),
+      so newly added repos exist before the scan walks the watch dirs
+      (*then* the daily beat takes over — see SENTINEL_SYNC_INTERVAL_MINUTES).
+    * Discovery scan of known repositories (.git) under watch dirs.
+    * When `auto_index_knowledge` is on, projects with unembedded files are
+      queued for RAG indexing (Ollama-gated). Both outcomes are published on
+      the activity bus so the dashboard shows what happened.
     """
     from sqlmodel import Session
 
     from app.services.indexer import IndexerService
+
+    try:
+        from app.services import activity_bus
+        from app.services.sync_service import RepoSyncService
+        from app.tasks import sync_tasks
+
+        if RepoSyncService().configured:
+            try:
+                sync_tasks.run_repo_sync()
+            except Exception:  # noqa: BLE001 — startup must survive a bad sync
+                logger.exception("Startup repo sync failed")
+                activity_bus.publish_event(
+                    "sync", "Startup repo sync failed", data={"configured": True}
+                )
+        else:
+            activity_bus.publish_event(
+                "sync",
+                "Repo sync skipped on startup — SENTINEL_GITHUB_TOKEN not configured",
+                data={"configured": False},
+            )
+    except Exception:  # noqa: BLE001
+        logger.exception("Startup sync step failed")
 
     try:
         with Session(get_engine()) as session:
@@ -68,13 +94,29 @@ def _background_initial_scan() -> None:
         return
     if settings.auto_index_knowledge and projects:
         try:
+            from app.services import activity_bus
             from app.services.sync_service import queue_knowledge_index_unembedded
 
             knowledge = queue_knowledge_index_unembedded()
+            queued = knowledge.get("queued", 0)
+            skipped = knowledge.get("skipped")
+            if queued:
+                activity_bus.publish_event(
+                    "knowledge",
+                    f"Auto knowledge indexing queued {queued} project(s)",
+                    detail="Newly discovered projects with unembedded files.",
+                    data={"queued": queued},
+                )
+            elif skipped == "ollama-unavailable":
+                activity_bus.publish_event(
+                    "knowledge",
+                    "Auto knowledge indexing skipped — Ollama unavailable",
+                    data={"queued": 0},
+                )
             logger.info(
                 "Auto knowledge indexing: %d job(s) queued (%s)",
-                knowledge.get("queued", 0),
-                knowledge.get("skipped") or "ok",
+                queued,
+                skipped or "ok",
             )
         except Exception:  # noqa: BLE001 — startup must never fail on this
             logger.exception("Auto knowledge indexing failed")

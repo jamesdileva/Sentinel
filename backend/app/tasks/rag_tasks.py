@@ -4,6 +4,8 @@ Indexing runs in the in-process scheduler's worker threads so heavy embedding
 work never blocks API responses.
 """
 
+from typing import Callable
+
 from sqlmodel import Session
 
 from app.core.logging import get_logger
@@ -24,7 +26,10 @@ def run_index_knowledge(project_id: str, with_summary: bool = False) -> dict:
             f"Knowledge indexing started for {project.name}",
             data={"project_id": project.id},
         )
-        counts = RagService(session).index_project(project, with_summary=with_summary)
+        service = RagService(session)
+        counts = service.index_project(
+            project, with_summary=with_summary, progress=progress(project)
+        )
         total = sum(counts.values())
         activity_bus.publish_event(
             "index",
@@ -35,3 +40,22 @@ def run_index_knowledge(project_id: str, with_summary: bool = False) -> dict:
             data={"project_id": project.id, "counts": counts},
         )
         return {"project_id": project.id, "counts": counts}
+
+
+def progress(project) -> Callable:
+    """Throttled per-file progress publisher (v1.17.1): gives the live
+    activity feed a running "X of Y files" figure instead of only start/finish
+    events (a full re-index of 2.9k files was otherwise silent for hours)."""
+
+    def emit(done: int, total_rows: int) -> None:
+        activity_bus.publish_event(
+            "knowledge",
+            f"Knowledge indexing {project.name}: {done} of {total_rows} files",
+            data={
+                "project_id": project.id,
+                "files_done": done,
+                "files_total": total_rows,
+            },
+        )
+
+    return emit

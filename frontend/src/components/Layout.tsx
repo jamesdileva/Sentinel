@@ -1,9 +1,9 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { NavLink, Outlet } from "react-router";
 
 import { useUI } from "../contexts/UIContext";
 import { NAV_ITEMS } from "./nav";
-import { getSyncStatus } from "../api/system";
+import { getSyncStatus, postSyncNow } from "../api/system";
 import type { SyncStatus, ActivityEvent } from "../api/system";
 import { useActivity } from "../hooks/useActivity";
 import type { ActivityStatus } from "../hooks/useActivity";
@@ -20,11 +20,12 @@ const KIND_LABEL: Record<string, string> = {
 };
 
 export default function Layout() {
-  const { dark, toggleDark, sidebarOpen, setSidebarOpen } = useUI();
+  const { dark, toggleDark, sidebarOpen, setSidebarOpen, toast } = useUI();
   const [sync, setSync] = useState<SyncStatus | null>(null);
+  const [syncRunning, setSyncRunning] = useState(false);
   const { events, status } = useActivity();
 
-  useEffect(() => {
+  const refreshSync = useCallback(() => {
     let active = true;
     getSyncStatus()
       .then((data) => {
@@ -37,6 +38,33 @@ export default function Layout() {
       active = false;
     };
   }, []);
+
+  useEffect(refreshSync, [refreshSync]);
+
+  // v1.17.1: keep the pill fresh after a manual/beat sync finishes — the
+  // activity feed is the signal that a run just happened.
+  useEffect(() => {
+    const latest = events[0];
+    if (!latest || latest.kind !== "sync") return;
+    refreshSync();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [events]);
+
+  async function handleSyncNow() {
+    if (!sync?.configured || syncRunning) return;
+    setSyncRunning(true);
+    try {
+      const job = await postSyncNow();
+      toast(`Repo sync queued (job ${job.job_id.slice(0, 8)}…)`, "success");
+    } catch (err) {
+      toast(
+        err instanceof Error ? err.message : "Failed to queue the repo sync.",
+        "error",
+      );
+    } finally {
+      setSyncRunning(false);
+    }
+  }
 
   const sidebar = (
     <nav className="flex h-full flex-col gap-1 p-4">
@@ -98,7 +126,13 @@ export default function Layout() {
           <h1 className="flex-1 text-sm font-semibold uppercase tracking-widest text-slate-500 dark:text-slate-400">
             Dashboard
           </h1>
-          {sync && <SyncPill sync={sync} />}
+          {sync && (
+            <SyncPill
+              sync={sync}
+              onSyncNow={() => void handleSyncNow()}
+              syncRunning={syncRunning}
+            />
+          )}
           <button
             type="button"
             onClick={toggleDark}
@@ -182,7 +216,15 @@ function StatusBar({
   );
 }
 
-function SyncPill({ sync }: { sync: SyncStatus }) {
+function SyncPill({
+  sync,
+  onSyncNow,
+  syncRunning,
+}: {
+  sync: SyncStatus;
+  onSyncNow: () => void;
+  syncRunning: boolean;
+}) {
   if (!sync.configured) {
     return (
       <span
@@ -230,6 +272,16 @@ function SyncPill({ sync }: { sync: SyncStatus }) {
       className={`hidden items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium sm:inline-flex ${cls}`}
     >
       {label}
+      <button
+        type="button"
+        onClick={onSyncNow}
+        disabled={syncRunning}
+        aria-label="Sync now"
+        title={`Sync now (auto-syncs every ${sync.interval_minutes / 60} hours)`}
+        className="ml-1 rounded-full p-0.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 disabled:opacity-50 dark:text-slate-500 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+      >
+        {syncRunning ? "…" : "⟳"}
+      </button>
     </span>
   );
 }
