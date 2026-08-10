@@ -76,7 +76,10 @@ def publish_event(
                     (_MAX_LIMIT,),
                 )
     except Exception:  # noqa: BLE001 — history must never break the publisher
-        logger.debug("activity persist failed (non-fatal)", exc_info=True)
+        # v1.17.2: was debug — a failing writer made the dashboard history
+        # silently disappear (live frames still flow, reads return stale
+        # rows). A warn makes the data-loss condition visible in the log.
+        logger.warning("activity persist failed (non-fatal)", exc_info=True)
     frame = {"type": "activity", "event": event}
     for loop, queue in tuple(_SUBSCRIBERS):
         try:

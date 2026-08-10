@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { getActivity } from "../api/system";
 import type { ActivityEvent } from "../api/system";
@@ -7,6 +7,7 @@ import type { WsStatus } from "./useWebSocket";
 
 const MAX_EVENTS = 200;
 const FALLBACK_POLL_MS = 15_000;
+const RETRY_AFTER_EMPTY_MS = 1_500;
 
 /**
  * Live activity feed (v1.17+): persists across page switches.
@@ -15,25 +16,51 @@ const FALLBACK_POLL_MS = 15_000;
  * once, so the feed is never empty when you navigate here — then live events
  * merge in over `/api/v1/ws/jobs`. While the socket is closed (server down,
  * tests, restricted environments) a 15s poll of /system/activity stands in.
+ *
+ * v1.17.2: the seed is self-healing — it re-runs when the socket comes up
+ * (a mount seed can race startup writes) and retries once shortly after
+ * mount when it came back empty, so cached history shows even under load.
  */
 export function useActivity() {
   const [events, setEvents] = useState<ActivityEvent[]>([]);
   const { status, lastMessage } = useWebSocket("/api/v1/ws/jobs");
   const pollTimer = useRef<number | null>(null);
+  const retryTimer = useRef<number | null>(null);
+
+  const mergeHistory = useCallback((history: ActivityEvent[]) => {
+    setEvents((current) => mergeEvents(current, history));
+  }, []);
 
   useEffect(() => {
     let active = true;
-    getActivity(MAX_EVENTS)
-      .then((history) => {
-        if (active) setEvents((current) => mergeEvents(current, history));
-      })
-      .catch(() => {
-        /* history unavailable — live events will still flow in */
-      });
+    const seed = () =>
+      getActivity(MAX_EVENTS)
+        .then((history) => {
+          if (!active) return;
+          mergeHistory(history);
+          if (history.length === 0) {
+            // v1.17.2: the seed may have run before the server finished
+            // persisting startup events — give history one more chance.
+            retryTimer.current = window.setTimeout(() => {
+              getActivity(MAX_EVENTS)
+                .then((again) => {
+                  if (active) mergeHistory(again);
+                })
+                .catch(() => {
+                  /* still nothing — live events will fill the feed */
+                });
+            }, RETRY_AFTER_EMPTY_MS);
+          }
+        })
+        .catch(() => {
+          /* history unavailable — live events will still flow in */
+        });
+    void seed();
     return () => {
       active = false;
+      if (retryTimer.current !== null) window.clearTimeout(retryTimer.current);
     };
-  }, []);
+  }, [mergeHistory]);
 
   useEffect(() => {
     if (lastMessage?.type !== "activity") return;
@@ -45,14 +72,19 @@ export function useActivity() {
   useEffect(() => {
     if (status === "open") {
       if (pollTimer.current !== null) window.clearInterval(pollTimer.current);
+      // v1.17.2: re-seed now that the channel is up — a mount seed that ran
+      // mid-startup can have missed rows persisted moments later.
+      getActivity(100)
+        .then((history) => mergeHistory(history))
+        .catch(() => {
+          /* live frames will keep the feed moving */
+        });
       return;
     }
     const poll = async () => {
       try {
         const data = await getActivity(100);
-        setEvents((current) =>
-          mergeEvents(current, Array.isArray(data) ? data : []),
-        );
+        mergeHistory(Array.isArray(data) ? data : []);
       } catch {
         // Socket closed and history unavailable — retry on the next tick.
       }
@@ -62,7 +94,7 @@ export function useActivity() {
     return () => {
       if (pollTimer.current !== null) window.clearInterval(pollTimer.current);
     };
-  }, [status]);
+  }, [status, mergeHistory]);
 
   return { events, status };
 }

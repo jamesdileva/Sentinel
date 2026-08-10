@@ -110,6 +110,49 @@ def test_reindex_project(tmp_db):
     assert again.language == "python"
 
 
+def test_reindex_preserves_embedding_ids(tmp_db):
+    """v1.17.2: a re-scan must not null out knowledge bookkeeping. Rows keep
+    their id (Chroma doc ids are the row ids) and their `embedding_id`, so
+    the incremental knowledge index skips already-embedded files instead of
+    re-embedding the whole project after every restart."""
+    svc = _service(tmp_db)
+    project = svc.index_project(PY_PROJECT)
+    session = Session(connection.get_engine())
+    files = ProjectFileRepository(session).get_by_project(project.id)
+    assert files
+    ids = {f.id for f in files}
+    marked = files[0]
+    marked.embedding_id = marked.id
+    session.commit()
+
+    again = svc.index_project(project.path)
+    assert again.id == project.id
+    refiles = ProjectFileRepository(Session(connection.get_engine())).get_by_project(
+        project.id
+    )
+    assert {f.id for f in refiles} == ids
+    by_path = {f.path: f for f in refiles}
+    assert by_path[marked.path].embedding_id == marked.id
+
+
+def test_reindex_drops_vanished_files(tmp_db, tmp_path):
+    svc = _service(tmp_db)
+    repo = tmp_path / "repo"
+    (repo / "src").mkdir(parents=True)
+    (repo / "src" / "a.py").write_text("print('a')\n", encoding="utf-8")
+    (repo / "src" / "b.py").write_text("print('b')\n", encoding="utf-8")
+    project = svc.index_project(repo)
+    (repo / "src" / "b.py").unlink()
+    svc.index_project(project.path)
+    paths = {
+        f.path
+        for f in ProjectFileRepository(Session(connection.get_engine())).get_by_project(
+            project.id
+        )
+    }
+    assert paths == {"src/a.py"}
+
+
 def test_scan_all_projects_discovers_fixtures(tmp_db):
     svc = _service(tmp_db)
     projects = svc.scan_all_projects([str(FIXTURES)])

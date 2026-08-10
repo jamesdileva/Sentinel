@@ -100,16 +100,34 @@ class OllamaService:
         Uses `/api/embed` (Ollama >= 0.4.0) with a fallback to the legacy
         `/api/embeddings` endpoint.
         """
+        return self.embed_with_metrics(text, model=model)[0]
+
+    def embed_with_metrics(
+        self, text: str, model: str | None = None
+    ) -> tuple[list[float], dict]:
+        """Embed and return `(vector, metrics)`.
+
+        The metrics dict carries Ollama's own counters (`tokens` =
+        prompt_eval_count, `duration_ns` = prompt_eval_duration) so index
+        batches can report tok/s without guesswork (v1.17.2). The legacy
+        endpoint returns no counters — metrics are all zero then.
+        """
         model = model or settings.embedding_model
         payload = {"model": model, "input": text}
         try:
             response = self._client.post("/api/embed", json=payload)
             if response.status_code in (404, 405):
-                return self._embed_legacy(text, model)
+                vector = self._embed_legacy(text, model)
+                return vector, {"model": model, "tokens": 0, "duration_ns": 0}
             response.raise_for_status()
             data = response.json()
             embeddings = data.get("embeddings") or [data.get("embedding", [])]
-            return list(embeddings[0])
+            metrics = {
+                "model": data.get("model") or model,
+                "tokens": int(data.get("prompt_eval_count") or 0),
+                "duration_ns": int(data.get("prompt_eval_duration") or 0),
+            }
+            return list(embeddings[0]), metrics
         except httpx.HTTPError as exc:
             logger.warning("Ollama embed failed: %s", exc)
             raise OllamaUnavailableError(f"Ollama embed failed: {exc}") from exc

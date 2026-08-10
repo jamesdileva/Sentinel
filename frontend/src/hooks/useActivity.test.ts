@@ -1,5 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
+
+const wsState: { status: "connecting" | "open" | "closed"; lastMessage: object | null } =
+  {
+    status: "closed",
+    lastMessage: null,
+  };
+
+vi.mock("../hooks/useWebSocket", () => ({
+  useWebSocket: () => wsState,
+}));
 
 import { useActivity } from "./useActivity";
 
@@ -32,6 +42,8 @@ const HISTORICAL = [
 
 describe("useActivity", () => {
   beforeEach(() => {
+    wsState.status = "closed";
+    wsState.lastMessage = null;
     mockGetActivity.mockReset();
     mockGetActivity.mockResolvedValue(HISTORICAL);
   });
@@ -47,5 +59,33 @@ describe("useActivity", () => {
     mockGetActivity.mockRejectedValue(new Error("backend down"));
     const { result } = renderHook(() => useActivity());
     await waitFor(() => expect(result.current.events).toHaveLength(0));
+  });
+
+  it("re-seeds persisted history when the socket opens", async () => {
+    const { result, rerender } = renderHook(() => useActivity());
+    await waitFor(() => expect(mockGetActivity).toHaveBeenCalled());
+    mockGetActivity.mockClear();
+    wsState.status = "open";
+    rerender();
+    await waitFor(() => expect(result.current.events).toHaveLength(2));
+    expect(mockGetActivity).toHaveBeenCalledWith(100);
+  });
+
+  it("retries the history seed once after an empty response", async () => {
+    vi.useFakeTimers();
+    try {
+      wsState.status = "open";
+      mockGetActivity
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockResolvedValue(HISTORICAL);
+      const { result } = renderHook(() => useActivity());
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2_000);
+      });
+      expect(result.current.events).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

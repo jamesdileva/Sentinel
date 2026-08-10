@@ -91,6 +91,15 @@ git pull                         # update the repo (includes the staged dashboar
 ```
 
 - Dashboard: `http://192.168.4.40:8000` · System page: `/system`
+- **The staged dashboard ships inside the release commit** (`backend/app/static`
+  is versioned, v1.16.2) — `git pull` alone updates the dashboard; you never
+  need Node or a rebuild on this machine. Only if you changed `frontend/`
+  locally do you run `scripts/build.py --dist` (from the repo root).
+- If the Dashboard's "Live activity" panel is empty on load even though things
+  are running: check `http://127.0.0.1:8000/api/v1/system/activity?limit=10`
+  in the browser (rows = fine; `events:[]` + a `activity persist failed`
+  WARNING in the server log = the SQLite writer is failing) — the panel
+  re-seeds history on mount (v1.17.2).
 
 ## Rules of thumb
 

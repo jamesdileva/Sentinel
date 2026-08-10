@@ -45,16 +45,22 @@ def run_index_knowledge(project_id: str, with_summary: bool = False) -> dict:
 def progress(project) -> Callable:
     """Throttled per-file progress publisher (v1.17.1): gives the live
     activity feed a running "X of Y files" figure instead of only start/finish
-    events (a full re-index of 2.9k files was otherwise silent for hours)."""
+    events (a full re-index of 2.9k files was otherwise silent for hours).
+    Progress ticks carry an aggregate tok/s from Ollama's counters (v1.17.2)."""
 
-    def emit(done: int, total_rows: int) -> None:
+    def emit(done: int, total_rows: int, speed: float | None = None) -> None:
+        detail = None
+        if speed is not None:
+            detail = f"~{speed:,.0f} tok/s"
         activity_bus.publish_event(
             "knowledge",
             f"Knowledge indexing {project.name}: {done} of {total_rows} files",
+            detail=detail,
             data={
                 "project_id": project.id,
                 "files_done": done,
                 "files_total": total_rows,
+                "tokens_per_second": speed,
             },
         )
 

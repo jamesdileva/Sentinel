@@ -228,16 +228,37 @@ class IndexerService:
         return files
 
     def _index_files(self, project: Project) -> None:
-        self.files.delete_by_project(project.id)
-        project_root = Path(project.path)
-        for absolute in self._iter_source_files(project_root):
-            self._upsert_file(project, absolute)
+        """Re-parse a project's tree without destroying row identity.
 
-    def _upsert_file(self, project: Project, absolute: Path) -> ProjectFile:
+        v1.17.2: rows were previously deleted and re-inserted on every scan,
+        which nulled every file's `embedding_id` — the knowledge index (and
+        Chroma doc ids, which ARE the row ids) then re-embedded everything
+        from scratch after each restart. Rows are now keyed by relative path:
+        unchanged files keep their id + embedding_id, new files create rows,
+        and only files gone from disk are removed.
+        """
+        project_root = Path(project.path)
+        existing = {row.path: row for row in self.files.get_by_project(project.id)}
+        seen: set[str] = set()
+        for absolute in self._iter_source_files(project_root):
+            rel = absolute.relative_to(project_root)
+            seen.add(rel.as_posix())
+            self._upsert_file(project, absolute, existing.get(rel.as_posix()))
+        for path, row in existing.items():
+            if path not in seen:
+                self.session.delete(row)
+
+    def _upsert_file(
+        self,
+        project: Project,
+        absolute: Path,
+        existing: ProjectFile | None = None,
+    ) -> ProjectFile:
         rel = absolute.relative_to(Path(project.path))
         parsed = parse_file_for_project(absolute, project.language, project.framework)
-        existing = self.files.get_by_path(project.id, rel.as_posix())
-        row = existing or ProjectFile(project_id=project.id, path=rel.as_posix())
+        row = existing or self.files.get_by_path(project.id, rel.as_posix())
+        if row is None:
+            row = ProjectFile(project_id=project.id, path=rel.as_posix())
         row.absolute_path = str(absolute)
         row.language = parsed.language if parsed else None
         row.size_bytes = absolute.stat().st_size

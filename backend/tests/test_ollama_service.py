@@ -52,6 +52,41 @@ def test_embed_uses_new_endpoint():
     service.close()
 
 
+def test_embed_with_metrics_captures_token_counters():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "model": "nomic-embed-text",
+                "embeddings": [[0.1, 0.2]],
+                "prompt_eval_count": 96,
+                "prompt_eval_duration": 48_000_000,
+            },
+        )
+
+    service = _service_with(handler)
+    vector, metrics = service.embed_with_metrics("some text")
+    assert vector == [0.1, 0.2]
+    assert metrics["tokens"] == 96
+    assert metrics["duration_ns"] == 48_000_000
+    assert metrics["model"] == "nomic-embed-text"
+    service.close()
+
+
+def test_embed_with_metrics_legacy_returns_zero_counters():
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/embed":
+            return httpx.Response(404, json={})
+        return httpx.Response(200, json={"embedding": [0.5, 0.6]})
+
+    service = _service_with(handler)
+    vector, metrics = service.embed_with_metrics("text")
+    assert vector == [0.5, 0.6]
+    assert metrics["tokens"] == 0
+    assert metrics["duration_ns"] == 0
+    service.close()
+
+
 def test_embed_falls_back_to_legacy_endpoint():
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/api/embed":

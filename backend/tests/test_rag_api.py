@@ -186,7 +186,8 @@ def test_reindex_embeds_only_unembedded_files(tmp_db, tmp_path):
             chroma=ChromaManager(path=tmp_path / "chroma"),
         )
         first = service.index_project(
-            project, progress=lambda done, total: progress.append((done, total))
+            project,
+            progress=lambda done, total, speed=None: progress.append((done, total)),
         )
         assert first["file_summaries"] > 0
         # final progress tick reports the whole file set done
@@ -195,7 +196,8 @@ def test_reindex_embeds_only_unembedded_files(tmp_db, tmp_path):
 
         progress.clear()
         second = service.index_project(
-            project, progress=lambda done, total: progress.append((done, total))
+            project,
+            progress=lambda done, total, speed=None: progress.append((done, total)),
         )
         assert second["file_summaries"] == 0  # everything already embedded
         assert progress == []  # no new file work happened

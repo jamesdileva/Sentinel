@@ -3,11 +3,71 @@
 from sqlmodel import Session
 
 from app.db import connection
-from app.services.chroma_manager import ChromaManager
+from app.services.chroma_manager import ChromaManager, get_chroma_manager
 from app.services.indexer import IndexerService
 from app.services.rag_service import RagService
 
 FI = "tests/fixtures/sample_python_project"
+
+
+def test_chroma_manager_shared_per_path(tmp_path):
+    """v1.17.2: concurrent PersistentClient construction races ChromaDB's
+    shared-system registry — the scheduler's burst of knowledge jobs used to
+    crash with `'RustBindingsAPI' object has no attribute 'bindings'`. The
+    factory must hand out one client per path."""
+    first = get_chroma_manager(tmp_path / "c1")
+    assert get_chroma_manager(tmp_path / "c1") is first
+    second = get_chroma_manager(tmp_path / "c2")
+    assert second is not first
+    assert get_chroma_manager(tmp_path / "c2") is second
+
+
+def test_rag_service_defaults_to_shared_chroma(tmp_db, tmp_path, monkeypatch):
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "chroma_path", tmp_path / "shared")
+    with Session(connection.get_engine()) as session:
+        service = RagService(session, embedder=_fake_embedder, llm=_fake_llm)
+        assert service.chroma is get_chroma_manager()
+
+
+def test_tokens_per_second_conversion():
+    from app.services.rag_service import _tokens_per_second
+
+    assert _tokens_per_second(200, 100_000_000) == 2000.0
+    assert _tokens_per_second(0, 100) is None
+    assert _tokens_per_second(10, 0) is None
+
+
+def test_progress_ticks_report_embed_tokens_per_second(tmp_db, tmp_path, monkeypatch):
+    """v1.17.2: the ingestion progress event carries an aggregate tok/s from
+    Ollama's counters so indexing shows t/s on the activity feed."""
+    from app.core.config import settings
+    from app.tasks import rag_tasks
+
+    monkeypatch.setattr(settings, "chroma_path", tmp_path / "shared")
+    project_id = _index_project(tmp_db)
+    published: list[dict] = []
+    monkeypatch.setattr(
+        rag_tasks.activity_bus,
+        "publish_event",
+        lambda kind, message, detail=None, data=None: published.append(
+            {"kind": kind, "message": message, "detail": detail, "data": data}
+        ),
+    )
+    service = RagService(
+        Session(connection.get_engine()),
+        embedder=_fake_embedder,
+        llm=_fake_llm,
+    )
+    with Session(connection.get_engine()) as session:
+        project = RagService.get_project(session, project_id)
+        progress_cb = rag_tasks.progress(project)
+        service.index_project(project, progress=progress_cb)
+    ticks = [p for p in published if p["kind"] == "knowledge"]
+    assert ticks, "knowledge ticks should have been published"
+    assert all(t["data"]["tokens_per_second"] is None for t in ticks)
+    assert all(t["detail"] is None for t in ticks)
 
 
 def _fake_embedder(text: str) -> list[float]:

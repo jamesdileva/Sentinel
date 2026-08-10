@@ -26,6 +26,7 @@ from app.repositories import (
 )
 from app.schemas.rag import RagResponse, RagResult
 from app.services.chroma_manager import COLLECTIONS, ChromaManager
+from app.services.chroma_manager import get_chroma_manager as _shared_chroma
 from app.services.git_history import GitHistoryService
 from app.services.ollama_service import OllamaService
 
@@ -52,6 +53,13 @@ def _truncate(text: str, limit: int = _MAX_DOC_CHARS) -> str:
     return (text or "")[:limit]
 
 
+def _tokens_per_second(tokens: int, duration_ns: int) -> float | None:
+    """tok/s from Ollama's counters; None when the timings are unavailable."""
+    if not tokens or not duration_ns:
+        return None
+    return round(tokens / (duration_ns / 1_000_000_000), 1)
+
+
 class RagService:
     """Indexes knowledge into ChromaDB and answers questions over it."""
 
@@ -66,7 +74,7 @@ class RagService:
         self.ollama = OllamaService()
         self._embedder = embedder or self.ollama.embed
         self._llm = llm or self.ollama.generate
-        self.chroma = chroma or ChromaManager()
+        self.chroma = chroma or _shared_chroma()
 
     # --- ingestion -------------------------------------------------------
 
@@ -74,7 +82,7 @@ class RagService:
         self,
         project: Project,
         with_summary: bool = False,
-        progress: Callable[[int, int], None] | None = None,
+        progress: Callable[[int, int, float | None], None] | None = None,
     ) -> dict[str, int]:
         """Ingest every knowledge source for a project. Returns counts per collection.
 
@@ -97,7 +105,7 @@ class RagService:
     def ingest_files(
         self,
         project: Project,
-        progress: Callable[[int, int], None] | None = None,
+        progress: Callable[[int, int, float | None], None] | None = None,
     ) -> int:
         """Embed the first chunk of each *unembedded* file (incremental, v1.17.1).
 
@@ -106,6 +114,8 @@ class RagService:
         (the laptop's second auto-index pass was re-doing all 2.9k files).
         `embedding_id` is committed only *after* the Chroma upsert, so a crash
         mid-run leaves untouched files unmarked and they are retried later.
+        Progress ticks carry an aggregate `tokens_per_second` from Ollama's
+        own counters (v1.17.2).
         """
         files = ProjectFileRepository(self.session).get_by_project(project.id)
         total = len(files)
@@ -115,6 +125,8 @@ class RagService:
         metas: list[dict[str, Any]] = []
         embedded: list[object] = []
         done = total - len(pending)
+        batch_tokens = 0
+        batch_duration_ns = 0
         for index, record in enumerate(pending):
             content = _read_local_file(record.absolute_path)
             if not content:
@@ -124,10 +136,11 @@ class RagService:
                 record.embedding_id = record.id
                 done += 1
                 if progress:
-                    progress(done, total)
+                    progress(done, total, None)
                 continue
             doc = f"{record.path}\n\n{_truncate(content)}"
-            embeds.append(self._embed(doc))
+            vector, metrics = self._embed_with_metrics(doc)
+            embeds.append(vector)
             docs.append(doc)
             metas.append(
                 {
@@ -139,8 +152,13 @@ class RagService:
             record.embedding_id = record.id
             embedded.append(record)
             done += 1
+            batch_tokens += int(metrics.get("tokens") or 0)
+            batch_duration_ns += int(metrics.get("duration_ns") or 0)
             if progress and (done % 25 == 0 or done == total):
-                progress(done, total)
+                speed = _tokens_per_second(batch_tokens, batch_duration_ns)
+                progress(done, total, speed)
+                batch_tokens = 0
+                batch_duration_ns = 0
         if not embeds:
             self.session.commit()
             return 0
@@ -408,6 +426,16 @@ class RagService:
 
     def _embed(self, text: str) -> list[float]:
         return self._embedder(text)
+
+    def _embed_with_metrics(self, text: str) -> tuple[list[float], dict]:
+        """Embed, capturing Ollama's token counters when the real embedder
+        is in use; tests inject fakes and get empty metrics instead."""
+        if self._embedder is self.ollama.embed:
+            try:
+                return self.ollama.embed_with_metrics(text)
+            except Exception:  # noqa: BLE001 — degrade to the plain path
+                return self._embed(text), {}
+        return self._embed(text), {}
 
     @staticmethod
     def get_project(session: Session, project_id: str) -> Project:

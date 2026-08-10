@@ -6,6 +6,7 @@ take precomputed embeddings — no default embedding function is used, so the
 model used for indexing and querying must match (nomic-embed-text).
 """
 
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +22,27 @@ COLLECTIONS = (
     "build_logs",
     "project_summaries",
 )
+
+_shared: "ChromaManager | None" = None
+_shared_lock = threading.Lock()
+
+
+def get_chroma_manager(path: str | Path | None = None) -> "ChromaManager":
+    """Process-wide shared PersistentClient (v1.17.2).
+
+    ChromaDB's `SharedSystemClient` registry is keyed per path and races when
+    clients are constructed concurrently — a startup burst of knowledge jobs
+    (scheduler thread pool) crashed with `'RustBindingsAPI' object has no
+    attribute 'bindings'` / `KeyError`. One client per path removes the race;
+    callers that need a private instance (tests) still take `ChromaManager`
+    directly.
+    """
+    global _shared
+    requested = Path(path or settings.chroma_path)
+    with _shared_lock:
+        if _shared is None or _shared.path != requested:
+            _shared = ChromaManager(requested)
+        return _shared
 
 
 class ChromaManager:
