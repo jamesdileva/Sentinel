@@ -7,14 +7,27 @@ indexing into the knowledge database.
 
 import datetime
 import fnmatch
+import os
 import re
 from pathlib import Path
 
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from app.core.config import settings
 from app.core.logging import get_logger
-from app.db.models import Dependency, Project, ProjectFile, ProjectStatus
+from app.db.models import (
+    BuildLog,
+    ChatMessage,
+    Dependency,
+    GitCommit,
+    KnowledgeSummary,
+    PortfolioScore,
+    Project,
+    ProjectFile,
+    ProjectStatus,
+    SecurityFinding,
+    TestResult,
+)
 from app.parsers import parse_file_for_project
 from app.repositories import (
     DependencyRepository,
@@ -34,6 +47,72 @@ _DISCOVERY_DEPTH = 4
 
 def _pretty_name(directory_name: str) -> str:
     return directory_name.replace("-", " ").replace("_", " ").title()
+
+
+def origin_url(checkout: Path) -> str | None:
+    """Normalized origin URL of a checkout, or None when it has none.
+
+    Normalization mirrors RepoSyncService: lowercased, scheme and `git@`
+    stripped, `.git` suffix removed — `https://github.com/O/N.git`,
+    `http://github.com/o/n` and `git@github.com:o/n.git` all resolve to
+    `github.com/o/n`.
+    """
+    git_dir = checkout / ".git"
+    if not git_dir.is_dir():
+        return None
+    try:
+        lines = (
+            (git_dir / "config")
+            .read_text(encoding="utf-8", errors="replace")
+            .splitlines()
+        )
+    except OSError:
+        return None
+    for line in lines:
+        stripped = line.strip()
+        if not stripped.startswith("url = "):
+            continue
+        url = stripped.removeprefix("url = ").strip().lower()
+        return (
+            url.removesuffix(".git")
+            .replace("git@github.com:", "github.com/")
+            .replace("ssh://git@github.com/", "github.com/")
+            .removeprefix("https://")
+            .removeprefix("http://")
+        )
+    return None
+
+
+def is_sync_owned(checkout: Path, watch_root: Path) -> bool:
+    """v1.17.5, Rule 5 (projects are known entities): a checkout is a
+    project only when repo-sync owns it — i.e. one of two shapes:
+
+    * canonical clone: `<root>/<owner>/<name>` whose origin URL matches
+      `github.com/<owner>/<name>` (what RepoSyncService clones and pulls);
+    * flat adopted: a direct child of the root with any GitHub origin
+      (repos that pre-date the nested layout — repo-sync adopts these via
+      `_find_existing_checkout`).
+
+    Git worktrees, stray copies, nested sub-repos and `.codex`-style junk
+    are never projects. A checkout passed explicitly as the scan target
+    itself (repo-sync's targeted rescans) is always sync-owned.
+    """
+    try:
+        rel = checkout.resolve().relative_to(watch_root.resolve())
+    except ValueError:
+        return False
+    parts = rel.parts
+    if not parts:
+        return True  # the watch root itself is the intended target
+    url = origin_url(checkout)
+    if not url or "github.com/" not in url:
+        return False
+    if len(parts) == 1:
+        return True  # flat adopted: any GitHub origin
+    if len(parts) == 2:
+        owner, name = parts[0], parts[1]
+        return url.endswith(f"{owner}/{name}".lower())
+    return False
 
 
 class IndexerService:
@@ -80,16 +159,102 @@ class IndexerService:
         return self.index_project(project.path)
 
     def scan_all_projects(self, watch_dirs: list[str] | None = None) -> list[Project]:
-        """Discover known repositories (.git) under watch dirs and index them."""
+        """Discover known repositories (.git) under watch dirs and index them.
+
+        v1.17.5: only sync-owned checkouts become projects (see
+        `is_sync_owned`); same-origin duplicates keep the canonical nested
+        checkout, mirroring RepoSyncService. On the full startup scan (no
+        explicit dirs) stale Project rows are garbage-collected; targeted
+        rescans from repo-sync never remove projects.
+        """
         dirs = watch_dirs or settings.watch_dirs
         indexed: list[Project] = []
+        keep: set[str] = set()
         for watch_dir in dirs:
-            for repo_path in self.discover_repositories(watch_dir):
+            watch_root = Path(watch_dir)
+            for checkout in self._sync_owned_checkouts(watch_root):
+                keep.add(self._norm(checkout))
                 try:
-                    indexed.append(self.index_project(repo_path))
+                    indexed.append(self.index_project(checkout))
                 except Exception:
-                    logger.exception("Index failed for %s", repo_path)
+                    logger.exception("Index failed for %s", checkout)
+        if watch_dirs is None:
+            self._gc_projects(keep)
         return indexed
+
+    def _sync_owned_checkouts(self, watch_root: Path) -> list[Path]:
+        """Eligible checkouts under `watch_root`, deduplicated by origin URL.
+
+        A same-origin duplicate (flat copy + canonical clone) keeps only
+        the canonical nested checkout — the location repo-sync would use.
+        """
+        seen: dict[str, Path] = {}
+        for checkout in self.discover_repositories(watch_root):
+            if not is_sync_owned(checkout, watch_root):
+                continue
+            url = origin_url(checkout)
+            if url is None:
+                continue
+            current = seen.get(url)
+            if current is None:
+                seen[url] = checkout
+                continue
+            parts = checkout.relative_to(watch_root).parts
+            if len(parts) == 2 and len(current.relative_to(watch_root).parts) == 1:
+                seen[url] = checkout  # canonical nested beats flat copy
+        return sorted(seen.values())
+
+    def _gc_projects(self, keep: set[str]) -> None:
+        """Drop Project rows not backed by a kept checkout (v1.17.5).
+
+        Removes rows for checkouts that vanished from disk, were never
+        sync-owned (worktrees, stray copies, nested sub-repos), live
+        outside the watch roots, or duplicate a kept same-origin checkout.
+        Cascades files, dependencies, findings, results, summaries, chat,
+        portfolio rows and Chroma docs.
+        """
+        removed = 0
+        for project in self.session.exec(select(Project)).all():
+            if self._norm(Path(project.path)) in keep:
+                continue
+            self._delete_project_row(project.id)
+            logger.info("GC removed project %s (%s)", project.name, project.path)
+            removed += 1
+        if removed:
+            self.session.commit()
+            logger.info("Project GC removed %d stale project(s)", removed)
+
+    @staticmethod
+    def _norm(path: Path) -> str:
+        return os.path.normcase(str(path.resolve()))
+
+    def _delete_project_row(self, project_id: str) -> None:
+        """Remove a project and everything keyed to it (FK-clean)."""
+        from sqlmodel import delete
+
+        dependents = (
+            ProjectFile,
+            Dependency,
+            SecurityFinding,
+            GitCommit,
+            TestResult,
+            BuildLog,
+            KnowledgeSummary,
+            ChatMessage,
+            PortfolioScore,
+        )
+        for model in dependents:
+            self.session.exec(delete(model).where(model.project_id == project_id))
+        try:
+            from app.services.chroma_manager import get_chroma_manager
+
+            get_chroma_manager().delete_by_project("knowledge", project_id)
+        except Exception:  # noqa: BLE001 — Chroma must never block the GC
+            logger.debug("Chroma cleanup skipped for project %s", project_id)
+        project = self.projects.get(project_id)
+        if project is not None:
+            self.session.delete(project)
+        self.session.flush()
 
     def discover_repositories(self, watch_dir: str | Path) -> list[Path]:
         """Find directories containing a `.git` folder, depth-limited."""

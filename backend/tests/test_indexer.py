@@ -2,11 +2,17 @@
 
 from pathlib import Path
 
-from sqlmodel import Session
+from sqlmodel import Session, select
 
+from app.core.config import settings
 from app.db import connection
+from app.db.models import ChatMessage, Dependency, Project, ProjectFile
 from app.repositories import ProjectFileRepository
-from app.services.indexer import IndexerService
+from app.services.indexer import (
+    IndexerService,
+    is_sync_owned,
+    origin_url,
+)
 
 FIXTURES = Path(__file__).parent / "fixtures"
 PY_PROJECT = FIXTURES / "sample_python_project"
@@ -15,6 +21,41 @@ REACT_PROJECT = FIXTURES / "sample_react_project"
 
 def _service(tmp_db) -> IndexerService:
     return IndexerService(Session(connection.get_engine()))
+
+
+def _checkout(
+    root: Path,
+    *parts: str,
+    url: str | None = None,
+    files: dict[str, str] | None = None,
+) -> Path:
+    """Create a checkout-shaped dir: `.git/` (optionally with an origin URL
+    config) and optional source files."""
+    checkout = root.joinpath(*parts)
+    (checkout / ".git").mkdir(parents=True)
+    if url is not None:
+        (checkout / ".git" / "config").write_text(
+            f'[remote "origin"]\n\turl = {url}\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n',
+            encoding="utf-8",
+        )
+    for name, content in (files or {}).items():
+        path = checkout / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+    return checkout
+
+
+def _seed_project(tmp_path, project_id: str, name: str, rel_path: str, tmp_db) -> None:
+    with Session(connection.get_engine()) as session:
+        session.add(
+            Project(
+                id=project_id,
+                name=name,
+                path=str(Path(tmp_path) / rel_path),
+                language="python",
+            )
+        )
+        session.commit()
 
 
 def test_detect_language(tmp_db):
@@ -153,12 +194,210 @@ def test_reindex_drops_vanished_files(tmp_db, tmp_path):
     assert paths == {"src/a.py"}
 
 
-def test_scan_all_projects_discovers_fixtures(tmp_db):
+def test_scan_all_projects_discovers_sync_owned_checkouts(tmp_db, tmp_path):
+    """v1.17.5: discovery indexes only sync-owned checkouts under a watch
+    root — a canonical `owner/name` clone and a flat adopted checkout —
+    never worktrees, copies or origin-less dirs."""
     svc = _service(tmp_db)
-    projects = svc.scan_all_projects([str(FIXTURES)])
-    names = {p.name for p in projects}
-    assert "Sample Python Project" in names
-    assert "Sample React Project" in names
+    _checkout(
+        tmp_path,
+        "jamesdileva",
+        "python-app",
+        url="https://github.com/jamesdileva/python-app.git",
+        files={"app/main.py": "print('hi')\n"},
+    )
+    _checkout(
+        tmp_path,
+        "React-App",
+        url="https://github.com/jamesdileva/react-app.git",
+        files={"src/index.tsx": "export const x = 1\n"},
+    )
+    _checkout(  # worktree-style: nested under an owner-shaped dir, wrong url
+        tmp_path,
+        "CG.worktrees",
+        "agents-x",
+        url="https://github.com/jamesdileva/cg.git",
+        files={"a.py": "x=1\n"},
+    )
+    _checkout(  # stray copy two levels down
+        tmp_path,
+        "Desktop",
+        "airadio",
+        url="https://github.com/jamesdileva/airadio.git",
+        files={"a.py": "x=1\n"},
+    )
+    _checkout(tmp_path, "naked", files={"a.py": "x=1\n"})  # no origin remote
+    projects = svc.scan_all_projects([str(tmp_path)])
+    paths = {p.path for p in projects}
+    assert paths == {
+        str(tmp_path / "jamesdileva" / "python-app"),
+        str(tmp_path / "React-App"),
+    }
+
+
+def test_scan_all_projects_prefers_canonical_over_flat_copy(tmp_db, tmp_path):
+    """The same origin twice (flat + nested clone) keeps only the canonical
+    nested checkout — the location repo-sync would pull."""
+    svc = _service(tmp_db)
+    _checkout(
+        tmp_path,
+        "jamesdileva",
+        "app",
+        url="https://github.com/jamesdileva/app.git",
+        files={"a.py": "x=1\n"},
+    )
+    _checkout(
+        tmp_path,
+        "App",
+        url="https://github.com/jamesdileva/app.git",
+        files={"a.py": "x=1\n"},
+    )
+    projects = svc.scan_all_projects([str(tmp_path)])
+    assert [p.path for p in projects] == [str(tmp_path / "jamesdileva" / "app")]
+
+
+def test_origin_url_normalizes_variants(tmp_path):
+    cases = {
+        "https://github.com/jamesdileva/MyApp.git": "github.com/jamesdileva/myapp",
+        "http://github.com/jamesdileva/MyApp": "github.com/jamesdileva/myapp",
+        "git@github.com:jamesdileva/MyApp.git": "github.com/jamesdileva/myapp",
+        "ssh://git@github.com/jamesdileva/x.git": "github.com/jamesdileva/x",
+    }
+    for idx, (raw, expected) in enumerate(cases.items()):
+        checkout = _checkout(tmp_path, f"repo-{idx}", url=raw)
+        assert origin_url(checkout) == expected
+    bare = _checkout(tmp_path, "bare")  # no .git/config
+    assert origin_url(bare) is None
+
+
+def test_is_sync_owned_shape_matrix(tmp_path):
+    root = tmp_path
+    canonical = _checkout(
+        root, "jamesdileva", "app", url="https://github.com/jamesdileva/app.git"
+    )
+    assert is_sync_owned(canonical, root) is True
+    wrong_owner = _checkout(
+        root, "other", "app", url="https://github.com/jamesdileva/app.git"
+    )
+    assert is_sync_owned(wrong_owner, root) is False
+    non_github = _checkout(
+        root, "jamesdileva", "app2", url="https://gitlab.com/jamesdileva/app2.git"
+    )
+    assert is_sync_owned(non_github, root) is False
+    flat = _checkout(root, "My-App", url="https://github.com/jamesdileva/my-app.git")
+    assert is_sync_owned(flat, root) is True
+    flat_originless = _checkout(root, "naked", files={"a.py": "x=1\n"})
+    assert is_sync_owned(flat_originless, root) is False
+    worktree = _checkout(
+        root,
+        "CG.worktrees",
+        "agents-x",
+        url="https://github.com/jamesdileva/cg.git",
+    )
+    assert is_sync_owned(worktree, root) is False
+    copy = _checkout(
+        root, "Desktop", "app", url="https://github.com/jamesdileva/app.git"
+    )
+    assert is_sync_owned(copy, root) is False
+    deep_nested = _checkout(
+        root, "AG", "stable-fast-3d", url="https://github.com/jamesdileva/ag.git"
+    )
+    assert is_sync_owned(deep_nested, root) is False
+    assert is_sync_owned(root, root) is True  # explicit scan target
+
+
+def test_full_scan_gc_removes_unowned_and_gone_projects(tmp_db, tmp_path, monkeypatch):
+    """The startup scan (no explicit dirs) drops rows whose checkouts are
+    gone, disqualified (copies/worktrees), outside the watch roots, or a
+    same-origin duplicate — keeping exactly the sync-owned set."""
+    svc = _service(tmp_db)
+    _checkout(
+        tmp_path,
+        "jamesdileva",
+        "kept",
+        url="https://github.com/jamesdileva/kept.git",
+        files={"a.py": "x=1\n"},
+    )
+    _checkout(  # same origin one level up: the flat duplicate row
+        tmp_path,
+        "Kept",
+        url="https://github.com/jamesdileva/kept.git",
+        files={"a.py": "x=1\n"},
+    )
+    _checkout(  # disqualified but present on disk (worktree shape)
+        tmp_path,
+        "CG.worktrees",
+        "agents-x",
+        url="https://github.com/jamesdileva/cg.git",
+    )
+    for project_id, name, rel in (
+        ("p-kept", "Kept", "jamesdileva/kept"),
+        ("p-flat", "Kept Flat", "Kept"),
+        ("p-gone", "Gone", "gone/app"),
+        ("p-work", "Worktree", "CG.worktrees/agents-x"),
+        ("p-legacy", "Legacy", "/data/projects/sample_python_project"),
+    ):
+        _seed_project(tmp_path, project_id, name, rel, tmp_db)
+
+    monkeypatch.setattr(settings, "watch_dirs", [str(tmp_path)])
+    svc.scan_all_projects()
+    with Session(connection.get_engine()) as session:
+        rows = session.exec(select(Project)).all()
+    assert {p.id for p in rows} == {"p-kept"}
+    assert {p.path for p in rows} == {str(tmp_path / "jamesdileva" / "kept")}
+
+
+def test_targeted_scan_never_gc(tmp_db, tmp_path, monkeypatch):
+    """Repo-sync's targeted rescans (explicit watch_dirs) must never remove
+    projects: they index changed repos only, outside the GC's scope."""
+    svc = _service(tmp_db)
+    _seed_project(tmp_path, "p-gone", "Gone", "gone/app", tmp_db)
+    _checkout(
+        tmp_path,
+        "jamesdileva",
+        "kept",
+        url="https://github.com/jamesdileva/kept.git",
+        files={"a.py": "x=1\n"},
+    )
+    svc.scan_all_projects([str(tmp_path)])
+    with Session(connection.get_engine()) as session:
+        rows = session.exec(select(Project)).all()
+    assert "p-gone" in {p.id for p in rows}  # stale row survives targeted scans
+    assert str(tmp_path / "jamesdileva" / "kept") in {p.path for p in rows}
+
+
+def test_gc_cascades_dependent_rows(tmp_db, tmp_path, monkeypatch):
+    """Deleting a stale project also removes its files, dependencies, chat
+    and security-finding rows (FK-clean, Chroma best-effort)."""
+    svc = _service(tmp_db)
+    _checkout(
+        tmp_path,
+        "jamesdileva",
+        "kept",
+        url="https://github.com/jamesdileva/kept.git",
+        files={"a.py": "x=1\n"},
+    )
+    with Session(connection.get_engine()) as session:
+        session.add(
+            Project(
+                id="p-dead", name="Dead", path=str(tmp_path / "dead"), language="python"
+            )
+        )
+        session.add(
+            ProjectFile(id="f1", project_id="p-dead", path="a.py", absolute_path="a.py")
+        )
+        session.add(
+            Dependency(id="d1", project_id="p-dead", name="flask", type="production")
+        )
+        session.add(ChatMessage(id="c1", project_id="p-dead", role="user", text="hi"))
+        session.commit()
+    monkeypatch.setattr(settings, "watch_dirs", [str(tmp_path)])
+    svc.scan_all_projects()
+    with Session(connection.get_engine()) as session:
+        assert session.get(Project, "p-dead") is None
+        assert session.get(ProjectFile, "f1") is None
+        assert session.get(Dependency, "d1") is None
+        assert session.get(ChatMessage, "c1") is None
 
 
 def test_update_incremental_only_changes_files(tmp_db):
