@@ -42,6 +42,29 @@ def run_index_knowledge(project_id: str, with_summary: bool = False) -> dict:
         return {"project_id": project.id, "counts": counts}
 
 
+def run_reset_knowledge() -> dict:
+    """Drop every ChromaDB knowledge collection (v1.17.6).
+
+    Recovery path for a damaged on-disk HNSW index: wiping the collections
+    lets re-indexing rebuild clean vectors (embedding_ids stay put, so
+    ingest_files re-embeds everything after the reset). Runs in the job
+    pool — resetting six collections can take seconds on a slow disk.
+    """
+    from app.services.chroma_manager import get_chroma_manager
+
+    logger.info("knowledge reset task starting")
+    activity_bus.publish_event(
+        "index", "Knowledge index reset started", data={"scope": "all"}
+    )
+    get_chroma_manager().reset_all()
+    activity_bus.publish_event(
+        "index",
+        "Knowledge index reset finished — re-index with `sentinel rag-index`",
+        data={"scope": "all"},
+    )
+    return {"scopes": "all"}
+
+
 def progress(project) -> Callable:
     """Throttled per-file progress publisher (v1.17.1): gives the live
     activity feed a running "X of Y files" figure instead of only start/finish

@@ -41,11 +41,18 @@ export interface ProjectIndexStatus {
   embedded: number;
 }
 
+export interface KnowledgeHealth {
+  healthy: boolean;
+  broken: string[];
+  checked: string[];
+}
+
 export interface RagIndexStatus {
   project_id: string | null;
   projects: Record<string, ProjectIndexStatus>;
   files_total: number;
   files_embedded: number;
+  health: KnowledgeHealth;
 }
 
 export async function ragSearch(
@@ -103,6 +110,13 @@ export async function getIndexStatus(
   const { data } = await api.get<RagIndexStatus>("/v1/rag/index/status", {
     params: projectId ? { project_id: projectId } : undefined,
   });
+  return data;
+}
+
+// ── v1.17.6: damaged-index recovery ───────────────────────────────────────
+
+export async function resetKnowledgeIndex(): Promise<RagJob> {
+  const { data } = await api.post<RagJob>("/v1/rag/index/reset");
   return data;
 }
 

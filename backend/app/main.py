@@ -11,8 +11,8 @@ import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, Request
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api.v1.builds import router as builds_router
@@ -28,6 +28,7 @@ from app.api.v1.ws import router as ws_router
 from app.core.config import settings
 from app.core.logging import get_logger, setup_logging
 from app.db.connection import check_db, get_engine, init_db
+from app.services.chroma_manager import RagIndexError
 from app.services.job_scheduler import scheduler
 from app.services.startup_check import run_startup_checks
 
@@ -169,6 +170,16 @@ def health() -> dict:
 @app.get("/api/v1/health", tags=["system"])
 def health_v1() -> dict:
     return health()
+
+
+@app.exception_handler(RagIndexError)
+async def rag_index_error_handler(request: Request, exc: RagIndexError) -> JSONResponse:
+    """Damaged knowledge index → 503 with a rebuild hint (v1.17.6).
+
+    ChromaDB raises InternalError when its on-disk HNSW segment files are
+    gone (interrupted write / killed process); plumbing it through as a
+    raw 500 hides the only recovery: drop collections and re-index."""
+    return JSONResponse(status_code=503, content={"detail": str(exc)})
 
 
 app.include_router(projects_router, prefix="/api/v1")

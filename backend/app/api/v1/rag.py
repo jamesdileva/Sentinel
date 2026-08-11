@@ -84,7 +84,12 @@ def rag_index_status(
     session: Session = Depends(get_session),
 ) -> dict:
     """Index progress: embedded vs total files, per project or across all
-    projects (Sprint 15). Read-only; no job is triggered here."""
+    projects (Sprint 15), plus knowledge-index health (v1.17.6).
+
+    `health` probes every non-empty collection's HNSW index on disk; a
+    damaged index (killed write) lists its collections under `broken` so the
+    dashboard can offer a rebuild instead of failing on the next query.
+    Read-only; no job is triggered here."""
     stmt = (
         select(
             ProjectFile.project_id,
@@ -108,7 +113,20 @@ def rag_index_status(
         "projects": per_project,
         "files_total": files_total,
         "files_embedded": files_embedded,
+        "health": get_rag_service(session).chroma.health(),
     }
+
+
+@router.post("/rag/index/reset", status_code=202, response_model=JobEnvelope)
+def rag_index_reset(session: Session = Depends(get_session)) -> JobEnvelope:
+    """Drop every knowledge collection so indexing can rebuild from scratch.
+
+    Recovery path for a damaged on-disk HNSW index (v1.17.6) — the route is
+    safe to call at any time; resetting only deletes derived vectors, never
+    source data or rows. Queued as a job because six collections can take
+    seconds to drop."""
+    job_id = job_scheduler.submit("run_reset_knowledge")
+    return JobEnvelope(job_id=job_id, status="queued")
 
 
 @router.get(

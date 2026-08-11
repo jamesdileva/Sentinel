@@ -4,6 +4,12 @@ ChromaDB runs as an embedded python client with a persistent directory
 (settings.chroma_path). One collection per knowledge source. All operations
 take precomputed embeddings — no default embedding function is used, so the
 model used for indexing and querying must match (nomic-embed-text).
+
+v1.17.6: per-collection operation locks (two knowledge jobs can no longer
+interleave upserts on the same collection), a cached health probe that
+detects a damaged HNSW index on disk (the `Nothing found on disk`
+InternalError seen after a killed write), and `reset_all()` — the recovery
+path surfaces as 503 + a rebuild hint instead of a raw 500 traceback.
 """
 
 import threading
@@ -11,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 import chromadb
+from chromadb.errors import InternalError, NotFoundError
 
 from app.core.config import settings
 
@@ -25,6 +32,21 @@ COLLECTIONS = (
 
 _shared: "ChromaManager | None" = None
 _shared_lock = threading.Lock()
+
+_DAMAGED_HINT = (
+    "The knowledge index is damaged on disk. Rebuild it with "
+    "`sentinel rag-index --reset` (or POST /api/v1/rag/index/reset)."
+)
+
+
+class RagIndexError(Exception):
+    """Knowledge index is damaged or unreadable (v1.17.6).
+
+    Raised when ChromaDB cannot read its on-disk HNSW index (the low-level
+    `InternalError: ... Error creating hnsw segment reader: Nothing found
+    on disk` seen after a write was interrupted mid-flush). API routes map
+    it to a 503 with a rebuild hint; recovery is deterministic.
+    """
 
 
 def get_chroma_manager(path: str | Path | None = None) -> "ChromaManager":
@@ -52,19 +74,46 @@ class ChromaManager:
         self.path = Path(path or settings.chroma_path)
         self.path.mkdir(parents=True, exist_ok=True)
         self._client = chromadb.PersistentClient(path=str(self.path))
-        self._collections: dict[str, chromadb.Collection] = {}
+        self._collections: dict[str, Any] = {}
+        self._locks: dict[str, threading.Lock] = {}
+        self._health_cache: dict[str, Any] | None = None
+        self._health_lock = threading.Lock()
 
-    def collection(self, name: str) -> chromadb.Collection:
+    # -- internals ------------------------------------------------------------
+
+    def _lock(self, name: str) -> threading.RLock:
+        # RLock: `upsert`/`search`/`health` hold the collection lock while
+        # calling `collection()`, which locks again — a plain Lock deadlocks
+        # on every operation.
+        return self._locks.setdefault(name, threading.RLock())
+
+    @staticmethod
+    def _guard(exc: Exception) -> None:
+        """Translate ChromaDB's on-disk index failure into RagIndexError
+        (v1.17.6): raw InternalErrors otherwise surface as 500 tracebacks
+        with no recovery hint."""
+        if isinstance(exc, InternalError):
+            raise RagIndexError(_DAMAGED_HINT) from exc
+        raise exc
+
+    def _invalidate_health(self) -> None:
+        with self._health_lock:
+            self._health_cache = None
+
+    # -- collections ----------------------------------------------------------
+
+    def collection(self, name: str) -> Any:
         """Get (or create) a cosine-distance collection by name."""
-        cached = self._collections.get(name)
-        if cached is not None:
-            return cached
-        collection = self._client.get_or_create_collection(
-            name=name,
-            metadata={"hnsw:space": "cosine"},
-        )
-        self._collections[name] = collection
-        return collection
+        with self._lock(name):
+            cached = self._collections.get(name)
+            if cached is not None:
+                return cached
+            collection = self._client.get_or_create_collection(
+                name=name,
+                metadata={"hnsw:space": "cosine"},
+            )
+            self._collections[name] = collection
+            return collection
 
     def upsert(
         self,
@@ -74,12 +123,17 @@ class ChromaManager:
         documents: list[str],
         metadatas: list[dict[str, Any]] | None = None,
     ) -> None:
-        self.collection(collection).upsert(
-            ids=ids,
-            embeddings=embeddings,
-            documents=documents,
-            metadatas=metadatas,
-        )
+        with self._lock(collection):
+            try:
+                self.collection(collection).upsert(
+                    ids=ids,
+                    embeddings=embeddings,
+                    documents=documents,
+                    metadatas=metadatas,
+                )
+            except Exception as exc:  # noqa: BLE001 — translate then re-raise
+                self._guard(exc)
+        self._invalidate_health()
 
     def search(
         self,
@@ -89,11 +143,15 @@ class ChromaManager:
         where: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         """Similarity search; returns result dicts with metadata + distance."""
-        result = self.collection(collection).query(
-            query_embeddings=[query_embedding],
-            n_results=top_k,
-            where=where,
-        )
+        with self._lock(collection):
+            try:
+                result = self.collection(collection).query(
+                    query_embeddings=[query_embedding],
+                    n_results=top_k,
+                    where=where,
+                )
+            except Exception as exc:  # noqa: BLE001 — translate then re-raise
+                self._guard(exc)
         ids = result.get("ids", [[]])[0]
         distances = result.get("distances", [[]])[0]
         documents = result.get("documents", [[]])[0]
@@ -108,9 +166,73 @@ class ChromaManager:
             for i in range(len(ids))
         ]
 
-    def delete_by_project(self, collection: str, project_id: str) -> None:
-        """Remove all embeddings of a project from one collection."""
-        self.collection(collection).delete(where={"project_id": project_id})
+    def delete_by_project(self, project_id: str) -> None:
+        """Remove ALL embeddings of a project from every real collection.
+
+        v1.17.6: the GC previously deleted from a phantom `knowledge`
+        collection (never used by ingestion), so dropped projects left
+        orphaned vectors in `file_summaries` and friends forever.
+        """
+        for name in COLLECTIONS:
+            with self._lock(name):
+                try:
+                    self.collection(name).delete(where={"project_id": project_id})
+                except Exception as exc:  # noqa: BLE001 — translate then re-raise
+                    self._guard(exc)
+        self._invalidate_health()
 
     def count(self, collection: str) -> int:
-        return self.collection(collection).count()
+        with self._lock(collection):
+            try:
+                return self.collection(collection).count()
+            except Exception as exc:  # noqa: BLE001 — translate then re-raise
+                self._guard(exc)
+
+    def reset(self, name: str) -> None:
+        """Drop one collection and forget its cached handle."""
+        with self._lock(name):
+            self._collections.pop(name, None)
+            try:
+                self._client.delete_collection(name)
+            except (ValueError, NotFoundError):
+                pass  # collection does not exist — nothing to drop
+        self._invalidate_health()
+
+    def reset_all(self) -> None:
+        """Drop every knowledge collection (v1.17.6 recovery path)."""
+        for name in COLLECTIONS:
+            self.reset(name)
+
+    def health(self) -> dict[str, Any]:
+        """Probe each non-empty collection's HNSW index (cached).
+
+        `count()` reads the metadata store, so a collection whose segment
+        data files vanished still reports a count — the real check touches
+        the segment reader via a cheap `get(limit=1)` (no embedding needed).
+        A damaged collection reports under `broken`; the dashboard then
+        offers a rebuild instead of failing silently on the next query.
+        """
+        with self._health_lock:
+            if self._health_cache is not None:
+                return self._health_cache
+        checked: list[str] = []
+        broken: list[str] = []
+        for name in COLLECTIONS:
+            try:
+                with self._lock(name):
+                    if self.collection(name).count() == 0:
+                        continue
+                    checked.append(name)
+                    # Touches the segment reader — raises InternalError when
+                    # the HNSW data files are gone (v1.17.6 probe).
+                    self.collection(name).get(limit=1)
+            except RagIndexError:
+                broken.append(name)
+            except InternalError:
+                broken.append(name)
+            except Exception:  # noqa: BLE001 — not Chroma-internal: not damage
+                pass
+        result = {"healthy": not broken, "broken": broken, "checked": checked}
+        with self._health_lock:
+            self._health_cache = result
+        return result

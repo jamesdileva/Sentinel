@@ -38,6 +38,7 @@ def _build_registry() -> dict[str, Callable]:
         "run_security_scan": build_tasks.run_security_scan_task,
         "run_security_scan_all": build_tasks.run_security_scan_all,
         "run_index_knowledge": rag_tasks.run_index_knowledge,
+        "run_reset_knowledge": rag_tasks.run_reset_knowledge,
         "run_repo_sync": sync_tasks.run_repo_sync,
         "world_sim_tick": world_sim_tasks.world_sim_tick,
     }
@@ -122,10 +123,17 @@ class JobScheduler:
         )
 
     def shutdown(self) -> None:
+        """Stop beats and release the job pool (v1.17.6).
+
+        Running and queued jobs drain to completion: `cancel_futures=True`
+        used to kill an in-flight knowledge index mid-upsert, guaranteeing
+        the exact on-disk Chroma corruption (Nothing found on disk) this
+        release detects and recovers from. `wait=False` keeps uvicorn's
+        shutdown synchronous — the workers just keep flushing quietly."""
         if self._started:
             self._beats.shutdown(wait=False)
             self._started = False
-        self._executor.shutdown(wait=False, cancel_futures=True)
+        self._executor.shutdown(wait=False, cancel_futures=False)
         logger.info("In-process scheduler stopped")
 
     # -- internals -----------------------------------------------------------

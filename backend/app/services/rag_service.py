@@ -11,7 +11,7 @@ import datetime
 from pathlib import Path
 from typing import Any, Callable
 
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from app.core.config import settings
 from app.core.logging import get_logger
@@ -368,8 +368,26 @@ class RagService:
         project_id: str | None = None,
         top_k: int = 5,
     ) -> RagResponse:
-        """Answer a question grounded in retrieved ChromaDB context (docs/02 §6.3)."""
-        sources = self.search(question, project_id=project_id, top_k=top_k)
+        """Answer a question grounded in retrieved ChromaDB context (docs/02 §6.3).
+
+        v1.17.6: without a project scope the search is summary-first —
+        `project_summaries` is consulted before the noise-heavy collections,
+        so whole-project questions answered by an architecture summary get
+        the top slots; context lines then name the source project instead of
+        showing a bare id (no names existed in the metadata at all before)."""
+        if project_id:
+            sources = self.search(question, project_id=project_id, top_k=top_k)
+        else:
+            summaries = self.search(
+                question, top_k=top_k, collections=("project_summaries",)
+            )
+            sources = summaries
+            if len(summaries) < top_k:
+                others = tuple(
+                    name for name in COLLECTIONS if name != "project_summaries"
+                )
+                fill = self.search(question, top_k=top_k, collections=others)
+                sources = summaries + fill[: top_k - len(summaries)]
         if not sources:
             return RagResponse(
                 answer=(
@@ -381,8 +399,10 @@ class RagService:
                 generated_at=datetime.datetime.now(datetime.timezone.utc),
                 confidence=0.0,
             )
+        names = self._project_names({s.project_id for s in sources})
         context = "\n\n".join(
             f"[{i}] ({s.source}"
+            + (f" — {names.get(s.project_id, s.project_id)}" if s.project_id else "")
             + (f" — {s.file_path}" if s.file_path else "")
             + f")\n{s.content}"
             for i, s in enumerate(sources, start=1)
@@ -456,6 +476,21 @@ class RagService:
         if project is None:
             raise ValueError(f"Unknown project: {project_id}")
         return project
+
+    def _project_names(self, project_ids: set[str]) -> dict[str, str]:
+        """Resolve project names for context provenance (v1.17.6).
+
+        The Chroma metadata only ever stored ids; the LLM now sees names
+        ("— Sentinel" instead of "— 8f3a…"). Unknown ids (fakes in tests,
+        dropped projects) simply resolve to nothing and the id stays."""
+        if not project_ids:
+            return {}
+        return {
+            p.id: p.name
+            for p in self.session.exec(
+                select(Project).where(Project.id.in_(project_ids))
+            ).all()
+        }
 
 
 def _read_local_file(path: str | None) -> str:

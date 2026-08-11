@@ -163,6 +163,30 @@ def test_rag_index_ok(project_id, monkeypatch):
     assert "Indexed Fake" in result.output
 
 
+def test_rag_index_reset_drops_knowledge(monkeypatch):
+    """v1.17.6: `rag-index --reset` wipes the shared Chroma collections
+    without needing a project id or Ollama."""
+    from app.services import chroma_manager
+
+    reset = []
+
+    class FakeManager:
+        def reset_all(self):
+            reset.append(True)
+
+    monkeypatch.setattr(chroma_manager, "get_chroma_manager", lambda: FakeManager())
+    result = runner.invoke(cli.app, ["rag-index", "--reset"])
+    assert result.exit_code == 0
+    assert reset == [True]
+    assert "Knowledge index reset" in result.output
+
+
+def test_rag_index_without_id_or_reset_fails(monkeypatch):
+    result = runner.invoke(cli.app, ["rag-index"])
+    assert result.exit_code == 2
+    assert "--reset" in result.output
+
+
 # --- portfolio / health / initdb / config -------------------------------------
 
 

@@ -248,7 +248,7 @@ class IndexerService:
         try:
             from app.services.chroma_manager import get_chroma_manager
 
-            get_chroma_manager().delete_by_project("knowledge", project_id)
+            get_chroma_manager().delete_by_project(project_id)
         except Exception:  # noqa: BLE001 — Chroma must never block the GC
             logger.debug("Chroma cleanup skipped for project %s", project_id)
         project = self.projects.get(project_id)

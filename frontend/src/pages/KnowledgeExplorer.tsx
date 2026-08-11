@@ -4,6 +4,7 @@ import {
   getIndexStatus,
   ragIndex,
   ragSearch,
+  resetKnowledgeIndex,
   type RagIndexStatus,
   type RagResult,
 } from "../api/rag";
@@ -29,6 +30,7 @@ export default function KnowledgeExplorer() {
   const [searchError, setSearchError] = useState<string | null>(null);
 
   const [indexStatus, setIndexStatus] = useState<RagIndexStatus | null>(null);
+  const [resetting, setResetting] = useState(false);
   const lastRefresh = useRef(0);
 
   useEffect(() => {
@@ -129,8 +131,66 @@ export default function KnowledgeExplorer() {
     }
   }
 
+  async function handleReset() {
+    if (resetting) return;
+    const brokenList = indexStatus?.health?.broken ?? [];
+    const broken =
+      brokenList.length > 0 ? brokenList.join(", ") : "the index";
+    if (
+      !window.confirm(
+        `Rebuild knowledge index?\n\nThe ${broken} data on disk can't be read. ` +
+          "Rebuilding drops the derived vectors (project data is untouched) " +
+          "and re-indexes everything from the local files.",
+      )
+    ) {
+      return;
+    }
+    setResetting(true);
+    try {
+      const job = await resetKnowledgeIndex();
+      toast(
+        `Rebuild queued (job ${job.job_id.slice(0, 8)}…) — re-indexing follows.`,
+        "success",
+      );
+    } catch (err) {
+      toast(
+        err instanceof Error ? err.message : "Failed to queue the rebuild.",
+        "error",
+      );
+    } finally {
+      setResetting(false);
+    }
+  }
+
+  function damagedCollections(): string[] {
+    return indexStatus?.health?.broken ?? [];
+  }
+
   return (
     <section aria-label="Knowledge explorer">
+      {damagedCollections().length > 0 && (
+        <div className="mb-4 rounded-xl border border-amber-300 bg-amber-50 p-4 dark:border-amber-800 dark:bg-amber-950">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="text-sm text-amber-900 dark:text-amber-200">
+              <p className="font-semibold">Knowledge index damaged on disk</p>
+              <p className="mt-1 text-xs">
+                {damagedCollections().join(", ")} can no longer be read (a
+                write was probably interrupted). Rebuild to drop the broken
+                vectors and re-embed everything — source files and rows are
+                untouched.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => void handleReset()}
+              disabled={resetting}
+              className="rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-amber-700 disabled:opacity-50"
+            >
+              {resetting ? "Rebuilding…" : "Rebuild knowledge index"}
+            </button>
+          </div>
+        </div>
+      )}
       <div className="mb-4 rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
         <div className="flex flex-wrap items-end gap-3">
           <label className="flex flex-col gap-1 text-xs font-medium text-slate-500 dark:text-slate-400">

@@ -17,6 +17,7 @@ EXPECTED_TASKS = {
     "run_security_scan",
     "run_security_scan_all",
     "run_index_knowledge",
+    "run_reset_knowledge",
     "run_repo_sync",
     "world_sim_tick",
 }

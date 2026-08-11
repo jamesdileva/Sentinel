@@ -271,3 +271,118 @@ def test_index_writes_embedding_ids(tmp_db, tmp_path):
         ).all()
         embedded = [f for f in files if f.embedding_id]
         assert len(embedded) >= 1
+
+
+# ── v1.17.6: delete_by_project / reset / summary-first queries ─────────
+
+
+def test_delete_by_project_clears_real_collections(tmp_db, tmp_path):
+    """v1.17.6: the GC previously deleted from a phantom `knowledge`
+    collection (never written by ingestion), leaving orphaned vectors in
+    `file_summaries` et al forever. It must sweep every real collection
+    while leaving other projects untouched."""
+    project_id = _index_project(tmp_db)
+    with Session(connection.get_engine()) as session:
+        project = RagService.get_project(session, project_id)
+        _rag(session, tmp_path).index_project(project)
+    rag = _rag(Session(connection.get_engine()), tmp_path)
+    assert rag.chroma.count("file_summaries") >= 1
+    rag.chroma.upsert(
+        "file_summaries",
+        ids=["b:1"],
+        embeddings=[_fake_embedder("unrelated project file")],
+        documents=["another project's content"],
+        metadatas=[{"project_id": "proj-b"}],
+    )
+    rag.chroma.delete_by_project(project_id)
+    assert rag.chroma.count("file_summaries") == 1  # proj-b's doc survives
+    assert rag.chroma.count("git_commits") == 0
+    assert rag.chroma.count("project_summaries") == 0
+
+
+def test_reset_all_heals_health_check(tmp_db, tmp_path):
+    """v1.17.6: `reset_all` drops every knowledge collection and the health
+    probe (previously caching a broken state) reports clean after it."""
+    project_id = _index_project(tmp_db)
+    with Session(connection.get_engine()) as session:
+        project = RagService.get_project(session, project_id)
+        _rag(session, tmp_path).index_project(project)
+    rag = _rag(Session(connection.get_engine()), tmp_path)
+    assert rag.chroma.health()["healthy"] is True
+    assert rag.chroma.count("file_summaries") >= 1
+    rag.chroma.reset_all()
+    for name in ("file_summaries", "git_commits", "test_logs", "project_summaries"):
+        assert rag.chroma.count(name) == 0
+    health = rag.chroma.health()
+    assert health["healthy"] is True
+    assert health["checked"] == []
+
+
+def test_query_all_projects_is_summary_first(tmp_db, tmp_path):
+    """v1.17.6: without a project scope, architecture summaries fill the
+    top slots before noisier collections get their chance."""
+    project_id = _index_project(tmp_db)
+    with Session(connection.get_engine()) as session:
+        project = RagService.get_project(session, project_id)
+        _rag(session, tmp_path).index_project(project, with_summary=True)
+    with Session(connection.get_engine()) as session:
+        response = _rag(session, tmp_path).query("sample service architecture")
+    assert response.sources, "expected at least one source"
+    assert response.sources[0].source == "project_summaries"
+    assert any(s.source == "project_summaries" for s in response.sources)
+
+
+def test_query_context_names_projects(tmp_db, tmp_path):
+    """v1.17.6: context lines carry the source project's name (metadata
+    only ever had ids), so the LLM sees provenance it can cite."""
+    project_id = _index_project(tmp_db)
+    captured: dict = {}
+
+    def capturing_llm(prompt: str) -> str:
+        captured["prompt"] = prompt
+        return "grounded"
+
+    with Session(connection.get_engine()) as session:
+        project = RagService.get_project(session, project_id)
+        rag = RagService(
+            session,
+            embedder=_fake_embedder,
+            llm=capturing_llm,
+            chroma=ChromaManager(path=tmp_path / "chroma"),
+        )
+        rag.index_project(project)
+        rag.query("fastapi", project_id=project_id)
+    assert captured["prompt"]
+    assert "— Sample Python Project" in captured["prompt"]
+
+
+def test_reset_knowledge_task_drops_shared_chroma(tmp_db, tmp_path, monkeypatch):
+    """v1.17.6: the scheduler task wipes the shared manager's collections
+    and publishes the lifecycle events."""
+    from app.core.config import settings
+    from app.tasks import rag_tasks
+
+    monkeypatch.setattr(settings, "chroma_path", tmp_path / "shared")
+    events: list[dict] = []
+    monkeypatch.setattr(
+        rag_tasks.activity_bus,
+        "publish_event",
+        lambda kind, message, detail=None, data=None: events.append(
+            {"kind": kind, "message": message}
+        ),
+    )
+    manager = get_chroma_manager()
+    manager.upsert(
+        "file_summaries",
+        ids=["x:1"],
+        embeddings=[_fake_embedder("something")],
+        documents=["something"],
+        metadatas=[{"project_id": "x"}],
+    )
+    assert manager.count("file_summaries") == 1
+    result = rag_tasks.run_reset_knowledge()
+    assert result == {"scopes": "all"}
+    assert manager.count("file_summaries") == 0
+    kinds = [e["kind"] for e in events]
+    assert kinds.count("index") == 2
+    assert "reset finished" in events[-1]["message"]

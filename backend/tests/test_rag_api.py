@@ -301,3 +301,69 @@ def test_chat_unknown_project_404(tmp_db):
         == 404
     )
     assert client.get("/api/v1/rag/chat/nope").status_code == 404
+
+
+# ── v1.17.6: damaged-index detection, health, reset ────────────────────
+
+
+def test_rag_index_status_includes_health(indexed):
+    """v1.17.6: index/status gains `health` so the dashboard can detect a
+    damaged on-disk HNSW index without probing collection metadata."""
+    client = TestClient(app)
+    resp = client.get("/api/v1/rag/index/status")
+    assert resp.status_code == 200
+    health = resp.json()["health"]
+    assert health["healthy"] is True
+    assert health["broken"] == []
+    assert "file_summaries" in health["checked"]
+
+
+def test_rag_index_reset_returns_job_envelope(tmp_db, monkeypatch):
+    """v1.17.6: POST /rag/index/reset queues the recovery job (drop every
+    knowledge collection) — 202 envelope, no project id required."""
+    captured = {}
+
+    def fake_submit(name, args=None, task_id=None):
+        captured["name"] = name
+        return "job-reset"
+
+    monkeypatch.setattr("app.api.v1.rag.job_scheduler.submit", fake_submit)
+    client = TestClient(app)
+    resp = client.post("/api/v1/rag/index/reset")
+    assert resp.status_code == 202
+    body = resp.json()
+    assert body["status"] == "queued"
+    assert body["job_id"] == "job-reset"
+    assert captured["name"] == "run_reset_knowledge"
+
+
+def test_rag_search_damaged_index_returns_503(tmp_db):
+    """v1.17.6: a damaged knowledge index surfaces as 503 with a rebuild
+    hint instead of a raw 500 traceback from ChromaDB internals."""
+
+    class BrokenChroma:
+        def count(self, _name):
+            return 1
+
+        def search(self, *_args, **_kwargs):
+            from app.services.chroma_manager import RagIndexError
+
+            raise RagIndexError(
+                "The knowledge index is damaged on disk. Rebuild it with "
+                "`sentinel rag-index --reset`."
+            )
+
+    service = RagService(
+        session=Session(get_engine()),
+        embedder=_fake_embedder,
+        llm=_fake_llm,
+        chroma=BrokenChroma(),
+    )
+    app.dependency_overrides[get_rag_service] = lambda: service
+    try:
+        resp = TestClient(app).post("/api/v1/rag/search", json={"query": "x"})
+    finally:
+        app.dependency_overrides.pop(get_rag_service, None)
+    assert resp.status_code == 503
+    assert "rebuild" in resp.json()["detail"].lower()
+    assert "rag-index --reset" in resp.json()["detail"]

@@ -145,12 +145,28 @@ def ask(
 
 @app.command(name="rag-index")
 def rag_index(
-    project_id: str,
+    project_id: str | None = typer.Argument(
+        None, help="Project id to ingest (omit with --reset)"
+    ),
     with_summary: bool = typer.Option(
         False, "--summary", help="Also generate a project summary"
     ),
+    reset: bool = typer.Option(
+        False, "--reset", help="Drop all knowledge collections (v1.17.6 recovery)"
+    ),
 ):
     """Ingest a project's knowledge into ChromaDB for RAG."""
+    if reset:
+        from app.services.chroma_manager import get_chroma_manager
+
+        get_chroma_manager().reset_all()
+        typer.echo(
+            "Knowledge index reset — re-run `sentinel rag-index <project>` to rebuild."
+        )
+        return
+    if project_id is None:
+        typer.echo("Provide a project id (or use --reset).", err=True)
+        raise typer.Exit(code=2)
     from sqlmodel import Session
 
     from app.db.connection import get_engine
