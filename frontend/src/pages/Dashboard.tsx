@@ -5,6 +5,7 @@ import { useProjectList } from "../hooks/useProjects";
 import { useActivity } from "../hooks/useActivity";
 import { getSummary } from "../api/portfolio";
 import type { PortfolioSummary } from "../api/portfolio";
+import ServerStatus from "../components/ServerStatus";
 
 const KIND_COLOR: Record<string, string> = {
   sync: "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300",
@@ -170,6 +171,19 @@ export default function Dashboard() {
           ))}
         </div>
       )}
+
+      <div className="mt-6">
+        <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+          Home server
+        </h2>
+        <p className="text-xs text-slate-400 dark:text-slate-500">
+          Read-only status of the always-on machine: AI (Ollama) and startup
+          checks.
+        </p>
+        <div className="mt-3 flex flex-col gap-4">
+          <ServerStatus />
+        </div>
+      </div>
     </section>
   );
 }

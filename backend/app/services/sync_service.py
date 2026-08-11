@@ -33,7 +33,7 @@ from app.core.config import settings
 from app.core.logging import get_logger
 from app.db.connection import get_engine
 from app.db.models import SyncRun
-from app.services.command_runner import run_command
+from app.services.command_runner import git_command, run_command
 from app.services.indexer import IndexerService
 from app.services.ollama_service import OllamaService
 
@@ -106,13 +106,16 @@ class RepoSyncService:
         }
         if self._is_checkout(local):
             result = run_command(
-                "git pull --ff-only", cwd=local, timeout=CLONE_TIMEOUT_SECONDS, env=env
+                f'"{git_command()}" pull --ff-only',
+                cwd=local,
+                timeout=CLONE_TIMEOUT_SECONDS,
+                env=env,
             )
             if result.exit_code != 0:
                 return f"pull failed: {result.stderr.strip()[:200]}"
             return "pulled"
         result = run_command(
-            f"git clone '{repo['url']}' '{local}'",
+            f'"{git_command()}" clone "{repo["url"]}" "{local}"',
             timeout=CLONE_TIMEOUT_SECONDS,
             env=env,
         )
@@ -129,7 +132,9 @@ class RepoSyncService:
         git cannot read it). Used to detect real changes after clone/pull."""
         if not self._is_checkout(local):
             return None
-        result = run_command("git rev-parse --short HEAD", cwd=local, timeout=60)
+        result = run_command(
+            f'"{git_command()}" rev-parse --short HEAD', cwd=local, timeout=60
+        )
         if result.exit_code != 0:
             return None
         sha = result.stdout.strip()
@@ -140,6 +145,10 @@ class RepoSyncService:
         repos whose HEAD moved and queue knowledge for changed projects."""
         if not self.configured:
             raise ValueError("SENTINEL_GITHUB_TOKEN is not configured")
+        # v1.17.3: fail fast with a visible message when git cannot be
+        # resolved (Task Scheduler contexts have a minimal PATH) instead of
+        # 18 individually failing clone/pull subprocesses.
+        git_command()
         results = {"cloned": [], "pulled": [], "failed": {}}
         changed: list[str] = []
         for repo in self.remote_repos():
@@ -303,3 +312,8 @@ def run_sync(service: RepoSyncService | None = None) -> dict:
         logger.error("GitHub sync failed: %s", exc)
         persist_sync_run(status="error", detail=f"{exc.__class__.__name__}: {exc}")
         return {"configured": True, "error": f"{exc.__class__.__name__}: {exc}"}
+    except FileNotFoundError as exc:
+        # v1.17.3: git unavailable (minimal-PATH contexts) — say exactly that.
+        logger.error("GitHub sync failed: %s", exc)
+        persist_sync_run(status="error", detail=str(exc))
+        return {"configured": True, "error": str(exc)}

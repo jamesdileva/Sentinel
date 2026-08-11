@@ -1,15 +1,14 @@
 import { test, expect } from "@playwright/test";
 
 test.describe("System page", () => {
-  test("renders ollama and pi-hole panels read-only", async ({ page }) => {
+  test("renders ollama and startup-check panels read-only in Settings", async ({
+    page,
+  }) => {
     await page.goto("/system");
 
     await expect(page.getByText("Ollama (AI)")).toBeVisible({
       timeout: 20_000,
     });
-    await expect(
-      page.getByRole("heading", { name: "Pi-hole" }),
-    ).toBeVisible();
     await expect(page.getByText("Startup checks")).toBeVisible();
   });
 

@@ -28,6 +28,13 @@ def _no_persist(monkeypatch):
     monkeypatch.setattr(sync_service, "_real_persist_sync_run", real, raising=False)
 
 
+@pytest.fixture(autouse=True)
+def _fake_git(monkeypatch):
+    """v1.17.3: sync() resolves git before touching subprocesses; tests must
+    not depend on the host's git install, so stub the resolver to `git`."""
+    monkeypatch.setattr(sync_service, "git_command", lambda: "git")
+
+
 def _api_handler(repos: list[dict]) -> httpx.MockTransport:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.headers.get("Authorization") == "Bearer test-token"
@@ -93,7 +100,7 @@ def test_sync_clones_missing_repo(tmp_path, monkeypatch):
     # only the clone run happens: no checkout exists, so no HEAD reads
     assert len(calls) == 1
     command = calls[0]
-    assert command.startswith("git clone")
+    assert command.startswith('"git" clone')
     assert "https://github.com/jamesdileva/MyApp.git" in command
     assert "jamesdileva/MyApp" in command
     # a fresh clone is always "changed" -> reindex runs over its dir
@@ -128,7 +135,7 @@ def test_sync_pulls_existing_repo(tmp_path, monkeypatch):
     )
     result = client.sync()
     assert result["pulled"] == ["jamesdileva/MyApp"]
-    pull_call = [c for c in calls if c[0] == "git pull --ff-only"]
+    pull_call = [c for c in calls if c[0] == '"git" pull --ff-only']
     assert pull_call and "jamesdileva" in pull_call[0][1] and "MyApp" in pull_call[0][1]
 
 
@@ -179,7 +186,7 @@ def test_sync_reindexes_only_changed_repo(tmp_path, monkeypatch):
     counts: dict[str, int] = {}
 
     def fake_run(command, cwd=None, timeout=None, env=None):
-        if command == "git rev-parse --short HEAD":
+        if command == '"git" rev-parse --short HEAD':
             base = Path(cwd).name
             count = counts.get(base, 0)
             counts[base] = count + 1
@@ -427,6 +434,50 @@ def test_auto_index_empty_paths_window_is_noop():
         "queued": 0,
         "skipped": "no-changes",
     }
+
+
+def test_sync_fails_fast_with_clear_error_when_git_missing(tmp_path, monkeypatch):
+    """v1.17.3: when git cannot be resolved (minimal-PATH Task Scheduler
+    context), sync() fails fast with a visible FileNotFoundError instead of
+    per-repo 'git is not recognized' subprocess failures."""
+
+    def no_git():
+        raise FileNotFoundError(
+            "git not found — install Git for Windows or set "
+            "SENTINEL_GIT_EXECUTABLE in .env"
+        )
+
+    monkeypatch.setattr(sync_service, "git_command", no_git)
+    client = _service(
+        str(tmp_path),
+        [{"full_name": "a/b", "clone_url": "https://github.com/a/b.git"}],
+    )
+    with pytest.raises(FileNotFoundError, match="git not found"):
+        client.sync()
+
+
+def test_run_sync_persists_git_missing_error(monkeypatch):
+    """v1.17.3: a missing git binary is persisted as a sync error with a
+    fix-it message, not swallowed silently."""
+
+    class BrokenService:
+        configured = True
+
+        def sync(self):
+            raise FileNotFoundError(
+                "git not found — install Git for Windows or set "
+                "SENTINEL_GIT_EXECUTABLE in .env"
+            )
+
+    captured: dict = {}
+    monkeypatch.setattr(
+        sync_service, "persist_sync_run", lambda **kw: captured.update(kw)
+    )
+    result = run_sync(BrokenService())
+    assert result["configured"] is True
+    assert "git not found" in result["error"]
+    assert captured["status"] == "error"
+    assert "git not found" in captured["detail"]
 
 
 def test_auto_index_path_filter_restricts_projects(tmp_db, monkeypatch):

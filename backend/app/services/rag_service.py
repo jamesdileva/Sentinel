@@ -72,8 +72,21 @@ class RagService:
     ) -> None:
         self.session = session
         self.ollama = OllamaService()
-        self._embedder = embedder or self.ollama.embed
-        self._llm = llm or self.ollama.generate
+        # v1.17.3: bound-method identity (`x is obj.method`) is always False —
+        # each attribute access builds a fresh method object, so the metered
+        # paths silently never ran. Explicit flags replace the identity checks.
+        if embedder is None:
+            self._embedder = self.ollama.embed
+            self._uses_real_embedder = True
+        else:
+            self._embedder = embedder
+            self._uses_real_embedder = False
+        if llm is None:
+            self._llm = self.ollama.generate
+            self._uses_real_llm = True
+        else:
+            self._llm = llm
+            self._uses_real_llm = False
         self.chroma = chroma or _shared_chroma()
 
     # --- ingestion -------------------------------------------------------
@@ -391,7 +404,7 @@ class RagService:
 
     def _generate_with_metrics(self, prompt: str, purpose: str = "query") -> str:
         """Generate, record deterministic metrics, and publish an Ollama event."""
-        if self._llm is not self.ollama.generate:
+        if not self._uses_real_llm:
             return self._llm(prompt)
         try:
             result = self.ollama.generate_with_metrics(prompt, purpose=purpose)
@@ -430,7 +443,7 @@ class RagService:
     def _embed_with_metrics(self, text: str) -> tuple[list[float], dict]:
         """Embed, capturing Ollama's token counters when the real embedder
         is in use; tests inject fakes and get empty metrics instead."""
-        if self._embedder is self.ollama.embed:
+        if self._uses_real_embedder:
             try:
                 return self.ollama.embed_with_metrics(text)
             except Exception:  # noqa: BLE001 — degrade to the plain path

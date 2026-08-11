@@ -26,17 +26,23 @@ vi.mock("../api/portfolio", () => ({
   getSummary: vi.fn(),
 }));
 
+vi.mock("../api/system", () => ({
+  getSystemOverview: vi.fn(),
+}));
+
 import { useBuilds } from "../contexts/BuildContext";
 import { useUI } from "../contexts/UIContext";
 import { useProjectList } from "../hooks/useProjects";
 import { useActivity } from "../hooks/useActivity";
 import { getSummary } from "../api/portfolio";
+import { getSystemOverview } from "../api/system";
 
 const mockUseBuilds = vi.mocked(useBuilds);
 const mockUseUI = vi.mocked(useUI);
 const mockUseProjectList = vi.mocked(useProjectList);
 const mockUseActivity = vi.mocked(useActivity);
 const mockGetSummary = vi.mocked(getSummary);
+const mockGetSystemOverview = vi.mocked(getSystemOverview);
 
 function makeProject(overrides: Partial<Project> = {}): Project {
   return {
@@ -93,6 +99,22 @@ describe("Dashboard", () => {
       buildable: 1,
       open_findings: 0,
       avg_health: 92.5,
+    });
+    mockGetSystemOverview.mockReset();
+    mockGetSystemOverview.mockResolvedValue({
+      generated_at: "2026-08-06T12:00:00Z",
+      startup: {
+        states: [
+          { name: "database", ok: true, detail: "/data/sqlite/sentinel.db" },
+        ],
+      },
+      ollama: {
+        available: true,
+        host: "http://192.168.4.40:11434",
+        model_default: "gemma2",
+        models: ["gemma2"],
+        recent: [],
+      },
     });
   });
 
@@ -193,5 +215,13 @@ describe("Dashboard", () => {
     render(<Dashboard />);
     expect(screen.getByText(/Nothing happened yet/)).toBeInTheDocument();
     expect(screen.getByText("connecting")).toBeInTheDocument();
+  });
+
+  it("shows home server status inline (v1.17.3 System merge)", async () => {
+    render(<Dashboard />);
+    expect(await screen.findByText("Ollama (AI)")).toBeInTheDocument();
+    expect(screen.getByText("Startup checks")).toBeInTheDocument();
+    expect(screen.getByText("database")).toBeInTheDocument();
+    expect(screen.getByText("gemma2")).toBeInTheDocument();
   });
 });

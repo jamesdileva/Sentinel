@@ -12,7 +12,7 @@ from sqlmodel import Session
 from app.core.logging import get_logger
 from app.db.models import GitCommit, Project
 from app.repositories import GitCommitRepository, ProjectRepository
-from app.services.command_runner import run_command
+from app.services.command_runner import git_command, run_command
 
 logger = get_logger(__name__)
 
@@ -56,8 +56,13 @@ class GitHistoryService:
 
     def analyze_history(self, project: Project) -> list[GitCommit]:
         """Run `git log` and persist commits, skipping already-known hashes."""
+        try:
+            git_bin = git_command()
+        except FileNotFoundError as exc:
+            logger.warning("git history skipped for %s: %s", project.name, exc)
+            return []
         result = run_command(
-            f'git -C "{project.path}" log --pretty=format:"{_LOG_FORMAT}" '
+            f'"{git_bin}" -C "{project.path}" log --pretty=format:"{_LOG_FORMAT}" '
             f"--max-count={_MAX_COMMITS}"
         )
         if result.exit_code != 0:

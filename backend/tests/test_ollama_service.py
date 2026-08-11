@@ -73,6 +73,31 @@ def test_embed_with_metrics_captures_token_counters():
     service.close()
 
 
+def test_embed_with_metrics_derives_duration_when_server_omits_it():
+    """v1.17.3: real /api/embed responses (verified against Ollama 0.32.6)
+    carry prompt_eval_count/total_duration/load_duration but NOT
+    prompt_eval_duration — tok/s must fall back to total - load."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "model": "nomic-embed-text",
+                "embeddings": [[0.1, 0.2]],
+                "prompt_eval_count": 96,
+                "total_duration": 60_000_000,
+                "load_duration": 12_000_000,
+            },
+        )
+
+    service = _service_with(handler)
+    vector, metrics = service.embed_with_metrics("some text")
+    assert vector == [0.1, 0.2]
+    assert metrics["tokens"] == 96
+    assert metrics["duration_ns"] == 60_000_000 - 12_000_000
+    service.close()
+
+
 def test_embed_with_metrics_legacy_returns_zero_counters():
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/api/embed":

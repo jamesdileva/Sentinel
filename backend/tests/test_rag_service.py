@@ -31,6 +31,87 @@ def test_rag_service_defaults_to_shared_chroma(tmp_db, tmp_path, monkeypatch):
         assert service.chroma is get_chroma_manager()
 
 
+def test_default_service_uses_metered_paths(tmp_db, tmp_path, monkeypatch):
+    """v1.17.3 regression: `x is obj.method` compares a cached bound method
+    against a freshly built one — always False, so the metered embed/generate
+    paths (tok/s + Ollama event + query log) silently never ran. Explicit
+    flags must reflect which implementations are in use."""
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "chroma_path", tmp_path / "shared")
+    with Session(connection.get_engine()) as session:
+        real = RagService(session)
+        assert real._uses_real_embedder is True
+        assert real._uses_real_llm is True
+        fake = RagService(session, embedder=_fake_embedder, llm=_fake_llm)
+        assert fake._uses_real_embedder is False
+        assert fake._uses_real_llm is False
+
+
+def test_metered_generate_publishes_event_and_query_log(tmp_db, tmp_path, monkeypatch):
+    """v1.17.3: with the real Ollama service in use, generation must publish
+    an `ollama` activity event and record an OllamaQueryLog row (the System
+    panel's t/s list) — the bound-method identity bug had killed both."""
+    from app.core.config import settings
+    from app.services import activity_bus
+    from app.services.system_service import OllamaStatus
+
+    monkeypatch.setattr(settings, "chroma_path", tmp_path / "shared")
+    events: list[dict] = []
+    monkeypatch.setattr(
+        activity_bus,
+        "publish_event",
+        lambda kind, message, detail=None, data=None: events.append(
+            {"kind": kind, "message": message, "detail": detail, "data": data}
+        ),
+    )
+    recorded: list[dict] = []
+    monkeypatch.setattr(
+        OllamaStatus,
+        "record_query",
+        lambda self, **kwargs: recorded.append(kwargs),
+    )
+    with Session(connection.get_engine()) as session:
+        service = RagService(session)
+        monkeypatch.setattr(
+            service.ollama,
+            "generate_with_metrics",
+            lambda prompt, purpose="query": {
+                "model": "gemma2",
+                "response": "grounded answer",
+                "eval_count": 42,
+                "eval_duration_ns": 84_000_000,
+                "total_duration_ns": 90_000_000,
+            },
+        )
+        answer = service._generate_with_metrics("p", purpose="rag-query")
+
+    assert answer == "grounded answer"
+    assert events and events[0]["kind"] == "ollama"
+    assert "42 tokens" in events[0]["message"]
+    assert events[0]["data"]["purpose"] == "rag-query"
+    assert recorded and recorded[0]["eval_count"] == 42
+    assert recorded[0]["eval_duration_ns"] == 84_000_000
+
+
+def test_metered_embed_returns_ollama_metrics(tmp_db, tmp_path, monkeypatch):
+    """v1.17.3: with the real Ollama service in use, embed_with_metrics' own
+    counters flow back to the caller (used by the progress tok/s tick)."""
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "chroma_path", tmp_path / "shared")
+    with Session(connection.get_engine()) as session:
+        service = RagService(session)
+        monkeypatch.setattr(
+            service.ollama,
+            "embed_with_metrics",
+            lambda text, model=None: ([0.1, 0.2], {"tokens": 5, "duration_ns": 1}),
+        )
+        vector, metrics = service._embed_with_metrics("text")
+    assert vector == [0.1, 0.2]
+    assert metrics == {"tokens": 5, "duration_ns": 1}
+
+
 def test_tokens_per_second_conversion():
     from app.services.rag_service import _tokens_per_second
 

@@ -9,6 +9,8 @@ from pathlib import Path
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app import __version__
+
 # Repo root: sentinel/ (data lives at repo root, see docs/01 §13)
 BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent
 
@@ -22,7 +24,8 @@ class Settings(BaseSettings):
     )
 
     app_name: str = "Project Sentinel"
-    version: str = "0.1.0"
+    # Single source of truth: app/__init__.py (CLI --version, health, release).
+    version: str = __version__
 
     host: str = "127.0.0.1"
     port: int = 8000
@@ -76,6 +79,9 @@ class Settings(BaseSettings):
     # v1.17.1: daily cadence — startup always syncs once, then every 24h unless
     # the user presses the header "Sync now" button (POST /api/v1/system/sync).
     sync_interval_minutes: int = 1440
+    # v1.17.3: full path to a git executable, for contexts with a minimal PATH
+    # (Task Scheduler autostart). Auto-discovered when empty.
+    git_executable: str = ""
 
 
 settings = Settings()

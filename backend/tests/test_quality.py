@@ -11,6 +11,7 @@ from types import SimpleNamespace
 import pytest
 from sqlmodel import Session
 
+from app.core.config import settings
 from app.db.connection import get_engine
 from app.db.models import (
     Dependency,
@@ -293,6 +294,38 @@ def test_run_command_oserror(tmp_path):
     result = run_command("echo x", cwd=tmp_path / "definitely-missing-dir")
     assert result.exit_code == -1
     assert result.stderr != ""
+
+
+def test_run_command_env_overlays_inherited_environment():
+    """v1.17.3 regression: passing env= must not wipe PATH (that made every
+    `git` invocation fail under the Task Scheduler autostart task)."""
+    result = run_command(
+        "python -c \"import os; print(os.environ.get('MY_OVERRIDE', '')); "
+        "print(os.environ.get('PATH') is not None)\"",
+        env={"MY_OVERRIDE": "yes"},
+    )
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == ["yes", "True"]
+
+
+def test_resolve_git_uses_configured_executable(monkeypatch, tmp_path):
+    from app.services.command_runner import resolve_git
+
+    exe = tmp_path / "git.exe"
+    exe.write_text("", encoding="utf-8")
+    monkeypatch.setattr(settings, "git_executable", str(exe))
+    assert resolve_git() == str(exe)
+
+
+def test_resolve_git_returns_none_when_nothing_found(monkeypatch):
+    from app.services import command_runner
+    from app.services.command_runner import resolve_git
+
+    monkeypatch.setattr(settings, "git_executable", "")
+    monkeypatch.setattr(command_runner.shutil, "which", lambda name: None)
+    monkeypatch.setattr(command_runner, "_GIT_CANDIDATES", ())
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)
+    assert resolve_git() is None
 
 
 # --- git_history ------------------------------------------------------------------

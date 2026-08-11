@@ -69,9 +69,14 @@ def publish_event(
                 )
                 session.commit()
             with engine.begin() as conn:
+                # v1.17.3: SQLModel names the table `activityevent` (class
+                # name, no underscore) — the previous hard-coded
+                # `activity_event` made this DELETE fail on *every* publish,
+                # spamming warnings and never enforcing the row ceiling.
+                table = ActivityEvent.__tablename__
                 conn.exec_driver_sql(
-                    "DELETE FROM activity_event WHERE rowid NOT IN ("
-                    "SELECT rowid FROM activity_event "
+                    f'DELETE FROM "{table}" WHERE rowid NOT IN ('
+                    f'SELECT rowid FROM "{table}" '
                     "ORDER BY rowid DESC LIMIT ?)",
                     (_MAX_LIMIT,),
                 )

@@ -108,9 +108,12 @@ class OllamaService:
         """Embed and return `(vector, metrics)`.
 
         The metrics dict carries Ollama's own counters (`tokens` =
-        prompt_eval_count, `duration_ns` = prompt_eval_duration) so index
-        batches can report tok/s without guesswork (v1.17.2). The legacy
-        endpoint returns no counters — metrics are all zero then.
+        prompt_eval_count, `duration_ns` = prompt_eval_duration or
+        total_duration - load_duration when the server omits it — /api/embed
+        does NOT return prompt_eval_duration, verified against 0.32.6,
+        v1.17.3) so index batches can report tok/s without guesswork
+        (v1.17.2). The legacy endpoint returns no counters — metrics are all
+        zero then.
         """
         model = model or settings.embedding_model
         payload = {"model": model, "input": text}
@@ -122,10 +125,16 @@ class OllamaService:
             response.raise_for_status()
             data = response.json()
             embeddings = data.get("embeddings") or [data.get("embedding", [])]
+            tokens = int(data.get("prompt_eval_count") or 0)
+            duration_ns = int(data.get("prompt_eval_duration") or 0)
+            if not duration_ns:
+                duration_ns = int(data.get("total_duration") or 0) - int(
+                    data.get("load_duration") or 0
+                )
             metrics = {
                 "model": data.get("model") or model,
-                "tokens": int(data.get("prompt_eval_count") or 0),
-                "duration_ns": int(data.get("prompt_eval_duration") or 0),
+                "tokens": tokens,
+                "duration_ns": duration_ns,
             }
             return list(embeddings[0]), metrics
         except httpx.HTTPError as exc:
