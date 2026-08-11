@@ -182,7 +182,9 @@ def rag_index(
         raise typer.Exit(code=1)
     with Session(get_engine()) as session:
         project = RagService.get_project(session, project_id)
-        counts = RagService(session).index_project(project, with_summary=with_summary)
+        counts = RagService(session).index_project(
+            project, with_summary=with_summary, force_summary=with_summary
+        )
         typer.echo(f"Indexed {project.name}: {counts}")
 
 

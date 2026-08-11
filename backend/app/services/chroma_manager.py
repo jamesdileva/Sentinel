@@ -12,6 +12,7 @@ InternalError seen after a killed write), and `reset_all()` — the recovery
 path surfaces as 503 + a rebuild hint instead of a raw 500 traceback.
 """
 
+import logging
 import threading
 from pathlib import Path
 from typing import Any
@@ -20,6 +21,8 @@ import chromadb
 from chromadb.errors import InternalError, NotFoundError
 
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 COLLECTIONS = (
     "file_summaries",
@@ -189,13 +192,24 @@ class ChromaManager:
                 self._guard(exc)
 
     def reset(self, name: str) -> None:
-        """Drop one collection and forget its cached handle."""
+        """Drop one collection and forget its cached handle.
+
+        v1.17.6.2: a damaged store can also raise `InternalError` while
+        dropping — the collection is being discarded anyway, so treat that
+        as success (a fresh `get_or_create_collection` rebuilds it).
+        """
         with self._lock(name):
             self._collections.pop(name, None)
             try:
                 self._client.delete_collection(name)
             except (ValueError, NotFoundError):
                 pass  # collection does not exist — nothing to drop
+            except InternalError as exc:
+                logger.warning(
+                    "Collection %s drop hit a broken store (%s); treating as reset",
+                    name,
+                    exc,
+                )
         self._invalidate_health()
 
     def reset_all(self) -> None:
@@ -207,8 +221,11 @@ class ChromaManager:
         """Probe each non-empty collection's HNSW index (cached).
 
         `count()` reads the metadata store, so a collection whose segment
-        data files vanished still reports a count — the real check touches
-        the segment reader via a cheap `get(limit=1)` (no embedding needed).
+        data files vanished still reports a count. v1.17.6 used a cheap
+        `get(limit=1)` probe — but that path can pass while the query path
+        raises (`Nothing found on disk`), leaving the dashboard healthy and
+        the next chat query 503ing (v1.17.6.2). The probe now runs a real
+        query with a stored embedding — the exact operation search uses.
         A damaged collection reports under `broken`; the dashboard then
         offers a rebuild instead of failing silently on the next query.
         """
@@ -223,9 +240,14 @@ class ChromaManager:
                     if self.collection(name).count() == 0:
                         continue
                     checked.append(name)
-                    # Touches the segment reader — raises InternalError when
-                    # the HNSW data files are gone (v1.17.6 probe).
-                    self.collection(name).get(limit=1)
+                    # Run the real query path: read one stored embedding,
+                    # then query with it (v1.17.6.2 probe).
+                    sample = self.collection(name).get(limit=1, include=["embeddings"])
+                    vectors = (sample.get("embeddings") or [None])[0]
+                    if vectors is None:
+                        broken.append(name)
+                        continue
+                    self.collection(name).query(query_embeddings=[vectors], n_results=1)
             except RagIndexError:
                 broken.append(name)
             except InternalError:

@@ -21,7 +21,6 @@ export default function KnowledgeExplorer() {
   const { events: activity } = useActivity();
 
   const [selectedProjectId, setSelectedProjectId] = useState("");
-  const [withSummary, setWithSummary] = useState(false);
   const [indexing, setIndexing] = useState(false);
 
   const [searchQuery, setSearchQuery] = useState("");
@@ -114,7 +113,9 @@ export default function KnowledgeExplorer() {
     if (!selectedProjectId || indexing) return;
     setIndexing(true);
     try {
-      const job = await ragIndex(selectedProjectId, withSummary);
+      // with_summary=true (v1.17.6.2): indexing always includes the AI
+      // architecture summary (deduped server-side to once per project).
+      const job = await ragIndex(selectedProjectId, true);
       toast(
         `Knowledge indexing queued (job ${job.job_id.slice(0, 8)}…)`,
         "success",
@@ -208,16 +209,6 @@ export default function KnowledgeExplorer() {
                 </option>
               ))}
             </select>
-          </label>
-
-          <label className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
-            <input
-              type="checkbox"
-              checked={withSummary}
-              onChange={(event) => setWithSummary(event.target.checked)}
-              className="h-3.5 w-3.5 rounded border-slate-300"
-            />
-            Include AI architecture summary
           </label>
 
           <button

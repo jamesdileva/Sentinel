@@ -500,10 +500,10 @@ def test_auto_index_queues_all_unembedded(tmp_db, monkeypatch):
         )
         session.commit()
 
-    queued: list[str] = []
+    queued: list[tuple] = []
 
     def fake_submit(name, args=None, task_id=None):
-        queued.append(args[0])
+        queued.append(tuple(args))
 
     from app.services.job_scheduler import scheduler as job_scheduler
 
@@ -512,7 +512,10 @@ def test_auto_index_queues_all_unembedded(tmp_db, monkeypatch):
 
     result = queue_knowledge_index_unembedded()
     assert result == {"queued": 2, "skipped": None}
-    assert sorted(queued) == ["p1", "p2"]
+    assert sorted(q[0] for q in queued) == ["p1", "p2"]
+    # v1.17.6.2: auto-indexing always requests the AI architecture summary
+    # (ingest_project_summary dedupes to once per project).
+    assert all(q[1] is True for q in queued)
 
 
 def test_auto_index_empty_paths_window_is_noop():

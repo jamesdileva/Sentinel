@@ -155,7 +155,7 @@ describe("KnowledgeExplorer", () => {
     await screen.findByText(/2 of 4 files embedded across projects/);
     await user.selectOptions(screen.getByRole("combobox"), "p1");
     await user.click(screen.getByRole("button", { name: "Index knowledge" }));
-    expect(mockRagIndex).toHaveBeenCalledWith("p1", false);
+    expect(mockRagIndex).toHaveBeenCalledWith("p1", true);
     expect(toast).toHaveBeenCalledWith(
       expect.stringContaining("Knowledge indexing queued"),
       "success",

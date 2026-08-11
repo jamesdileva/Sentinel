@@ -115,6 +115,13 @@ git pull                         # update the repo (includes the staged dashboar
 
 ## Known issues (see docs/02 §13.4 troubleshooting table)
 
+- **RAG chat says "knowledge index is damaged on disk"** (503) → rebuild:
+  the Knowledge page shows a "Rebuild knowledge index" button since v1.17.6.2
+  (the earlier probe missed this damage), or from inside `backend`:
+  `..\.venv\Scripts\python.exe -m app.cli rag-index --reset` — then restart
+  `run.py` and the startup auto-index re-embeds everything, including the AI
+  architecture summary (once per project, v1.17.6.2). Note: bare `sentinel`
+  is never on PATH — always use the venv python by path.
 - `frontend` changed but dashboard is stale → forgot `scripts/build.py --dist`;
   the backend serves the *staged* build from `backend/app/static`.
 - Port 8000 already in use → another app is bound to it;

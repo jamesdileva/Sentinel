@@ -286,7 +286,10 @@ def queue_knowledge_index_unembedded(paths: list[str] | None = None) -> dict:
             unembedded = session.exec(stmt).all()
         for project_id in unembedded:
             try:
-                job_scheduler.submit("run_index_knowledge", args=[project_id])
+                # with_summary=True (v1.17.6.2): auto-indexing always includes
+                # the AI architecture summary; ingest_project_summary dedupes
+                # to once per project.
+                job_scheduler.submit("run_index_knowledge", args=[project_id, True])
             except Exception:  # noqa: BLE001 — one bad queue must not kill the run
                 logger.warning("Knowledge queuing failed for %s", project_id)
         return {"queued": len(unembedded), "skipped": None}

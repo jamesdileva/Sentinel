@@ -149,7 +149,7 @@ def test_rag_index_ok(project_id, monkeypatch):
         def __init__(self, session):
             self.session = session
 
-        def index_project(self, project, with_summary=False):
+        def index_project(self, project, with_summary=False, force_summary=False):
             return {"files": 3}
 
         @staticmethod

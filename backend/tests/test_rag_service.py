@@ -1,9 +1,10 @@
 """Sprint 8: RagService tests — fake embedder/LLM, real ChromaDB at tmp_path."""
 
+from chromadb.errors import InternalError
 from sqlmodel import Session
 
 from app.db import connection
-from app.services.chroma_manager import ChromaManager, get_chroma_manager
+from app.services.chroma_manager import COLLECTIONS, ChromaManager, get_chroma_manager
 from app.services.indexer import IndexerService
 from app.services.rag_service import RagService
 
@@ -415,3 +416,106 @@ def test_reset_knowledge_task_clears_embedding_ids(tmp_db, tmp_path, monkeypatch
             select(ProjectFile).where(ProjectFile.project_id == project_id)
         ).all()
         assert files and all(f.embedding_id is None for f in files)
+
+
+# ── v1.17.6.2: query-based health probe / summary dedupe ────────────────
+
+
+class _BrokenQueryCollection:
+    """get() succeeds but query() hits the damaged HNSW reader — the exact
+    v1.17.6.2 laptop failure the old `get(limit=1)` probe could not see."""
+
+    def count(self):
+        return 1
+
+    def get(self, limit=1, include=None):
+        return {"embeddings": [[0.1] * 64], "ids": ["a"]}
+
+    def query(self, query_embeddings=None, n_results=None, where=None):
+        raise InternalError("Error creating hnsw segment reader: Nothing found on disk")
+
+
+class _HealthyCollection(_BrokenQueryCollection):
+    def query(self, query_embeddings=None, n_results=None, where=None):
+        return {"ids": [["a"]], "distances": [[0.1]], "documents": [["doc"]]}
+
+
+class _FakeClient:
+    def __init__(self, collection):
+        self._collection = collection
+        self.dropped: list[str] = []
+
+    def get_or_create_collection(self, name, metadata=None):
+        return self._collection
+
+    def delete_collection(self, name):
+        self.dropped.append(name)
+        raise InternalError("Error creating hnsw segment reader")
+
+
+def _manager_with(client) -> ChromaManager:
+    import threading
+
+    manager = object.__new__(ChromaManager)
+    manager.path = "fake"
+    manager._client = client
+    manager._collections = {}
+    manager._locks = {}
+    manager._health_cache = None
+    manager._health_lock = threading.Lock()
+    return manager
+
+
+def test_health_probe_detects_broken_query_path():
+    """v1.17.6.2: the old probe (`get(limit=1)`) could pass while the query
+    path failed, leaving the dashboard healthy and the next chat query
+    503ing. The probe now runs a real query with a stored embedding."""
+    manager = _manager_with(_FakeClient(_BrokenQueryCollection()))
+    health = manager.health()
+    assert health["healthy"] is False
+    assert set(health["broken"]) == set(COLLECTIONS)
+    assert len(health["checked"]) == len(COLLECTIONS)
+
+
+def test_health_probe_healthy_when_query_succeeds():
+    manager = _manager_with(_FakeClient(_HealthyCollection()))
+    health = manager.health()
+    assert health["healthy"] is True
+    assert health["broken"] == []
+
+
+def test_reset_tolerates_internal_error_from_damaged_store():
+    """v1.17.6.2: dropping a collection whose HNSW files are gone can raise
+    InternalError — the collection is being discarded anyway, so that must
+    count as a successful reset instead of a traceback."""
+    client = _FakeClient(_BrokenQueryCollection())
+    manager = _manager_with(client)
+    manager.reset("file_summaries")
+    assert client.dropped == ["file_summaries"]
+    assert manager._health_cache is None  # invalidated for the next probe
+
+
+def test_summary_generated_once_per_project(tmp_db, tmp_path):
+    """v1.17.6.2: auto-indexing always requests summaries, so the second
+    index of a project must not burn a fresh Ollama generation — an
+    existing architecture summary is reused unless force=True (CLI
+    `--summary`)."""
+    from sqlmodel import select
+
+    from app.db.models import KnowledgeSummary
+
+    project_id = _index_project(tmp_db)
+    with Session(connection.get_engine()) as session:
+        project = RagService.get_project(session, project_id)
+        rag = _rag(session, tmp_path)
+        first = rag.index_project(project, with_summary=True)
+        second = rag.index_project(project, with_summary=True)
+        forced = rag.index_project(project, with_summary=True, force_summary=True)
+    with Session(connection.get_engine()) as session:
+        rows = session.exec(
+            select(KnowledgeSummary).where(KnowledgeSummary.project_id == project_id)
+        ).all()
+    assert first["project_summaries"] == 1
+    assert second["project_summaries"] == 0  # deduped — no new generation
+    assert forced["project_summaries"] == 1  # explicit force regenerates
+    assert len(rows) == 2

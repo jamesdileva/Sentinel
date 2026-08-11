@@ -19,6 +19,7 @@ from app.db.models import KnowledgeSummary, Project
 from app.repositories import (
     BuildLogRepository,
     GitCommitRepository,
+    KnowledgeSummaryRepository,
     ProjectFileRepository,
     ProjectRepository,
     SecurityRepository,
@@ -95,12 +96,15 @@ class RagService:
         self,
         project: Project,
         with_summary: bool = False,
+        force_summary: bool = False,
         progress: Callable[[int, int, float | None], None] | None = None,
     ) -> dict[str, int]:
         """Ingest every knowledge source for a project. Returns counts per collection.
 
         `progress(done, total)` is invoked as files are embedded so callers
         (the scheduler task) can publish throttled progress events (v1.17.1).
+        `force_summary` (v1.17.6.2, CLI `--summary`) regenerates the AI
+        architecture summary even when one already exists.
         """
         counts: dict[str, int] = {}
         counts["file_summaries"] = self.ingest_files(project, progress=progress)
@@ -109,7 +113,9 @@ class RagService:
         counts["security_reports"] = self.ingest_security_findings(project)
         counts["build_logs"] = self.ingest_build_logs(project)
         if with_summary:
-            counts["project_summaries"] = self.ingest_project_summary(project)
+            counts["project_summaries"] = self.ingest_project_summary(
+                project, force=force_summary
+            )
         logger.info(
             "RAG index for %s: %s", project.name, {k: v for k, v in counts.items() if v}
         )
@@ -272,8 +278,20 @@ class RagService:
             ],
         )
 
-    def ingest_project_summary(self, project: Project) -> int:
-        """Generate an architecture summary via Ollama, persist it, and embed it."""
+    def ingest_project_summary(self, project: Project, force: bool = False) -> int:
+        """Generate an architecture summary via Ollama, persist it, and embed it.
+
+        v1.17.6.2: auto-indexing (which now always requests summaries) keeps
+        the first summary per project — an existing architecture summary is
+        reused instead of burning a fresh Ollama generation on every scan.
+        `force=True` (CLI `--summary`) regenerates on explicit intent.
+        """
+        if not force:
+            existing = KnowledgeSummaryRepository(self.session).get_by_project(
+                project.id, summary_type="architecture"
+            )
+            if existing:
+                return 0
         context = self._file_summary_context(project)
         prompt = _PROJECT_SUMMARY_TEMPLATE.format(
             project_name=project.name,
