@@ -43,13 +43,19 @@ def run_index_knowledge(project_id: str, with_summary: bool = False) -> dict:
 
 
 def run_reset_knowledge() -> dict:
-    """Drop every ChromaDB knowledge collection (v1.17.6).
+    """Drop every ChromaDB knowledge collection (v1.17.6) and clear the
+    embedding flags (v1.17.6.1).
 
     Recovery path for a damaged on-disk HNSW index: wiping the collections
-    lets re-indexing rebuild clean vectors (embedding_ids stay put, so
-    ingest_files re-embeds everything after the reset). Runs in the job
-    pool — resetting six collections can take seconds on a slow disk.
+    lets re-indexing rebuild clean vectors. The flags must be cleared too —
+    `ingest_files` skips any file whose `embedding_id` is set (the v1.17.1
+    incremental optimization), so a reset that left them in place would
+    re-embed nothing and the index would stay empty. Runs in the job pool —
+    resetting six collections can take seconds on a slow disk.
     """
+    from sqlmodel import update
+
+    from app.db.models import ProjectFile
     from app.services.chroma_manager import get_chroma_manager
 
     logger.info("knowledge reset task starting")
@@ -57,12 +63,16 @@ def run_reset_knowledge() -> dict:
         "index", "Knowledge index reset started", data={"scope": "all"}
     )
     get_chroma_manager().reset_all()
+    with Session(get_engine()) as session:
+        result = session.exec(update(ProjectFile).values(embedding_id=None))
+        session.commit()
+        cleared = result.rowcount
     activity_bus.publish_event(
         "index",
         "Knowledge index reset finished — re-index with `sentinel rag-index`",
         data={"scope": "all"},
     )
-    return {"scopes": "all"}
+    return {"scopes": "all", "files_unflagged": cleared}
 
 
 def progress(project) -> Callable:

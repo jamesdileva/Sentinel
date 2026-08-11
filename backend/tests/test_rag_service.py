@@ -381,8 +381,37 @@ def test_reset_knowledge_task_drops_shared_chroma(tmp_db, tmp_path, monkeypatch)
     )
     assert manager.count("file_summaries") == 1
     result = rag_tasks.run_reset_knowledge()
-    assert result == {"scopes": "all"}
+    assert result == {"scopes": "all", "files_unflagged": 0}
     assert manager.count("file_summaries") == 0
     kinds = [e["kind"] for e in events]
     assert kinds.count("index") == 2
     assert "reset finished" in events[-1]["message"]
+
+
+def test_reset_knowledge_task_clears_embedding_ids(tmp_db, tmp_path, monkeypatch):
+    """v1.17.6.1: reset also clears ProjectFile.embedding_id — ingest_files
+    skips files that look embedded, so a reset that kept the flags would
+    re-embed nothing and leave the index empty forever."""
+    from sqlmodel import select
+
+    from app.core.config import settings
+    from app.db.models import ProjectFile
+    from app.tasks import rag_tasks
+
+    monkeypatch.setattr(settings, "chroma_path", tmp_path / "shared")
+    project_id = _index_project(tmp_db)
+    with Session(connection.get_engine()) as session:
+        project = RagService.get_project(session, project_id)
+        _rag(session, tmp_path).index_project(project)
+    with Session(connection.get_engine()) as session:
+        files = session.exec(
+            select(ProjectFile).where(ProjectFile.project_id == project_id)
+        ).all()
+        assert files and all(f.embedding_id for f in files)
+    result = rag_tasks.run_reset_knowledge()
+    assert result["files_unflagged"] >= 1
+    with Session(connection.get_engine()) as session:
+        files = session.exec(
+            select(ProjectFile).where(ProjectFile.project_id == project_id)
+        ).all()
+        assert files and all(f.embedding_id is None for f in files)
