@@ -118,6 +118,44 @@ def test_start_is_idempotent_shutdown_is_safe():
     scheduler.shutdown()  # second shutdown must not raise
 
 
+def test_quiet_beat_publishes_no_events(monkeypatch):
+    """v1.17.4: the world-sim tick fires every minute; its beat publishes no
+    activity events (running/finished/failed) so the live feed is not
+    flooded. The task itself still runs."""
+    from app.services import activity_bus
+
+    events: list[str] = []
+    monkeypatch.setattr(
+        activity_bus, "publish_event", lambda *a, **k: events.append(a[1])
+    )
+    scheduler = JobScheduler()
+    monkeypatch_replace(scheduler, "world_sim_tick", lambda: {"days_advanced": 0})
+    try:
+        scheduler._beat("world_sim_tick", quiet=True)()
+        assert events == []
+    finally:
+        scheduler.shutdown()
+
+
+def test_noisy_beat_and_submits_still_publish(monkeypatch):
+    """On-demand jobs and non-quiet beats keep their events: downloads,
+    scans and syncs are user-visible work, unlike minute-level world ticks."""
+    from app.services import activity_bus
+
+    events: list[str] = []
+    monkeypatch.setattr(
+        activity_bus, "publish_event", lambda *a, **k: events.append(a[1])
+    )
+    scheduler = JobScheduler()
+    monkeypatch_replace(scheduler, "fake_beat", lambda: {"ok": True})
+    try:
+        scheduler._beat("fake_beat")()
+        assert any("running" in e for e in events)
+        assert any("finished" in e for e in events)
+    finally:
+        scheduler.shutdown()
+
+
 def monkeypatch_replace(scheduler, name, func):
     """Swap a registry entry without touching the class registry."""
     scheduler._registry[name] = func

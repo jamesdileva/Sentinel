@@ -4,9 +4,13 @@ Design (docs/01 Rule 3: determinism over generation) — syncing is a known,
 reproducible workflow driven entirely by git, never by AI:
 
 * The configured GitHub token lists the user's repos (GET /user/repos).
-* For each repo, if the local directory already holds a `.git` checkout we
-  `git pull --ff-only`; otherwise we `git clone` it directly under the
-  configured watch dir root (default: first entry of SENTINEL_WATCH_DIRS).
+* For each repo, we look for a local `.git` checkout in this order:
+  `<root>/<owner>/<repo>` (the canonical sync layout), then any checkout
+  directly under the watch dir root whose origin remote URL matches
+  `<owner>/<repo>` (v1.17.4: repos that pre-date the nested layout — e.g.
+  `C:/Users/james/Projects/Sentinel` — are adopted and pulled, never
+  cloned a second time). Missing repos are `git clone`d into the canonical
+  location under the watch dir root (default: first SENTINEL_WATCH_DIRS).
 * After the loop we re-index only the repos whose HEAD actually moved
   (Sprint 15 change detection): an unchanged pull results in zero scans —
   no re-parsing, no re-embedding, and no portfolio cache invalidation.
@@ -97,7 +101,49 @@ class RepoSyncService:
 
     def _local_path(self, full_name: str) -> str:
         owner, name = full_name.split("/", 1)
-        return f"{self.root.rstrip('/')}/{owner}/{name}"
+        expected = f"{self.root.rstrip('/')}/{owner}/{name}"
+        if self._is_checkout(expected):
+            return expected
+        existing = self._find_existing_checkout(self.root, owner, name)
+        return existing or expected
+
+    @staticmethod
+    def _find_existing_checkout(root: str, owner: str, name: str) -> str | None:
+        """First checkout directly under `root` whose origin URL matches
+        `owner/name` (v1.17.4). Adopts repos that predate the nested
+        `<root>/<owner>/<repo>` layout instead of cloning duplicates;
+        deterministic: matched only by git remote URL, never heuristics."""
+        needle = f"{owner}/{name}".lower()
+        root_path = Path(root)
+        if not root_path.is_dir():
+            return None
+        for candidate in root_path.iterdir():
+            git_dir = candidate / ".git"
+            if not git_dir.is_dir():
+                continue
+            try:
+                lines = (
+                    (git_dir / "config")
+                    .read_text(encoding="utf-8", errors="replace")
+                    .splitlines()
+                )
+            except OSError:
+                continue
+            for line in lines:
+                stripped = line.strip()
+                if not stripped.startswith("url = "):
+                    continue
+                url = stripped.removeprefix("url = ").strip().lower()
+                normalized = (
+                    url.removesuffix(".git")
+                    .replace("git@github.com:", "github.com/")
+                    .replace("ssh://git@github.com/", "github.com/")
+                    .removeprefix("https://")
+                    .removeprefix("http://")
+                )
+                if normalized.endswith(needle):
+                    return candidate.as_posix()
+        return None
 
     def _sync_repo(self, repo: dict) -> str:
         local = self._local_path(repo["full_name"])

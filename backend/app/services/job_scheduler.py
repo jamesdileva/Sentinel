@@ -92,7 +92,7 @@ class JobScheduler:
             return
         if settings.world_sim_enabled:
             self._beats.add_job(
-                self._beat("world_sim_tick"),
+                self._beat("world_sim_tick", quiet=True),
                 IntervalTrigger(seconds=settings.world_sim_tick_seconds),
                 id="world-sim-tick",
                 name="world-sim-tick",
@@ -130,39 +130,52 @@ class JobScheduler:
 
     # -- internals -----------------------------------------------------------
 
-    def _beat(self, name: str) -> Callable:
+    def _beat(self, name: str, quiet: bool = False) -> Callable:
+        """Wrap a task as a scheduler beat. `quiet=True` (v1.17.4: the
+        world-sim tick) suppresses its running/finished/failed activity
+        events — a tick fires every minute and would otherwise flood the
+        live feed; the per-tick log line is unaffected."""
         func = self._registry[name]
 
         def wrapper() -> None:
-            self._run("beat:" + name, name, func, [])
+            self._run("beat:" + name, name, func, [], publish_events=not quiet)
 
         return wrapper
 
     @staticmethod
-    def _run(job_id: str, name: str, func: Callable, args: list) -> None:
-        activity_bus.publish_event(
-            "job",
-            f"{name} running",
-            detail=f"job {job_id}",
-            data={"job_id": job_id, "name": name, "state": "running"},
-        )
+    def _run(
+        job_id: str,
+        name: str,
+        func: Callable,
+        args: list,
+        publish_events: bool = True,
+    ) -> None:
+        if publish_events:
+            activity_bus.publish_event(
+                "job",
+                f"{name} running",
+                detail=f"job {job_id}",
+                data={"job_id": job_id, "name": name, "state": "running"},
+            )
         try:
             result = func(*args)
             logger.info("%s (%s) finished: %r", name, job_id, result)
-            activity_bus.publish_event(
-                "job",
-                f"{name} finished",
-                detail=f"job {job_id}",
-                data={"job_id": job_id, "name": name, "state": "finished"},
-            )
+            if publish_events:
+                activity_bus.publish_event(
+                    "job",
+                    f"{name} finished",
+                    detail=f"job {job_id}",
+                    data={"job_id": job_id, "name": name, "state": "finished"},
+                )
         except Exception:  # noqa: BLE001 — a worker job must never crash the process
             logger.exception("%s (%s) failed", name, job_id)
-            activity_bus.publish_event(
-                "job",
-                f"{name} failed",
-                detail=f"job {job_id}",
-                data={"job_id": job_id, "name": name, "state": "failed"},
-            )
+            if publish_events:
+                activity_bus.publish_event(
+                    "job",
+                    f"{name} failed",
+                    detail=f"job {job_id}",
+                    data={"job_id": job_id, "name": name, "state": "failed"},
+                )
 
     @property
     def beat_jobs(self) -> dict:

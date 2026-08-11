@@ -139,6 +139,94 @@ def test_sync_pulls_existing_repo(tmp_path, monkeypatch):
     assert pull_call and "jamesdileva" in pull_call[0][1] and "MyApp" in pull_call[0][1]
 
 
+# ── v1.17.4: adopt flat checkouts that predate the nested layout ──────
+
+
+def _git_config(tmp_path, dirname, url):
+    repo = tmp_path / dirname
+    (repo / ".git").mkdir(parents=True)
+    (repo / ".git" / "config").write_text(
+        f'[remote "origin"]\n\turl = {url}\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n',
+        encoding="utf-8",
+    )
+    return repo
+
+
+def test_local_path_adopts_flat_checkout_with_matching_remote(tmp_path):
+    flat = _git_config(tmp_path, "MyApp", "https://github.com/jamesdileva/MyApp.git")
+    client = _service(str(tmp_path), [])
+    assert client._local_path("jamesdileva/MyApp") == flat.as_posix()
+
+
+def test_local_path_matches_url_variants(tmp_path):
+    _git_config(tmp_path, "ssh-repo", "git@github.com:jamesdileva/MyApp.git")
+    _git_config(tmp_path, "http-repo", "http://github.com/jamesdileva/Other.git")
+    client = _service(str(tmp_path), [])
+    assert client._local_path("jamesdileva/MyApp") == (tmp_path / "ssh-repo").as_posix()
+    assert (
+        client._local_path("jamesdileva/Other") == (tmp_path / "http-repo").as_posix()
+    )
+
+
+def test_local_path_matching_is_case_insensitive(tmp_path):
+    _git_config(tmp_path, "MyApp", "https://GitHub.com/JAMESDILEVA/MyApp.git")
+    client = _service(str(tmp_path), [])
+    assert client._local_path("jamesdileva/MyApp") == (tmp_path / "MyApp").as_posix()
+
+
+def test_local_path_prefers_nested_checkout(tmp_path):
+    _git_config(tmp_path, "MyApp", "https://github.com/jamesdileva/MyApp.git")
+    nested = tmp_path / "jamesdileva" / "MyApp"
+    (nested / ".git").mkdir(parents=True)
+    client = _service(str(tmp_path), [])
+    assert client._local_path("jamesdileva/MyApp") == f"{tmp_path}/jamesdileva/MyApp"
+
+
+def test_local_path_falls_back_to_nested_clone_when_no_match(tmp_path):
+    (tmp_path / "MyApp").mkdir()  # exists but is not a checkout
+    (tmp_path / "Unrelated").mkdir()
+    (tmp_path / "Unrelated" / ".git").mkdir()
+    client = _service(str(tmp_path), [])
+    assert client._local_path("jamesdileva/MyApp") == f"{tmp_path}/jamesdileva/MyApp"
+
+
+def test_local_path_ignores_wrong_remote(tmp_path):
+    _git_config(tmp_path, "Other", "https://github.com/other/Other.git")
+    client = _service(str(tmp_path), [])
+    assert client._local_path("jamesdileva/MyApp") == f"{tmp_path}/jamesdileva/MyApp"
+
+
+def test_sync_adopts_flat_checkout_and_pulls_it(tmp_path, monkeypatch):
+    flat = _git_config(tmp_path, "MyApp", "https://github.com/jamesdileva/MyApp.git")
+    calls: list[tuple] = []
+
+    def fake_run(command, cwd=None, timeout=None, env=None):
+        calls.append((command, cwd))
+        return _fake_result()
+
+    monkeypatch.setattr(sync_service, "run_command", fake_run)
+    monkeypatch.setattr(
+        sync_service.IndexerService,
+        "scan_all_projects",
+        lambda self, watch_dirs=None: [1],
+    )
+    client = _service(
+        str(tmp_path),
+        [
+            {
+                "full_name": "jamesdileva/MyApp",
+                "clone_url": "https://github.com/jamesdileva/MyApp.git",
+            }
+        ],
+    )
+    result = client.sync()
+    assert result["pulled"] == ["jamesdileva/MyApp"]
+    assert result["cloned"] == []
+    pull_call = [c for c in calls if c[0] == '"git" pull --ff-only']
+    assert pull_call and pull_call[0][1] == flat.as_posix()
+    assert not any("clone" in c[0] for c in calls)
+
+
 def test_sync_skips_reindex_when_head_unchanged(tmp_path, monkeypatch):
     """Sprint 15: a pull that did not move HEAD triggers no reindex and no
     knowledge queueing — the expensive steps are skipped entirely."""
