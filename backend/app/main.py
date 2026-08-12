@@ -26,7 +26,7 @@ from app.api.v1.tests import router as tests_router
 from app.api.v1.world_sim import router as world_sim_router
 from app.api.v1.ws import router as ws_router
 from app.core.config import settings
-from app.core.logging import get_logger, setup_logging
+from app.core.logging import attach_file_logging, get_logger, setup_logging
 from app.db.connection import check_db, get_engine, init_db
 from app.services.chroma_manager import RagIndexError
 from app.services.job_scheduler import scheduler
@@ -125,6 +125,7 @@ def _background_initial_scan() -> None:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    attach_file_logging()  # uvicorn replaced root handlers; keep the run log
     init_db()
     run_startup_checks()
     if settings.scheduler_enabled:

@@ -284,14 +284,14 @@ class RagService:
         v1.17.6.2: auto-indexing (which now always requests summaries) keeps
         the first summary per project — an existing architecture summary is
         reused instead of burning a fresh Ollama generation on every scan.
-        `force=True` (CLI `--summary`) regenerates on explicit intent.
+        v1.17.6.3: the dedupe checks the *embedding*, not just the SQLite row —
+        `reset()` drops the `project_summaries` collection but keeps its rows,
+        so a row alone no longer blocks regeneration (post-reset re-indexes
+        must rebuild the summary). `force=True` (CLI `--summary`) regenerates
+        on explicit intent. A regenerated summary reuses the existing row.
         """
-        if not force:
-            existing = KnowledgeSummaryRepository(self.session).get_by_project(
-                project.id, summary_type="architecture"
-            )
-            if existing:
-                return 0
+        if not force and self._summary_is_embedded(project.id):
+            return 0
         context = self._file_summary_context(project)
         prompt = _PROJECT_SUMMARY_TEMPLATE.format(
             project_name=project.name,
@@ -302,13 +302,21 @@ class RagService:
         content = self._generate_with_metrics(prompt, purpose="summary")
         if not content:
             return 0
-        summary = KnowledgeSummary(
-            project_id=project.id,
-            type="architecture",
-            content=content,
-            model=settings.ollama_model,
+        existing_rows = KnowledgeSummaryRepository(self.session).get_by_project(
+            project.id, summary_type="architecture"
         )
-        self.session.add(summary)
+        if existing_rows:  # newest first; reuse (older rows are orphaned)
+            summary = existing_rows[0]
+            summary.content = content
+            summary.model = settings.ollama_model
+        else:
+            summary = KnowledgeSummary(
+                project_id=project.id,
+                type="architecture",
+                content=content,
+                model=settings.ollama_model,
+            )
+            self.session.add(summary)
         self.session.commit()
         self.chroma.upsert(
             "project_summaries",
@@ -318,6 +326,30 @@ class RagService:
             metadatas=[{"project_id": project.id, "summary_type": "architecture"}],
         )
         return 1
+
+    def _summary_is_embedded(self, project_id: str) -> bool:
+        """True when an architecture-summary embedding exists for the project.
+
+        The vector is the source of truth for dedupe: reset drops the
+        collection while the SQLite row survives, and a row without its
+        embedding means the summary must be regenerated. Any collection
+        error (damaged store, missing segment dir) counts as "not embedded"
+        — regeneration will surface the damage through the normal 503 path.
+        """
+        try:
+            result = self.chroma.collection("project_summaries").get(
+                where={
+                    "$and": [
+                        {"project_id": project_id},
+                        {"summary_type": "architecture"},
+                    ]
+                },
+                limit=1,
+                include=["metadatas"],
+            )
+            return bool(result.get("ids"))
+        except Exception:  # noqa: BLE001 — see docstring
+            return False
 
     def _file_summary_context(self, project: Project) -> str:
         files = ProjectFileRepository(self.session).get_by_project(project.id)

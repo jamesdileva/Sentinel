@@ -124,8 +124,16 @@ git pull                         # update the repo (includes the staged dashboar
   is never on PATH — always use the venv python by path.
 - `frontend` changed but dashboard is stale → forgot `scripts/build.py --dist`;
   the backend serves the *staged* build from `backend/app/static`.
-- Port 8000 already in use → another app is bound to it;
-  `.\.venv\Scripts\python.exe run.py --port 8100` (and set
-  `SENTINEL_PORT=8100` in `.env`).
+- Port 8000 already in use → another Sentinel is running (a second console
+  left open is the usual cause). Since v1.17.6.3 `run.py` names the owner:
+  it prints the PID (from `netstat -ano`) with a
+  `taskkill /F /PID <pid>` hint instead of a raw bind traceback. Close the
+  other console, kill that PID, or serve on another port
+  (`.\.venv\Scripts\python.exe run.py --port 8100` + `SENTINEL_PORT=8100`
+  in `.env`).
+- "What happened this run?" → `data/logs/sentinel.log` (repo `data/logs/`).
+  Overwritten at every start, INFO level, includes uvicorn's own logs —
+  the place to look after a forced shutdown or an error cascade that
+  scrolled past the console.
 - After moving the repo folder on disk: the venv paths in the Task-Scheduler task
   are absolute — uninstall and re-install it (`scripts/install_service.py`).

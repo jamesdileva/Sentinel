@@ -91,6 +91,23 @@ def port_taken(port: int) -> bool:
         return sock.connect_ex(("127.0.0.1", port)) == 0
 
 
+def port_owner(port: int) -> str:
+    """Best-effort PID of the process listening on a port (Windows netstat)."""
+    if os.name != "nt":
+        return ""
+    try:
+        out = subprocess.check_output(
+            ["netstat", "-ano"], text=True, errors="ignore", timeout=10
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    for line in out.splitlines():
+        parts = line.split()
+        if len(parts) >= 5 and "LISTENING" in line and parts[1].endswith(f":{port}"):
+            return parts[-1]
+    return ""
+
+
 def check_frontend() -> None:
     static_index = BACKEND / "app" / "static" / "index.html"
     if static_index.exists():
@@ -205,6 +222,17 @@ def main(argv: list[str] | None = None) -> int:
     if args.service and port_taken(port):
         _ok(f"port {port} already in use — server running, nothing to do")
         return 0
+
+    if port_taken(port):
+        pid = port_owner(port)
+        pid_hint = f" (PID {pid})" if pid else ""
+        _fail(
+            f"port {port} is already in use{pid_hint} — another Sentinel is "
+            "running.\n"
+            f"       Usually a second console left open: close it (or "
+            f"'taskkill /F /PID {pid or '<pid>'}'), or run with another "
+            "port (--port)."
+        )
 
     startup_checks()
     return start_server(args)

@@ -499,7 +499,7 @@ def test_summary_generated_once_per_project(tmp_db, tmp_path):
     """v1.17.6.2: auto-indexing always requests summaries, so the second
     index of a project must not burn a fresh Ollama generation — an
     existing architecture summary is reused unless force=True (CLI
-    `--summary`)."""
+    `--summary`). v1.17.6.3: regeneration reuses the SQLite row."""
     from sqlmodel import select
 
     from app.db.models import KnowledgeSummary
@@ -518,4 +518,29 @@ def test_summary_generated_once_per_project(tmp_db, tmp_path):
     assert first["project_summaries"] == 1
     assert second["project_summaries"] == 0  # deduped — no new generation
     assert forced["project_summaries"] == 1  # explicit force regenerates
-    assert len(rows) == 2
+    assert len(rows) == 1  # regeneration reuses the row (v1.17.6.3)
+
+
+def test_summary_regenerated_after_reset(tmp_db, tmp_path):
+    """v1.17.6.3: the dedupe must check the embedding, not the row. Reset
+    drops the `project_summaries` collection but keeps the SQLite rows, so a
+    post-reset re-index would otherwise skip the summary forever and leave
+    the collection empty (all-project chat loses its summary-first answers)."""
+    from sqlmodel import select
+
+    from app.db.models import KnowledgeSummary
+
+    project_id = _index_project(tmp_db)
+    with Session(connection.get_engine()) as session:
+        project = RagService.get_project(session, project_id)
+        rag = _rag(session, tmp_path)
+        first = rag.index_project(project, with_summary=True)
+        rag.chroma.reset("project_summaries")  # simulate knowledge reset
+        reindex = rag.index_project(project, with_summary=True)
+    with Session(connection.get_engine()) as session:
+        rows = session.exec(
+            select(KnowledgeSummary).where(KnowledgeSummary.project_id == project_id)
+        ).all()
+    assert first["project_summaries"] == 1
+    assert reindex["project_summaries"] == 1  # row alone must not block rebuild
+    assert len(rows) == 1  # the same row was reused, not duplicated
