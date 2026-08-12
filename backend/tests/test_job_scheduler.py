@@ -17,6 +17,7 @@ EXPECTED_TASKS = {
     "run_security_scan",
     "run_security_scan_all",
     "run_index_knowledge",
+    "run_index_knowledge_all",
     "run_reset_knowledge",
     "run_repo_sync",
     "world_sim_tick",
@@ -25,6 +26,25 @@ EXPECTED_TASKS = {
 
 def test_registry_exposes_all_task_names():
     assert set(_build_registry()) == EXPECTED_TASKS
+
+
+def test_router_submitted_names_resolve_in_registry():
+    """v1.17.6.7 regression: 1.17.6.4 added the /rag/index/all endpoint
+    submitting `run_index_knowledge_all`, but the name was never registered —
+    every click of "Re-index all projects" 500'd with a KeyError. The exact
+    names the API routers submit must all resolve through the real registry."""
+    router_names = {
+        "run_build",
+        "run_tests",
+        "run_security_scan",
+        "run_index_knowledge",
+        "run_index_knowledge_all",
+        "run_reset_knowledge",
+        "run_repo_sync",
+    }
+    registry = _build_registry()
+    missing = router_names - set(registry)
+    assert not missing, f"router job name(s) missing from registry: {missing}"
 
 
 def test_submit_inline_runs_synchronously(monkeypatch):

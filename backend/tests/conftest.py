@@ -9,9 +9,14 @@ from app.main import app
 
 
 @pytest.fixture(autouse=True)
-def _quiet_scheduler(monkeypatch):
-    """Beats must never run during tests: dispatch stays manual (Sprint 16)."""
+def _quiet_background(monkeypatch):
+    """Background work must never run during tests: scheduler beats stay
+    manual, and the startup discovery scan never spawns — a `sentinel-scan`
+    daemon thread outlives its TestClient and can later persist a SyncRun
+    into whichever engine is current, racing `test_system_sync_endpoint`
+    (v1.17.6.7: the suite could intermittently fail on `last_run`)."""
     monkeypatch.setattr(settings, "scheduler_enabled", False)
+    monkeypatch.setattr(settings, "auto_scan_on_startup", False)
     from app.services.job_scheduler import scheduler
 
     monkeypatch.setattr(scheduler, "run_inline", False)

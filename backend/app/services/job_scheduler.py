@@ -41,6 +41,7 @@ def _build_registry() -> dict[str, Callable]:
         "run_security_scan": build_tasks.run_security_scan_task,
         "run_security_scan_all": build_tasks.run_security_scan_all,
         "run_index_knowledge": rag_tasks.run_index_knowledge,
+        "run_index_knowledge_all": rag_tasks.run_index_knowledge_all,
         "run_reset_knowledge": rag_tasks.run_reset_knowledge,
         "run_repo_sync": sync_tasks.run_repo_sync,
         "world_sim_tick": world_sim_tasks.world_sim_tick,

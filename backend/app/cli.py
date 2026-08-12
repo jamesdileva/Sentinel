@@ -152,7 +152,10 @@ def rag_index(
         False, "--summary", help="Also generate a project summary"
     ),
     reset: bool = typer.Option(
-        False, "--reset", help="Drop all knowledge collections (v1.17.6 recovery)"
+        False,
+        "--reset",
+        help="Drop all knowledge collections and clear embedding flags "
+        "(v1.17.6 recovery)",
     ),
     all_projects: bool = typer.Option(
         False,
@@ -162,11 +165,12 @@ def rag_index(
 ):
     """Ingest a project's knowledge into ChromaDB for RAG."""
     if reset:
-        from app.services.chroma_manager import get_chroma_manager
+        from app.tasks.rag_tasks import run_reset_knowledge
 
-        get_chroma_manager().reset_all()
+        result = run_reset_knowledge()
         typer.echo(
-            "Knowledge index reset — re-run `sentinel rag-index <project>` to rebuild."
+            "Knowledge index reset — "
+            f"{result['files_unflagged']} file(s) unflagged for re-indexing."
         )
         return
     if all_projects:

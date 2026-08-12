@@ -165,20 +165,23 @@ def test_rag_index_ok(project_id, monkeypatch):
 
 def test_rag_index_reset_drops_knowledge(monkeypatch):
     """v1.17.6: `rag-index --reset` wipes the shared Chroma collections
-    without needing a project id or Ollama."""
-    from app.services import chroma_manager
+    without needing a project id or Ollama.
+    v1.17.6.7: it runs the full reset task, which also clears the
+    embedding flags — otherwise the auto-index finds nothing to re-embed."""
+    from app.tasks import rag_tasks
 
-    reset = []
+    calls = []
 
-    class FakeManager:
-        def reset_all(self):
-            reset.append(True)
+    def fake_reset():
+        calls.append("run_reset_knowledge")
+        return {"scopes": "all", "files_unflagged": 1427}
 
-    monkeypatch.setattr(chroma_manager, "get_chroma_manager", lambda: FakeManager())
+    monkeypatch.setattr(rag_tasks, "run_reset_knowledge", fake_reset)
     result = runner.invoke(cli.app, ["rag-index", "--reset"])
     assert result.exit_code == 0
-    assert reset == [True]
+    assert calls == ["run_reset_knowledge"]
     assert "Knowledge index reset" in result.output
+    assert "1427 file(s) unflagged" in result.output
 
 
 def test_rag_index_all_reindexes_every_project(monkeypatch):
