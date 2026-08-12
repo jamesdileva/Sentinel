@@ -4,6 +4,7 @@ import {
   getIndexStatus,
   ragIndex,
   ragSearch,
+  reindexAllKnowledge,
   resetKnowledgeIndex,
   type RagIndexStatus,
   type RagResult,
@@ -30,6 +31,7 @@ export default function KnowledgeExplorer() {
 
   const [indexStatus, setIndexStatus] = useState<RagIndexStatus | null>(null);
   const [resetting, setResetting] = useState(false);
+  const [reindexing, setReindexing] = useState(false);
   const lastRefresh = useRef(0);
 
   useEffect(() => {
@@ -163,6 +165,35 @@ export default function KnowledgeExplorer() {
     }
   }
 
+  async function handleReindexAll() {
+    if (reindexing || resetting) return;
+    if (
+      !window.confirm(
+        "Re-index knowledge for all projects?\n\n" +
+          "Already-indexed files are skipped, so this mainly regenerates " +
+          "missing AI architecture summaries (and embeds any new files " +
+          "picked up by the last git pull).",
+      )
+    ) {
+      return;
+    }
+    setReindexing(true);
+    try {
+      const job = await reindexAllKnowledge();
+      toast(
+        `Re-index queued for all projects (job ${job.job_id.slice(0, 8)}…)`,
+        "success",
+      );
+    } catch (err) {
+      toast(
+        err instanceof Error ? err.message : "Failed to queue the re-index.",
+        "error",
+      );
+    } finally {
+      setReindexing(false);
+    }
+  }
+
   function damagedCollections(): string[] {
     return indexStatus?.health?.broken ?? [];
   }
@@ -219,12 +250,21 @@ export default function KnowledgeExplorer() {
           >
             {indexing ? "Indexing…" : "Index knowledge"}
           </button>
+
+          <button
+            type="button"
+            onClick={() => void handleReindexAll()}
+            disabled={reindexing || resetting}
+            className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+          >
+            {reindexing ? "Re-indexing…" : "Re-index all projects"}
+          </button>
         </div>
         {indexStatusLine() ? (
           <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
             {indexStatusLine()}
             {!indexStatusComplete() && (
-              <> — run "Index knowledge" to refresh or complete it.</>
+              <> — run "Index knowledge" or "Re-index all projects".</>
             )}
           </p>
         ) : (

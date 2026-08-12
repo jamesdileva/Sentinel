@@ -124,7 +124,7 @@ def ask(
     if not OllamaService().is_available():
         typer.echo(
             "Ollama is not reachable. Start it with `docker compose --profile ollama up` "
-            "and pull models: `ollama pull gemma2 nomic-embed-text`.",
+            "and pull models: `ollama pull llama3.1:8b nomic-embed-text`.",
             err=True,
         )
         raise typer.Exit(code=1)
@@ -146,13 +146,18 @@ def ask(
 @app.command(name="rag-index")
 def rag_index(
     project_id: str | None = typer.Argument(
-        None, help="Project id to ingest (omit with --reset)"
+        None, help="Project id to ingest (omit with --reset or --all)"
     ),
     with_summary: bool = typer.Option(
         False, "--summary", help="Also generate a project summary"
     ),
     reset: bool = typer.Option(
         False, "--reset", help="Drop all knowledge collections (v1.17.6 recovery)"
+    ),
+    all_projects: bool = typer.Option(
+        False,
+        "--all",
+        help="Re-index every project with AI architecture summaries (v1.17.6.4)",
     ),
 ):
     """Ingest a project's knowledge into ChromaDB for RAG."""
@@ -164,8 +169,14 @@ def rag_index(
             "Knowledge index reset — re-run `sentinel rag-index <project>` to rebuild."
         )
         return
+    if all_projects:
+        from app.tasks.rag_tasks import run_index_knowledge_all
+
+        result = run_index_knowledge_all()
+        typer.echo(f"Knowledge re-index complete: {result}")
+        return
     if project_id is None:
-        typer.echo("Provide a project id (or use --reset).", err=True)
+        typer.echo("Provide a project id (or use --reset / --all).", err=True)
         raise typer.Exit(code=2)
     from sqlmodel import Session
 
@@ -176,7 +187,7 @@ def rag_index(
     if not OllamaService().is_available():
         typer.echo(
             "Ollama is not reachable. Start it with `docker compose --profile ollama up` "
-            "and pull models: `ollama pull gemma2 nomic-embed-text`.",
+            "and pull models: `ollama pull llama3.1:8b nomic-embed-text`.",
             err=True,
         )
         raise typer.Exit(code=1)

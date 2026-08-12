@@ -6,7 +6,7 @@ work never blocks API responses.
 
 from typing import Callable
 
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from app.core.logging import get_logger
 from app.db.connection import get_engine
@@ -40,6 +40,55 @@ def run_index_knowledge(project_id: str, with_summary: bool = False) -> dict:
             data={"project_id": project.id, "counts": counts},
         )
         return {"project_id": project.id, "counts": counts}
+
+
+def run_index_knowledge_all() -> dict:
+    """Re-index every project's knowledge with AI architecture summaries.
+
+    v1.17.6.4 (Knowledge-page "Re-index all projects" button + CLI
+    `rag-index --all`): fully incremental — `ingest_files` skips files whose
+    `embedding_id` is set, so already-indexed projects only regenerate the
+    architecture summary when its embedding is missing (v1.17.6.3 dedupe),
+    while projects with new or unembedded files (post-git-pull) embed those
+    too. Projects run sequentially inside the job pool so the pass is
+    deterministic and one failure never aborts the rest.
+    """
+    logger.info("index-all task starting")
+    from app.db.models import Project
+
+    with Session(get_engine()) as session:
+        projects = list(session.exec(select(Project).order_by(Project.name)).all())
+    total = len(projects)
+    activity_bus.publish_event(
+        "index",
+        f"Knowledge re-index queued for {total} project(s)",
+        data={"scope": "all"},
+    )
+    ok = 0
+    failed = 0
+    for project in projects:
+        try:
+            with Session(get_engine()) as session:
+                counts = RagService(session).index_project(
+                    project, with_summary=True, progress=progress(project)
+                )
+            detail = ", ".join(f"{k}={v}" for k, v in counts.items() if v)
+            activity_bus.publish_event(
+                "index",
+                f"Knowledge re-indexed {project.name}",
+                detail=detail or "nothing new",
+                data={"project_id": project.id, "counts": counts},
+            )
+            ok += 1
+        except Exception:  # noqa: BLE001 — one bad project must not abort the pass
+            failed += 1
+            logger.exception("index-all failed for %s", project.name)
+    activity_bus.publish_event(
+        "index",
+        f"Knowledge re-index complete ({ok} ok, {failed} failed)",
+        data={"scope": "all", "ok": ok, "failed": failed},
+    )
+    return {"projects": total, "ok": ok, "failed": failed}
 
 
 def run_reset_knowledge() -> dict:

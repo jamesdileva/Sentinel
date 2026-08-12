@@ -32,7 +32,7 @@ These are the project's constitution. They must be upheld in every decision, cha
 | Backend ORM | SQLModel (SQLAlchemy 2.0 base) |
 | Backend framework | FastAPI, Pydantic v2 |
 | Frontend | React 19+, TypeScript, Vite, TailwindCSS |
-| AI | Ollama (local); LLM `gemma2`, embedding `nomic-embed-text` |
+| AI | Ollama (local); LLM `llama3.1:8b` (since v1.17.6.5; won the head-to-head vs gemma2), embedding `nomic-embed-text` |
 | Task queue | In-process APScheduler + thread pool (no Redis/Celery — Sprint 15 removed the deferred Docker queue) |
 | Watch dirs | Current user's home (`Path.home()`, configurable via `SENTINEL_WATCH_DIRS`) |
 

@@ -337,6 +337,26 @@ def test_rag_index_reset_returns_job_envelope(tmp_db, monkeypatch):
     assert captured["name"] == "run_reset_knowledge"
 
 
+def test_rag_index_all_returns_job_envelope(tmp_db, monkeypatch):
+    """v1.17.6.4: POST /rag/index/all queues the re-index-everything job
+    (incremental — already-embedded files are skipped, missing AI
+    architecture summaries are regenerated) — 202 envelope, no project id."""
+    captured = {}
+
+    def fake_submit(name, args=None, task_id=None):
+        captured["name"] = name
+        return "job-all"
+
+    monkeypatch.setattr("app.api.v1.rag.job_scheduler.submit", fake_submit)
+    client = TestClient(app)
+    resp = client.post("/api/v1/rag/index/all")
+    assert resp.status_code == 202
+    body = resp.json()
+    assert body["status"] == "queued"
+    assert body["job_id"] == "job-all"
+    assert captured["name"] == "run_index_knowledge_all"
+
+
 def test_rag_search_damaged_index_returns_503(tmp_db):
     """v1.17.6: a damaged knowledge index surfaces as 503 with a rebuild
     hint instead of a raw 500 traceback from ChromaDB internals."""

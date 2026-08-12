@@ -181,10 +181,29 @@ def test_rag_index_reset_drops_knowledge(monkeypatch):
     assert "Knowledge index reset" in result.output
 
 
+def test_rag_index_all_reindexes_every_project(monkeypatch):
+    """v1.17.6.4: `rag-index --all` runs the re-index-all task (incremental,
+    backfills missing AI architecture summaries)."""
+    from app.tasks import rag_tasks
+
+    called = []
+
+    def fake_task():
+        called.append(True)
+        return {"projects": 2, "failed": 0, "ok": 2}
+
+    monkeypatch.setattr(rag_tasks, "run_index_knowledge_all", fake_task)
+    result = runner.invoke(cli.app, ["rag-index", "--all"])
+    assert result.exit_code == 0
+    assert called == [True]
+    assert "Knowledge re-index complete" in result.output
+
+
 def test_rag_index_without_id_or_reset_fails(monkeypatch):
     result = runner.invoke(cli.app, ["rag-index"])
     assert result.exit_code == 2
     assert "--reset" in result.output
+    assert "--all" in result.output
 
 
 # --- portfolio / health / initdb / config -------------------------------------

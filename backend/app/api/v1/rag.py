@@ -78,6 +78,19 @@ def rag_index(
     return JobEnvelope(job_id=job_id, status="queued")
 
 
+@router.post("/rag/index/all", status_code=202, response_model=JobEnvelope)
+def rag_index_all(session: Session = Depends(get_session)) -> JobEnvelope:
+    """Re-index every project's knowledge with AI architecture summaries
+    (v1.17.6.4, Knowledge-page "Re-index all projects" button).
+
+    Fully incremental: already-embedded files are skipped, so this mostly
+    backfills missing architecture summaries; projects with new or
+    unembedded files (post-git-pull) embed those too. Queued as one
+    deterministic job that never aborts on a single project failure."""
+    job_id = job_scheduler.submit("run_index_knowledge_all")
+    return JobEnvelope(job_id=job_id, status="queued")
+
+
 @router.get("/rag/index/status")
 def rag_index_status(
     project_id: str | None = None,

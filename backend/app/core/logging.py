@@ -40,11 +40,20 @@ def _make_file_handler() -> logging.Handler:
     return handler
 
 
+def _quiet_http_client_loggers() -> None:
+    """httpx logs every HTTP request at INFO (the v1.17.6.3 run log was ~500
+    `POST /api/embed` lines in 1800); the request detail lives in the
+    activity feed and Ollama query log instead."""
+    for name in ("httpx", "httpcore"):
+        logging.getLogger(name).setLevel(logging.WARNING)
+
+
 def setup_logging(level: int = logging.INFO) -> None:
     """Idempotent: console handler + per-run file handler on the root logger."""
     global _CONFIGURED, _CONSOLE_HANDLER, _FILE_HANDLER
     if _CONFIGURED:
         return
+    _quiet_http_client_loggers()
     root = logging.getLogger()
     root.setLevel(level)
     if _CONSOLE_HANDLER is None:
@@ -61,18 +70,22 @@ def attach_file_logging() -> None:
 
     Called at lifespan startup: uvicorn's default log config replaces the
     root logger's handlers with its own, which would silently drop the run
-    log. Applies the file handler to root and to uvicorn's own loggers
-    (which propagate=False), never duplicating it.
+    log. The file handler goes on root and on uvicorn's configurable loggers
+    (`uvicorn`, `uvicorn.error`, `uvicorn.access`), each with
+    `propagate=False` (v1.17.6.4) so every record reaches the file exactly
+    once no matter whether uvicorn's own config left propagation on or off.
     """
     global _FILE_HANDLER
     if _FILE_HANDLER is None:
         _FILE_HANDLER = _make_file_handler()
+    _quiet_http_client_loggers()
     root = logging.getLogger()
     if _FILE_HANDLER not in root.handlers:
         root.addHandler(_FILE_HANDLER)
     for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
         logger = logging.getLogger(name)
         logger.setLevel(logging.INFO)
+        logger.propagate = False
         if _FILE_HANDLER not in logger.handlers:
             logger.addHandler(_FILE_HANDLER)
 

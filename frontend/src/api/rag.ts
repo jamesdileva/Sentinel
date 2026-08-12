@@ -120,6 +120,13 @@ export async function resetKnowledgeIndex(): Promise<RagJob> {
   return data;
 }
 
+// ── v1.17.6.4: re-index everything (incremental, fills missing summaries) ─
+
+export async function reindexAllKnowledge(): Promise<RagJob> {
+  const { data } = await api.post<RagJob>("/v1/rag/index/all");
+  return data;
+}
+
 // ── v1.17: persisted per-project chat rooms ────────────────────────────
 
 export interface StoredChatMessage {

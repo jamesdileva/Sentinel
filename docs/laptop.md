@@ -134,6 +134,19 @@ git pull                         # update the repo (includes the staged dashboar
 - "What happened this run?" → `data/logs/sentinel.log` (repo `data/logs/`).
   Overwritten at every start, INFO level, includes uvicorn's own logs —
   the place to look after a forced shutdown or an error cascade that
-  scrolled past the console.
+  scrolled past the console. Since v1.17.6.4 the `POST /api/embed` httpx
+  flood is silenced (WARNING), so the file shows app + uvicorn activity
+  only, each line exactly once.
+- Projects indexed but the AI architecture summary is missing (files show
+  embedded, no summary; v1.17.6.3 timeout or post-reset case) → **Re-index
+  all projects** button on the Knowledge page (v1.17.6.4): incremental —
+  already-embedded files are skipped, the missing summaries regenerate. The
+  exact same pass from the console (from inside `backend`):
+  `..\.venv\Scripts\python.exe -m app.cli rag-index --all`.
+- Arch-summary generation "timed out" in the log → the client timeout was
+  120 s and 4 concurrent embedding workers saturate Ollama at startup;
+  v1.17.6.4 raises the default to 600 s (`SENTINEL_OLLAMA_TIMEOUT_SECONDS`
+  overrides in `.env`). Summary still failed → run the re-index-all above,
+  it backfills.
 - After moving the repo folder on disk: the venv paths in the Task-Scheduler task
   are absolute — uninstall and re-install it (`scripts/install_service.py`).

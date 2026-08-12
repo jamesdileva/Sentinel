@@ -584,7 +584,7 @@ File: `backend/app/services/ollama_service.py`
 class OllamaService:
     """HTTP client for Ollama LLM inference server."""
 
-    def generate(self, prompt: str, model: str = "gemma2", max_tokens: int = 500, temperature: float = 0.3) -> str:
+    def generate(self, prompt: str, model: str = "llama3.1:8b", max_tokens: int = 500, temperature: float = 0.3) -> str:
         """Generate text completion."""
 
     def embed(self, text: str, model: str = "nomic-embed-text") -> list[float]:
@@ -600,7 +600,7 @@ class OllamaService:
         """Download a model from Ollama registry."""
 ```
 
-**Configuration:** Endpoint (`http://ollama:11434`), model (`gemma2`), embedding model (`nomic-embed-text`).
+**Configuration:** Endpoint (`http://ollama:11434`), model (`llama3.1:8b`), embedding model (`nomic-embed-text`).
 
 ---
 
@@ -820,7 +820,7 @@ class WorldSimulatorService:
 **Isolation guarantees:**
 - Separate SQLite database file (`data/world_sim/world.db`)
 - Separate ChromaDB collection (`world_sim_entities`)
-- Separate Ollama model (`llama3` vs project's `gemma2`)
+- Separate Ollama model (`llama3` vs project's `llama3.1:8b`)
 - Separate Docker container with CPU/memory limits
 - No network access to project services
 
@@ -854,7 +854,7 @@ vector_db:
 
 ollama:
   host: "http://ollama:11434"
-  model: "gemma2"
+  model: "llama3.1:8b"
   embedding_model: "nomic-embed-text"
   world_sim_model: "llama3"
   timeout_seconds: 120
@@ -925,7 +925,7 @@ Read from the repo-root `.env` (Sprint 15: no containers — the backend process
 | `SENTINEL_DB_PATH` | `data/sqlite/sentinel.db` | SQLite database path (repo root) |
 | `SENTINEL_CHROMA_PATH` | `data/chroma` | ChromaDB persistence directory |
 | `SENTINEL_OLLAMA_HOST` | `http://localhost:11434` | Ollama server endpoint (laptop: `http://192.168.4.40:11434`) |
-| `SENTINEL_OLLAMA_MODEL` | `gemma2` | LLM model for project AI |
+| `SENTINEL_OLLAMA_MODEL` | `llama3.1:8b` | LLM model for project AI |
 | `SENTINEL_EMBEDDING_MODEL` | `nomic-embed-text` | Embedding model |
 | `SENTINEL_WATCH_DIRS` | `<home>` (current user) | Comma-separated project directories (v1.16.2: defaults to `Path.home()` so the laptop works out of the box) |
 | `SENTINEL_AUTO_INDEX_KNOWLEDGE` | `true` | v1.17: after the startup scan, queue RAG indexing for projects with unembedded files (Ollama-gated) |
@@ -1029,7 +1029,7 @@ Step 2: Query Processing
   User question → Embedding (nomic-embed-text) → ChromaDB similarity search → Top-K context chunks
 
 Step 3: Answer Generation
-  Retrieved context + question → Ollama (gemma2) → Grounded answer
+  Retrieved context + question → Ollama (llama3.1:8b) → Grounded answer
 
 Step 4: Post-processing
   Answer + source metadata → Frontend display with source links
@@ -1042,7 +1042,7 @@ Step 4: Post-processing
 
 RAG_CONFIG = {
     "embedding_model": "nomic-embed-text",
-    "llm_model": "gemma2",
+    "llm_model": "llama3.1:8b",
     "max_context_chunks": 5,
     "min_relevance_score": 0.3,
     "prompt_template": """
@@ -1312,7 +1312,7 @@ def explain_finding(self, finding: SecurityFinding, project_context: str) -> str
     Project Context:
     {project_context}
     """
-    return self.ollama_service.generate(prompt, model="gemma2")
+    return self.ollama_service.generate(prompt, model="llama3.1:8b")
 ```
 
 ---
@@ -1756,9 +1756,11 @@ instead of cloning if preferred, then follow §13.1 minus `git clone`.
 | Symptom | Cause | Fix |
 |---------|-------|-----|
 | `run.py` warns *frontend not built* | `backend/app/static/index.html` missing | `.\.venv\Scripts\python.exe scripts\build.py --dist` before serving |
-| "What happened this run?" (console scrolled past, errors vanished) | The run's log is at `data/logs/sentinel.log` — overwritten at every start, INFO level, includes uvicorn's own loggers (v1.17.6.3) | Read it after a crash: it answers what ran, what errored, and what the shutdown cascade was |
+| "What happened this run?" (console scrolled past, errors vanished) | The run's log is at `data/logs/sentinel.log` — overwritten at every start, INFO level, includes uvicorn's own loggers (v1.17.6.3). Since v1.17.6.4 the httpx request flood (`POST /api/embed` per embed call) is silenced to WARNING and every line is written exactly once | Read it after a crash: it answers what ran, what errored, and what the shutdown cascade was |
 | Dashboard shows stale UI after `git pull` | The served build is the staged one, not `frontend/dist` | Re-run `scripts/build.py --dist`; restart the backend |
 | Port 8000 already in use | Another Sentinel instance is running (a second console left open, or an orphaned uvicorn child after a hard kill of `run.py`) | Since v1.17.6.3 `run.py` prints the owning PID (`netstat -ano`) and a `taskkill /F /PID <pid>` hint instead of a raw bind traceback — close the other console, kill that PID, or serve elsewhere (`--port 8100` / `SENTINEL_PORT`) |
+| Projects indexed but missing the AI architecture summary (files embedded, no summary) | Summary embedding absent — wiped by a reset (v1.17.6.2/6.3 dedupe bug) or its generation timed out (v1.17.6.3, 120 s default) | Knowledge page **Re-index all projects** button (v1.17.6.4) or `rag-index --all` — incremental: embedded files are skipped, missing summaries regenerate, one bad project never aborts the pass |
+| `rag-index` / `sentinel` "not recognized" | The CLI is `python -m app.cli` from inside `backend`, never a bare command (`sentinel` is not on PATH) | `cd backend` then `..\.venv\Scripts\python.exe -m app.cli rag-index --all` (venv lives at the repo root; other machines may use `backend\.venv\...`) |
 | Server dies after reboot | Autostart task not installed, or paths moved | `.\.venv\Scripts\python.exe scripts\install_service.py --install` (task uses absolute venv paths) |
 | `sentinel sync` → *SENTINEL_GITHUB_TOKEN is not configured* | Token missing in `.env` | Set the PAT; restart the backend |
 | New repos never appear after a push | Sync interval not elapsed | `..\.venv\Scripts\python.exe -m app.cli sync` (from inside `backend`) for an immediate pass |
@@ -1886,6 +1888,8 @@ relationships aren't persisted, so they're intentionally absent.
 | 2026-08-11 | 1.17.6 | Damaged knowledge index made detectable and recoverable. **ChromaManager** (`services/chroma_manager.py`): per-collection operation locks (RLock — two knowledge jobs can no longer interleave upserts on one collection), cached health probe that actually touches each non-empty collection's HNSW segment reader (`count()` only reads metadata, so a wiped segment dir still reported healthy), `RagIndexError` translating ChromaDB's `InternalError: Nothing found on disk` (killed write) into a **503 + rebuild hint** instead of a bare 500, `delete_by_project()` sweeping the **real** collections (the GC previously deleted from a phantom `knowledge` collection, orphaning vectors forever) and `reset_all()` as the deterministic recovery. **API**: `GET /rag/index/status` now carries `health` (`broken`/`checked`); `POST /rag/index/reset` (202 job) runs `run_reset_knowledge` (registry entry). **CLI**: `rag-index --reset` (no Ollama, no project id needed). **Frontend**: Knowledge page shows a damaged-index banner + "Rebuild knowledge index" confirm-action. **Scheduler**: graceful shutdown — `cancel_futures=True` used to kill an in-flight index mid-upsert, the exact corruption this release detects; workers now drain. **RAG queries**: all-project questions are summary-first (architecture summaries fill the top slots before noisier collections) and context lines now name the source project (metadata only ever stored ids). Tests: +10 backend (API 503/reset/health, delete_by_project on real collections, reset heals the probe, summary-first ordering, project names in context, task/registry/CLI reset), +2 frontend (banner + rebuild action, cancel path) | AI agent |
 | 2026-08-11 | 1.17.6.1 | Reset recovery completed: `run_reset_knowledge` (`tasks/rag_tasks.py`) now also clears `ProjectFile.embedding_id` after dropping the collections — `ingest_files` skips any file whose flag is set (the v1.17.1 incremental optimization), so a reset that kept the flags would re-embed **nothing** and the index would stay empty forever. The task returns `files_unflagged`; the next index (startup auto-index or `sentinel rag-index`) rebuilds everything. Tests: +1 (flags cleared after reset; the v1.17.6 task test updated for the new return value) | AI agent |
 | 2026-08-11 | 1.17.6.2 | Laptop recovery: RAG chat + semantic search work again after a damaged index. **Probe fixed** (`services/chroma_manager.py` `health`): the v1.17.6 probe (`get(limit=1)`) could pass while the query path raised (`Nothing found on disk`) — the laptop showed "damaged" 503s in chat while the dashboard reported healthy, so the rebuild banner never appeared; the probe now runs a real query with a stored embedding, the exact operation search uses. `reset()` also tolerates `InternalError` during `delete_collection` (a broken store can raise on drop — treated as reset since the collection is being discarded). **Auto-index always includes the AI architecture summary**: `queue_knowledge_index_unembedded` (startup scan + repo-sync pass) submits `run_index_knowledge` with `with_summary=True`, and `ingest_project_summary` dedupes to **once per project** (an existing `architecture` summary is reused — no Ollama burn per scan; CLI `rag-index <project> --summary` forces a regenerate via `force_summary`). Dashboard "Include AI architecture summary" checkbox removed (redundant; API `with_summary` param kept). New projects and post-reset re-indexes get summaries automatically, so all-project chat ("what are these projects about") is summary-first as designed. Deferred (noted): summary regeneration when repos change / after re-index — needs file-change detection (edits are never re-embedded today); the sync pass already knows changed repos, so the hook is cheap to add later. Tests: +5 backend (query-path probe broken+healthy, reset tolerating InternalError, summary dedupe + force, queued auto-index args), +1 frontend update (checkbox removed, always-summary) | AI agent |
+| 2026-08-12 | 1.17.6.5 | **Default LLM switched to `llama3.1:8b`** (was `gemma2`). Head-to-head on the architecture-summary prompt (same `project_summary.j2` template + 8-file/600-char context, app defaults 500 tokens / temp 0.3): gemma2 — 186 tokens, 6.3 tok/s, tight high-level summary that correctly said the context was thin; llama3.1:8b — 294 tokens, 9.0 tok/s, better-structured summary (components / stack / notes, picked up the AGENTS.md rules). Won on structure + speed + instruction following; the prompt already enforces "say so rather than guessing". Changes: `settings.ollama_model` + `world_sim_model` defaults → `llama3.1:8b` (world-sim narratives are deterministic templates — `world_sim_model`/`world_sim_ai_narratives` are currently unused, kept consistent for future AI-narrative wiring), CLI pull guidance (both `ollama pull` messages), `.env.example`, AGENTS.md decision table, docs current-state references. Existing summaries keep their `model` provenance; new generations use the new model — migrate the laptop's summaries with `rag-index <project> --summary` per project. No test changes (no test asserts the default; fixture strings are arbitrary) | AI agent |
+| 2026-08-12 | 1.17.6.4 | Run-log cleanup + re-index-all command. **Log noise** (`app/core/logging.py`): `httpx`/`httpcore` set to WARNING — the 1.17.6.3 run log was ~500 `POST /api/embed` lines in ~1800 (that detail already lives in the activity feed and the Ollama query log). **Deterministic single-write run log**: the file handler is pinned on `uvicorn`/`uvicorn.error`/`uvicorn.access` *and* root, with `propagate=False` forced on the uvicorn loggers, so every line lands in `data/logs/sentinel.log` exactly once regardless of uvicorn's own log config (a pinned handler on a propagating logger chain could write a record two or three times). **Ollama timeout** (`app/core/config.py`): default `ollama_timeout_seconds` 120 → 600 — a laptop saturated by 4 concurrent embedding workers timed out arch-summary generation at 2 min; 10 min covers the slow gemma2 case; `SENTINEL_OLLAMA_TIMEOUT_SECONDS` overrides. **Re-index all projects**: Knowledge-page "Re-index all projects" button + `POST /api/v1/rag/index/all` (`api/v1/rag.py`) + CLI `rag-index --all` (`app/cli.py`) — one deterministic job (`tasks/rag_tasks.py` `run_index_knowledge_all`) loops every project with `with_summary=True`; fully incremental (`ingest_files` skips files whose `embedding_id` is set), so it backfills missing AI architecture summaries without re-embedding (the 1.17.6.3 timed-out summary jobs are exactly this case) and embeds new files from a recent `git pull`; one project's failure never aborts the pass (per-project try/except, `failed` counter). Tests: +8 backend (endpoint queues one job, CLI `--all` runs the task and usage lists it, re-index-all skips embedded files + regenerates a missing summary + survives one bad project, uvicorn loggers pinned propagate=False single-write, httpx silenced to WARNING), frontend reindex-button test | AI agent |
 | 2026-08-11 | 1.17.6.3 | Post-laptop-log runbook pass. **Summary dedupe fixed** (`rag_service.py` `ingest_project_summary`): the v1.17.6.2 dedupe checked the SQLite `KnowledgeSummary` row, not the embedding — `reset()` drops the `project_summaries` collection but keeps the rows, so a post-reset re-index skipped the architecture summary entirely (files re-embedded, `project_summaries` count stayed 0, all-project chat lost its summary-first answers). The dedupe now skips only when the vector exists (`get(where={"$and": [...]})`; damaged-store errors count as missing) and a regeneration reuses the newest row instead of duplicating it — `force` (CLI `--summary`) unchanged. **Per-run log file** (`app/core/logging.py`): `data/logs/sentinel.log` — truncated at startup, INFO level, answers "what happened this run" (the case that started this: a forced shutdown mid-index scrolled the console and vanished). `attach_file_logging()` re-attaches the single file handler at lifespan startup (uvicorn's log config replaces root handlers after app import) and pins it on the `uvicorn`/`uvicorn.error`/`uvicorn.access` loggers (propagate=False) — no duplicated lines, no lost uvicorn logs. **run.py port-owner message**: starting while another instance runs (a second console left open — the v1.17.6.3 trigger) prints the owning PID via `netstat -ano` + a `taskkill` hint instead of uvicorn's raw bind traceback. Tests: +5 backend (summary regenerates after reset with row reuse, once-per-project dedupe maintained, run-log written at INFO, overwrite-mode handler, attach idempotent on root + uvicorn loggers) | AI agent |
 | 2026-08-10 | 1.17.4 | Duplicate-repo fix + feed cleanup after the laptop's first real sync. **Duplicated projects**: sync clones into `<watch-root>/<owner>/<repo>` (`Projects\jamesdileva\Sentinel`) but the existing repos live flat at the watch root (`Projects\Sentinel`, …) — the layout check found no checkout, so all 18 repos were cloned a second time and every project indexed twice; `_local_path` now falls back to any checkout directly under the root whose origin remote URL matches `<owner>/<repo>` (normalized: https/ssh/case/.git suffix) and pulls it instead of cloning (deterministic adoption, `_find_existing_checkout`; flat layouts are never duplicated again). **world_tick feed spam**: the world-sim beat fires every 60 s and each tick published `running` + `finished` activity events (~2880/day, flooding the live feed + DB); beats can now be registered `quiet=True` and the world-sim tick is — per-tick log lines unchanged, on-demand jobs and the sync/scan beats keep their events. **Dashboard build shipped**: v1.17.3's System→Dashboard merge + Settings placeholder never reached the laptop because `backend/app/static` still held the pre-merge build (it is tracked, so the rebuilt assets are now committed; System now shows the Settings placeholder and the Dashboard has the Home server section). Tests: +8 backend (flat-adoption variants + quiet-beat, 35 in the two touched files), 94.5 % total | AI agent |
 | 2026-08-09 | 1.17.2 | Living-week fixes. **No more re-embedding on restart**: `IndexerService._index_files` (§3.1) deleted + re-inserted every `project_file` row per scan, nulling `embedding_id` (Chroma doc ids are the row ids) — auto index re-embedded all 2.9k files after every restart; rows now keyed by path, unchanged files keep id + embedding_id, vanished files drop. **Shared Chroma client** (§6.1): a startup burst of knowledge jobs constructed `PersistentClient`s concurrently and raced ChromaDB's shared-system registry (`'RustBindingsAPI' has no attribute 'bindings'`) — `get_chroma_manager()` hands out one locked client per path (`rag_service.py` default). **Activity feed caching**: `useActivity` mount-seed re-runs when the WS opens and retries once after an empty first load — cached history shows on entering the dashboard; `activity_bus` persist failures now WARN (were debug; the laptop's history could vanish silently). **Embedding t/s**: `OllamaService.embed_with_metrics` (Ollama `prompt_eval_count/duration`) → knowledge progress ticks carry `tokens_per_second` (`rag_tasks.progress` `detail` "~N tok/s") during indexing; generations/chat t/s unchanged. External Ollama clients stay invisible by design — Sentinel measures only its own calls. Tests: +10 backend / 70 vitest | AI agent |

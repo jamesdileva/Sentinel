@@ -418,6 +418,88 @@ def test_reset_knowledge_task_clears_embedding_ids(tmp_db, tmp_path, monkeypatch
         assert files and all(f.embedding_id is None for f in files)
 
 
+def test_run_index_knowledge_all_skips_embedded_and_backfills_summaries(
+    tmp_db, tmp_path, monkeypatch
+):
+    """v1.17.6.4: the re-index-all pass is incremental — files with an
+    embedding_id are skipped (no re-embedding), while a missing architecture
+    summary (post-reset, or a v1.17.6.3 timed-out generation) is
+    regenerated."""
+    from sqlmodel import select
+
+    from app.core.config import settings
+    from app.db.models import KnowledgeSummary
+    from app.services.chroma_manager import get_chroma_manager
+    from app.tasks import rag_tasks
+
+    monkeypatch.setattr(settings, "chroma_path", tmp_path / "shared")
+    project_id = _index_project(tmp_db)
+    with Session(connection.get_engine()) as session:
+        project = RagService.get_project(session, project_id)
+        service = RagService(
+            session,
+            embedder=_fake_embedder,
+            llm=_fake_llm,
+            chroma=get_chroma_manager(),
+        )
+        counts = service.index_project(project, with_summary=True)
+        assert counts["file_summaries"] >= 1
+        files_before = get_chroma_manager().count("file_summaries")
+        service.chroma.reset("project_summaries")
+
+    class FakeRag(rag_tasks.RagService):
+        def __init__(self, session):
+            super().__init__(session, embedder=_fake_embedder, llm=_fake_llm)
+
+    monkeypatch.setattr(rag_tasks, "RagService", FakeRag)
+    result = rag_tasks.run_index_knowledge_all()
+
+    assert result == {"projects": 1, "ok": 1, "failed": 0}
+    assert get_chroma_manager().count("project_summaries") == 1
+    assert get_chroma_manager().count("file_summaries") == files_before
+    with Session(connection.get_engine()) as session:
+        rows = session.exec(
+            select(KnowledgeSummary).where(KnowledgeSummary.project_id == project_id)
+        ).all()
+        assert len(rows) == 1  # the regenerated summary, not a duplicate
+
+
+def test_run_index_knowledge_all_survives_one_bad_project(
+    tmp_db, tmp_path, monkeypatch
+):
+    """v1.17.6.4: a single project whose re-index raises must not abort the
+    pass — the remaining projects still complete (deterministic runbook)."""
+    from app.core.config import settings
+    from app.db.models import Project
+    from app.tasks import rag_tasks
+
+    monkeypatch.setattr(settings, "chroma_path", tmp_path / "shared")
+    _index_project(tmp_db)
+    with Session(connection.get_engine()) as session:
+        session.add(
+            Project(
+                name="Kaboom",
+                path=str(tmp_path / "kaboom"),
+                language="python",
+            )
+        )
+        session.commit()
+
+    class FakeRag(rag_tasks.RagService):
+        def __init__(self, session):
+            super().__init__(session, embedder=_fake_embedder, llm=_fake_llm)
+
+        def index_project(self, project, **kwargs):
+            if project.name == "Kaboom":
+                raise RuntimeError("boom")
+            return {"file_summaries": 0}
+
+    monkeypatch.setattr(rag_tasks, "RagService", FakeRag)
+    result = rag_tasks.run_index_knowledge_all()
+
+    assert result == {"projects": 2, "ok": 1, "failed": 1}
+
+
 # ── v1.17.6.2: query-based health probe / summary dedupe ────────────────
 
 

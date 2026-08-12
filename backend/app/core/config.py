@@ -34,9 +34,13 @@ class Settings(BaseSettings):
     chroma_path: Path = BASE_DIR / "data" / "chroma"
 
     ollama_host: str = "http://localhost:11434"
-    ollama_model: str = "gemma2"
+    # v1.17.6.5: llama3.1:8b won the head-to-head over gemma2 on the
+    # architecture-summary prompt (better structure, ~40% faster tok/s,
+    # stronger instruction following); see docs changelog for the test.
+    ollama_model: str = "llama3.1:8b"
     embedding_model: str = "nomic-embed-text"
-    ollama_timeout_seconds: int = 120
+    ollama_timeout_seconds: int = 600  # v1.17.6.4: 120s timed out arch-summary
+    # generation while 4 embedding workers were saturating the local Ollama
 
     # Defaults to the current user's home directory instead of a hardcoded
     # path, so a fresh install on any machine (e.g. the laptop, user `james`)
@@ -69,7 +73,7 @@ class Settings(BaseSettings):
     world_sim_time_scale: int = 1
     world_sim_seed: int = 42
     world_sim_starting_settlements: int = 2
-    world_sim_model: str = "gemma2"
+    world_sim_model: str = "llama3.1:8b"  # unused today (narratives are deterministic)
     world_sim_ai_narratives: bool = True
 
     max_recent_ollama_queries: int = 20
