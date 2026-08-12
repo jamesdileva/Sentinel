@@ -161,9 +161,14 @@ def chat_history(
     limit: int = 100,
     session: Session = Depends(get_session),
 ) -> list[object]:
-    """Persisted chat room for a project (v1.17): newest-last so the client
-    can render the transcript in order. Cap: 500 messages per page."""
-    _project_or_404(project_id, session)
+    """Persisted chat room for a project — or the literal id `__all__` for
+    the all-projects room (v1.17.6.6): the all-scope chat used to skip
+    history loading entirely because the client had no project id to pass;
+    `project_id` is a plain string column, so the sentinel key needs no
+    schema change. Newest-last so the client renders the transcript in
+    order. Cap: 500 messages per page."""
+    if project_id != "__all__":
+        _project_or_404(project_id, session)
     stmt = (
         select(ChatMessage)
         .where(ChatMessage.project_id == project_id)
@@ -179,10 +184,12 @@ def chat_save(
     payload: ChatMessageCreate,
     session: Session = Depends(get_session),
 ) -> ChatMessage:
-    """Persist one exchange of the project chat room. The client saves the
-    question (`role="user"`) and the grounded answer (`role="assistant"`)
-    exactly as produced by /rag/query."""
-    _project_or_404(project_id, session)
+    """Persist one exchange of the project chat room — or of the `__all__`
+    all-projects room (v1.17.6.6). The client saves the question
+    (`role="user"`) and the grounded answer (`role="assistant"`) exactly as
+    produced by /rag/query."""
+    if project_id != "__all__":
+        _project_or_404(project_id, session)
     message = ChatMessage(
         project_id=project_id,
         role=payload.role,

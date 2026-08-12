@@ -3,6 +3,7 @@
 import httpx
 import pytest
 
+from app.core.config import settings
 from app.services.ollama_service import OllamaService, OllamaUnavailableError
 
 
@@ -38,6 +39,7 @@ def test_generate_sends_prompt_and_options():
     assert payload["stream"] is False
     assert payload["options"]["num_predict"] == 123
     assert payload["options"]["temperature"] == 0.5
+    assert payload["options"]["num_ctx"] == settings.ollama_num_ctx  # v1.17.6.6
     service.close()
 
 

@@ -80,7 +80,28 @@ NOT need to set it — the repos just need to live under `~` (or set
 value). The `repo-sync` beat keeps GitHub checkouts current every 24 h
 (`SENTINEL_SYNC_INTERVAL_MINUTES` — a sync also runs once at startup, and the
 header "Sync now" button forces one immediately) and auto-queues knowledge
-(RAG) indexing when Ollama is up.
+(RAG) indexing when Ollama is up. Since v1.17.6.6 the **security scan runs at
+the end of each sync pass** (sync → knowledge index → security scan) — there
+is no separate scan schedule anymore, so every project is scanned at least
+once per 24 h cycle.
+
+## v1.17.6.6 upgrade steps (one-time)
+
+Markdown files are now chunked (2000 chars/overlap) and summaries are built
+from docs-first context + recent commit messages — the stored vectors and
+summaries were made with the old scheme, so re-generate them once:
+
+```powershell
+git pull
+# stop the server if it runs (taskkill the run.py PID from `netstat -ano`)
+.\.venv\Scripts\python.exe -m app.cli rag-index --reset   # inside backend\
+.\.venv\Scripts\python.exe run.py                          # restart — auto-index re-embeds everything
+```
+
+Or use the Knowledge page: **Rebuild knowledge index**, then **Re-index all
+projects** (v1.17.6.4). Expected runtime for the full rebuild of ~2.9k files
+on this laptop: a few hours. After the first 24 h sync cycle, Portfolio
+security cells flip from `pending` to `clean` automatically.
 
 ## Daily operations
 
@@ -150,3 +171,8 @@ git pull                         # update the repo (includes the staged dashboar
   it backfills.
 - After moving the repo folder on disk: the venv paths in the Task-Scheduler task
   are absolute — uninstall and re-install it (`scripts/install_service.py`).
+- Portfolio security cell shows `⚠ pending` on every project right after an
+  upgrade → not a bug since v1.17.6.6: "never scanned" is now distinct from
+  "scanned and clean". Scans run chained to the daily repo-sync (or force one
+  with `POST /api/v1/security/scan?project_id=` from the dashboard's Security
+  page); the cell flips to `✓ clean` after the first scan with no findings.

@@ -91,7 +91,10 @@ def run_security_scan_task(project_id: str) -> dict:
 
 
 def run_security_scan_all() -> dict:
-    """Scheduled beat task: scan every indexed project."""
+    """Scan every indexed project (v1.17.6.6: the daily scan runs as the
+    final step of the repo-sync pass — sync -> index(if needed) -> scan —
+    instead of a separate hourly beat; the manual Security-page scan is
+    unchanged)."""
     with Session(get_engine()) as session:
         from app.repositories import ProjectRepository
 

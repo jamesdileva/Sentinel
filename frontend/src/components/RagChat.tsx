@@ -23,14 +23,14 @@ export default function RagChat({ projectId }: RagChatProps) {
 
   useEffect(() => {
     let active = true;
+    // v1.17.6.6: the all-projects chat (no `projectId`) lives in the
+    // `__all__` room on the backend, so it loads and persists its history
+    // like any project room instead of silently resetting on tab switches.
+    const room = projectId ?? "__all__";
     setMessages([]);
     nextId.current = 1;
     setHistoryLoaded(false);
-    if (!projectId) {
-      setHistoryLoaded(true);
-      return;
-    }
-    getChatHistory(projectId)
+    getChatHistory(room)
       .then((rows) => {
         if (!active) return;
         setMessages(
@@ -41,7 +41,7 @@ export default function RagChat({ projectId }: RagChatProps) {
             sources: (row.sources ?? []).map((source) => ({
               source,
               content: "",
-              project_id: projectId,
+              project_id: room,
               file_path: null,
               distance: 0,
             })),
@@ -69,8 +69,8 @@ export default function RagChat({ projectId }: RagChatProps) {
       text: string,
       extra?: Partial<ChatMessageData>,
     ) => {
-      if (!projectId) return;
-      saveChatMessage(projectId, {
+      const room = projectId ?? "__all__";
+      saveChatMessage(room, {
         role,
         text,
         sources: extra?.sources?.map((s) => s.file_path || s.source),

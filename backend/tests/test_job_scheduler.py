@@ -84,15 +84,14 @@ def test_beats_registered_with_config_intervals(monkeypatch):
     try:
         jobs = scheduler.beat_jobs
         assert "repo-sync" in jobs
-        assert "nightly-security-scan" in jobs
         assert "world-sim-tick" in jobs
+        # v1.17.6.6: the security scan-all is no longer its own beat — it
+        # runs as the final step of the repo-sync pass.
+        assert "nightly-security-scan" not in jobs
         from datetime import timedelta
 
         assert jobs["repo-sync"].trigger.interval == timedelta(
             minutes=settings.sync_interval_minutes
-        )
-        assert jobs["nightly-security-scan"].trigger.interval == timedelta(
-            minutes=settings.schedule_interval_minutes
         )
     finally:
         scheduler.shutdown()
@@ -114,7 +113,7 @@ def test_start_is_idempotent_shutdown_is_safe():
     scheduler = JobScheduler()
     scheduler.start()
     scheduler.start()  # must not double-register beats
-    assert len(scheduler.beat_jobs) <= 3
+    assert len(scheduler.beat_jobs) <= 2
     scheduler.shutdown()
     scheduler.shutdown()  # second shutdown must not raise
 

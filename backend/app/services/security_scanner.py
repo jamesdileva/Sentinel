@@ -5,6 +5,7 @@ A deterministic local advisory table and regex checks keep scanning testable and
 dependency-free on hosts without those tools.
 """
 
+import datetime
 import re
 from pathlib import Path
 
@@ -161,8 +162,14 @@ class SecurityScanner:
         for row in stale:
             row.resolved = True
 
-        if stale or new_rows:
-            self.session.commit()
+        # v1.17.6.6: every scan — clean or not — stamps `last_scanned` on the
+        # project. Previously a clean scan stored nothing at all, so the
+        # portfolio's security component could never tell "scanned clean"
+        # from "never scanned" and the feature matrix showed ✗ pending
+        # forever. The dedicated marker keeps the findings list clean.
+        project.last_scanned = datetime.datetime.now(datetime.timezone.utc)
+        self.session.add(project)
+        self.session.commit()
         logger.info(
             "Security scan for %s: %d new, %d resolved",
             project.name,

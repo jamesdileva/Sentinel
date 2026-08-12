@@ -178,6 +178,19 @@ def test_security_scanner_clean_project(tmp_db):
         assert findings == []
 
 
+def test_security_scanner_stamps_last_scanned_even_when_clean(tmp_db):
+    """v1.17.6.6: EVERY scan — clean included — stamps `project.last_scanned`,
+    so the portfolio can show ✓ "clean" instead of ✗ "pending" forever (a
+    clean scan previously stored no rows at all)."""
+    project_id = _seed(tmp_db)
+    with Session(connection.get_engine()) as session:
+        project = SecurityScanner.get_project(session, project_id)
+        assert project.last_scanned is None
+        SecurityScanner(session).scan_project(project)
+        session.refresh(project)
+        assert project.last_scanned is not None
+
+
 def test_security_scanner_skips_false_positives(tmp_db, tmp_path):
     """Sprint 15: data/, fixtures/, .env templates and test files are not
     application source — scanning them must not produce findings."""

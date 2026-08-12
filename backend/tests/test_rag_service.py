@@ -320,8 +320,10 @@ def test_reset_all_heals_health_check(tmp_db, tmp_path):
 
 
 def test_query_all_projects_is_summary_first(tmp_db, tmp_path):
-    """v1.17.6: without a project scope, architecture summaries fill the
-    top slots before noisier collections get their chance."""
+    """v1.17.6: without a project scope, architecture summaries are consulted
+    before the noisier collections. v1.17.6.6: the combined hits are then
+    ranked by true distance, so the closest chunk (summary OR doc) surfaces
+    first — honest nearest-first ordering instead of collection priority."""
     project_id = _index_project(tmp_db)
     with Session(connection.get_engine()) as session:
         project = RagService.get_project(session, project_id)
@@ -329,7 +331,9 @@ def test_query_all_projects_is_summary_first(tmp_db, tmp_path):
     with Session(connection.get_engine()) as session:
         response = _rag(session, tmp_path).query("sample service architecture")
     assert response.sources, "expected at least one source"
-    assert response.sources[0].source == "project_summaries"
+    assert any(s.source == "project_summaries" for s in response.sources)
+    distances = [s.distance for s in response.sources]
+    assert distances == sorted(distances)  # nearest first, no collection bias
     assert any(s.source == "project_summaries" for s in response.sources)
 
 
@@ -626,3 +630,190 @@ def test_summary_regenerated_after_reset(tmp_db, tmp_path):
     assert first["project_summaries"] == 1
     assert reindex["project_summaries"] == 1  # row alone must not block rebuild
     assert len(rows) == 1  # the same row was reused, not duplicated
+
+
+# ── v1.17.6.6: doc chunking / docs-first summaries / scaled all-scope ──
+
+
+def _utc(year: int, month: int, day: int):
+    import datetime
+
+    return datetime.datetime(year, month, day, tzinfo=datetime.timezone.utc)
+
+
+def test_doc_files_chunked_and_code_single_chunk(tmp_db, tmp_path):
+    """v1.17.6.6: Markdown documentation is embedded in overlapping chunks
+    (ids `row#i`, metadata keeps `file_path`) so vectors cover the WHOLE doc
+    — not just the first 4k chars; code files stay a single truncated chunk
+    (source lines keep their context when cited)."""
+    from sqlmodel import select
+
+    from app.db.models import ProjectFile
+
+    root = tmp_path / "chunky"
+    root.mkdir()
+    (root / "README.md").write_text(
+        "HEAD-MARKER\n" + ("A" * 2400) + "\nTAIL-MARKER" + ("B" * 120),
+        encoding="utf-8",
+    )
+    (root / "main.py").write_text("# main\n" + ("x" * 8000), encoding="utf-8")
+
+    with Session(connection.get_engine()) as session:
+        rag = _rag(session, tmp_path)
+        project = IndexerService(session).index_project(str(root))
+        counts = rag.index_project(project)
+        assert counts["file_summaries"] == 3  # 2 README chunks + 1 code chunk
+
+        data = rag.chroma.collection("file_summaries").get(
+            include=["documents", "metadatas"]
+        )
+        docs_by_file: dict[str, list[str]] = {}
+        for doc, meta in zip(data["documents"], data["metadatas"]):
+            docs_by_file.setdefault(meta["file_path"], []).append(doc)
+
+        readme_docs = docs_by_file["README.md"]
+        assert len(readme_docs) == 2
+        assert any("HEAD-MARKER" in d for d in readme_docs)
+        # the tail lies beyond the first 2000 chars — only chunking finds it
+        assert any("TAIL-MARKER" in d for d in readme_docs)
+        assert any(meta["file_path"] == "README.md" for meta in data["metadatas"])
+
+        code_docs = docs_by_file["main.py"]
+        assert len(code_docs) == 1
+        assert len(code_docs[0]) <= 4000 + len("main.py\n\n")  # truncated once
+
+    with Session(connection.get_engine()) as session:
+        files = session.exec(
+            select(ProjectFile).where(ProjectFile.project_id == project.id)
+        ).all()
+        # the ProjectFile marker still covers the whole file (incremental skip)
+        assert all(f.embedding_id == f.id for f in files)
+
+
+def test_chunk_document_bounds(tmp_path):
+    """v1.17.6.6: the chunker returns overlapping fixed-size chunks and
+    always at least one; it stops at the per-file cap."""
+    from app.services.rag_service import _DOC_CHUNK_MAX, _chunk_document
+
+    content = "x" * 4500
+    chunks = _chunk_document(content)
+    assert len(chunks) == 3  # 2000/200-overlap on 4500 chars
+    assert all(chunks[i].startswith("x") for i in range(3))
+    assert content in "".join(chunks)  # overlap preserves every byte
+    assert len(_chunk_document("tiny")) == 1
+    assert len(_chunk_document("y" * (_DOC_CHUNK_MAX * 2000 + 500))) == _DOC_CHUNK_MAX
+
+
+def test_summary_context_ranks_docs_first_and_appends_commits(tmp_db, tmp_path):
+    """v1.17.6.6: `_file_summary_context` ranks root README > docs/ markdown
+    > entry files > code (the old by-path sampling buried the docs), and
+    appends recent commit messages so the summary can reflect the project's
+    phase history (sprints ~ git history)."""
+    from app.db.models import GitCommit, Project, ProjectFile
+
+    root = tmp_path / "docsy"
+    (root / "src").mkdir(parents=True)
+    (root / "docs").mkdir()
+    (root / "README.md").write_text("README CONTENT 101", encoding="utf-8")
+    (root / "docs" / "sprint-plan.md").write_text("SPRINT PLAN", encoding="utf-8")
+    (root / "docs" / "implementation.md").write_text("IMPL GUIDE", encoding="utf-8")
+    (root / "run.py").write_text("run entry", encoding="utf-8")
+    (root / "src" / "util.py").write_text("code", encoding="utf-8")
+    (root / "notes.txt").write_text("notes", encoding="utf-8")
+
+    with Session(connection.get_engine()) as session:
+        project = Project(name="docsy", path=str(root), language="python")
+        session.add(project)
+        session.flush()
+        session.add_all(
+            [
+                ProjectFile(
+                    project_id=project.id,
+                    path="README.md",
+                    absolute_path=str(root / "README.md"),
+                ),
+                ProjectFile(
+                    project_id=project.id,
+                    path="docs/sprint-plan.md",
+                    absolute_path=str(root / "docs" / "sprint-plan.md"),
+                ),
+                ProjectFile(
+                    project_id=project.id,
+                    path="docs/implementation.md",
+                    absolute_path=str(root / "docs" / "implementation.md"),
+                ),
+                ProjectFile(
+                    project_id=project.id,
+                    path="run.py",
+                    absolute_path=str(root / "run.py"),
+                ),
+                ProjectFile(
+                    project_id=project.id,
+                    path="src/util.py",
+                    absolute_path=str(root / "src" / "util.py"),
+                ),
+                ProjectFile(
+                    project_id=project.id,
+                    path="notes.txt",
+                    absolute_path=str(root / "notes.txt"),
+                ),
+            ]
+        )
+        session.add_all(
+            [
+                GitCommit(
+                    project_id=project.id,
+                    hash="a1",
+                    message="feat: add scraper",
+                    timestamp=_utc(2026, 8, 1),
+                ),
+                GitCommit(
+                    project_id=project.id,
+                    hash="a2",
+                    message="docs: sprint 3 wrap-up",
+                    timestamp=_utc(2026, 8, 2),
+                ),
+            ]
+        )
+        session.commit()
+        rag = _rag(session, tmp_path)
+        context = rag._file_summary_context(project)
+
+    assert context.index("README.md") < context.index("docs/sprint-plan.md")
+    assert context.index("docs/sprint-plan.md") < context.index(
+        "docs/implementation.md"
+    )
+    assert context.index("docs/implementation.md") < context.index("run.py")
+    assert context.index("run.py") < context.index("src/util.py")
+    assert context.index("src/util.py") < context.index(
+        "notes.txt"
+    )  # last: not a doc/entry file
+    assert "Recent commit history (newest first):" in context
+    assert "feat: add scraper" in context and "docs: sprint 3 wrap-up" in context
+
+
+def test_all_scope_query_scales_top_k_with_project_count(tmp_db, tmp_path):
+    """v1.17.6.6: portfolio-wide questions raise their retrieval to the
+    indexed-project count (capped), so "what do these projects do?" sees one
+    summary per project instead of stopping at the fixed top_k."""
+    with Session(connection.get_engine()) as session:
+        rag = _rag(session, tmp_path)
+        root = tmp_path / "portfolio"
+        for i in range(7):
+            project_dir = root / f"service-{i}"
+            project_dir.mkdir(parents=True)
+            (project_dir / "README.md").write_text(
+                f"Service {i}: pipeline worker for data processing.",
+                encoding="utf-8",
+            )
+            project = IndexerService(session).index_project(str(project_dir))
+            rag.index_project(project, with_summary=True)
+
+    with Session(connection.get_engine()) as session:
+        response = _rag(session, tmp_path).query("what do these services do?", top_k=2)
+
+    summaries = [s for s in response.sources if s.source == "project_summaries"]
+    assert len(summaries) == 7  # scaled up from the requested top_k=2
+    assert len(summaries) == len({s.project_id for s in summaries})
+    assert response.answer  # still generated and grounded
+    assert response.confidence >= 0.0

@@ -278,6 +278,38 @@ def test_summary_counts():
     assert summary["avg_health"] == round((92.5 + 65.0 + 0.0) / 3, 1)
 
 
+def test_clean_scan_flips_pending_to_clean():
+    """v1.17.6.6: gamma has no findings — pending while never scanned, but
+    clean as soon as a scan stamped `last_scanned` (the scanner does this on
+    every run, so a zero-finding scan is visibly healthy)."""
+    engine = make_engine()
+    projects = seed(engine)
+    svc = make_service(engine)
+    assert svc._security_component(projects["gamma"]) == (0.0, "pending")
+    with Session(engine, expire_on_commit=False) as session:
+        gamma = session.get(Project, projects["gamma"].id)
+        gamma.last_scanned = datetime.datetime.now(datetime.timezone.utc)
+        session.commit()
+    assert svc._security_component(gamma) == (25.0, "clean")
+
+
+def test_clean_scan_invalidates_cached_pending_score():
+    """A clean scan writes no finding row, so the PortfolioScore cache would
+    keep serving the stale "pending" verdict — `last_scanned` must count as
+    a source-epoch change (v1.17.6.6)."""
+    engine = make_engine()
+    projects = seed(engine)
+    svc = make_service(engine)
+    svc.scores()  # prime the cache: gamma cached as pending/0
+    with Session(engine, expire_on_commit=False) as session:
+        gamma = session.get(Project, projects["gamma"].id)
+        gamma.last_scanned = datetime.datetime.now(datetime.timezone.utc)
+        session.commit()
+    row = svc._fresh_row(gamma)
+    assert row.security_status == "clean"
+    assert row.portfolio_score == 25.0  # security 25, no build/test/docs
+
+
 # ---------------------------------------------------------------------------
 # candidates + matrix
 # ---------------------------------------------------------------------------

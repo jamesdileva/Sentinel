@@ -303,6 +303,35 @@ def test_chat_unknown_project_404(tmp_db):
     assert client.get("/api/v1/rag/chat/nope").status_code == 404
 
 
+def test_chat_all_scope_room(tmp_db):
+    """v1.17.6.6: the all-projects chat persists under the literal `__all__`
+    room — no project row required, while real projects still 404-check."""
+    client = TestClient(app)
+    assert (
+        client.post(
+            "/api/v1/rag/chat/__all__",
+            json={"role": "user", "text": "what do these do?"},
+        ).status_code
+        == 201
+    )
+    saved = client.post(
+        "/api/v1/rag/chat/__all__",
+        json={
+            "role": "assistant",
+            "text": "A portfolio of services",
+            "sources": ["project_summaries"],
+            "model": "llama3.1:8b",
+            "confidence": 0.8,
+        },
+    ).json()
+    assert saved["project_id"] == "__all__"
+    history = client.get("/api/v1/rag/chat/__all__").json()
+    assert [m["role"] for m in history] == ["user", "assistant"]
+    assert history[1]["sources"] == ["project_summaries"]
+    # the sentinel key must never satisfy a real project lookup
+    assert client.get("/api/v1/rag/chat/other").status_code == 404
+
+
 # ── v1.17.6: damaged-index detection, health, reset ────────────────────
 
 

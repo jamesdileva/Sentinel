@@ -68,16 +68,18 @@ export async function ragSearch(
   return data;
 }
 
-// Local LLM generation can take a while — use a generous per-request timeout.
+// Local LLM generation can take a while — the backend Ollama timeout is 600s
+// (v1.17.6.4), so the client must not abort first (v1.17.6.6: was 120s,
+// which killed long answers before the backend finished).
 export async function ragQuery(
   question: string,
   projectId?: string,
-  topK = 5,
+  topK = 10,
 ): Promise<RagResponse> {
   const { data } = await api.post<RagResponse>(
     "/v1/rag/query",
     { question, project_id: projectId ?? null, top_k: topK },
-    { timeout: 120_000 },
+    { timeout: 600_000 },
   );
   return data;
 }

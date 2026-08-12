@@ -107,6 +107,30 @@ def test_run_repo_sync_nothing_changed_has_detail(tmp_db, monkeypatch):
     assert published[0]["kwargs"]["detail"]
 
 
+def test_repo_sync_chains_security_scan_all(tmp_db, monkeypatch):
+    """v1.17.6.6: the daily flow is sync -> index (queued) -> security scan;
+    the scan runs as the final step of the repo-sync task (no separate scan
+    beat), and only when the sync is configured."""
+    calls: list[str] = []
+    monkeypatch.setattr(
+        sync_tasks,
+        "run_sync",
+        lambda: {"configured": True, "cloned": [], "pulled": [], "failed": {}},
+    )
+    monkeypatch.setattr(
+        build_tasks, "run_security_scan_all", lambda: calls.append("scan") or {}
+    )
+    sync_tasks.run_repo_sync()
+    assert calls == ["scan"]
+
+    monkeypatch.setattr(
+        sync_tasks, "run_sync", lambda: {"configured": False, "skipped": True}
+    )
+    calls.clear()
+    sync_tasks.run_repo_sync()
+    assert calls == []  # no token -> sync skipped -> no scan
+
+
 # --- build_tasks ----------------------------------------------------------------
 
 

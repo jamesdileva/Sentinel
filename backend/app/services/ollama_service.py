@@ -76,6 +76,11 @@ class OllamaService:
             "options": {
                 "num_predict": max_tokens,
                 "temperature": temperature,
+                # v1.17.6.6: Ollama's default num_ctx (2048) silently truncates
+                # long prompts; raise it so doc-first summary context and
+                # all-scope RAG context are never cut off (llama3.1:8b is a
+                # 128k-context model, tuned down to settings.ollama_num_ctx).
+                "num_ctx": settings.ollama_num_ctx,
             },
         }
         try:

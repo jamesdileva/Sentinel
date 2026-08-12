@@ -3,7 +3,10 @@
 Sentinel now runs as a single process (uvicorn) with no broker or worker
 containers:
 - APScheduler `BackgroundScheduler` runs the periodic beats that Celery beat
-  used to own: repo sync, security scan-all, world-sim tick.
+  used to own: repo sync and the world-sim tick. Since v1.17.6.6 the
+  security scan-all runs as the final step of the repo-sync pass (the
+  sync -> index(if needed) -> security scan flow), so there is no separate
+  scan beat.
 - A small `ThreadPoolExecutor` runs on-demand jobs (build / test / scan /
   knowledge index) submitted by the API, preserving the poll-by-job_id
   envelope semantics (`JobStatus`, `JobEnvelope`).
@@ -25,7 +28,7 @@ from app.services import activity_bus
 
 logger = get_logger(__name__)
 
-_BEAT_IDS = ("repo-sync", "nightly-security-scan", "world-sim-tick")
+_BEAT_IDS = ("repo-sync", "world-sim-tick")
 
 
 def _build_registry() -> dict[str, Callable]:
@@ -106,19 +109,11 @@ class JobScheduler:
             name="repo-sync",
             replace_existing=True,
         )
-        self._beats.add_job(
-            self._beat("run_security_scan_all"),
-            IntervalTrigger(minutes=settings.schedule_interval_minutes),
-            id="nightly-security-scan",
-            name="nightly-security-scan",
-            replace_existing=True,
-        )
         self._beats.start()
         self._started = True
         logger.info(
-            "In-process scheduler started (sync=%dmin scan=%dmin world=%ds)",
+            "In-process scheduler started (sync=%dmin world=%ds)",
             settings.sync_interval_minutes,
-            settings.schedule_interval_minutes,
             settings.world_sim_tick_seconds,
         )
 

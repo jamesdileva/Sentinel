@@ -11,7 +11,7 @@ import datetime
 from pathlib import Path
 from typing import Any, Callable
 
-from sqlmodel import Session, select
+from sqlmodel import Session, func, select
 
 from app.core.config import settings
 from app.core.logging import get_logger
@@ -36,6 +36,31 @@ logger = get_logger(__name__)
 _MAX_DOC_CHARS = 4000
 _RECENT_LIMIT = 20
 
+# v1.17.6.6: documentation (Markdown/README/docs-dir) is chunked so embedded
+# vectors cover the whole file, not just the first 4,000 chars — most RAG
+# answers ("how do I build this app?", runbooks, sprint plans) live there.
+# Code files stay single 4k-chunks: source lines retrieved whole keep their
+# context when cited.
+_DOC_EXTENSIONS = (".md", ".markdown", ".mdx")
+_DOC_CHUNK_CHARS = 2000
+_DOC_CHUNK_OVERLAP = 200
+_DOC_CHUNK_MAX = 32  # a pathological 100k-char doc stops after 32 chunks
+
+# Summary context (v1.17.6.6): llama3.1:8b supports a 128k context, so the
+# architecture summary can read ~10x the files it used to (8 files x 600
+# chars previously hid the README behind the first 8 paths). 25 files x 1500
+# chars ≈ 37k chars ≈ 9-10k tokens — comfortably generated inside 32k
+# num_ctx, with recent commit messages appended as the "sprint history".
+_SUMMARY_FILES = 25
+_SUMMARY_FILE_CHARS = 1500
+_SUMMARY_COMMITS = 25
+
+# All-projects query (v1.17.6.6): scale top_k up to one summary per indexed
+# project (capped) so "what do these projects do?" sees every project, and
+# cut combined sources to a character budget that fits num_ctx.
+_ALL_PROJECT_CAP = 24
+_QUERY_CONTEXT_BUDGET = 48_000
+
 _PROMPTS_DIR = Path(__file__).resolve().parent.parent / "data" / "prompts"
 
 Embedder = Callable[[str], list[float]]
@@ -52,6 +77,33 @@ _ANSWER_TEMPLATE = _read_template("rag_answer.j2")
 
 def _truncate(text: str, limit: int = _MAX_DOC_CHARS) -> str:
     return (text or "")[:limit]
+
+
+def _is_doc_path(path: str) -> bool:
+    """True for Markdown documentation: READMEs, *.md files, anything in a
+    docs/ directory (matches portfolio_service.is_doc_path semantics)."""
+    normalized = (path or "").replace("\\", "/").lower()
+    return normalized.endswith(_DOC_EXTENSIONS) or "/docs/" in f"/{normalized}"
+
+
+def _chunk_document(content: str) -> list[str]:
+    """Split a Markdown/doc file into overlapping text chunks (v1.17.6.6).
+
+    Fixed-size chunks with a small overlap so a question answered by text
+    straddling a boundary still finds a near-neighbour. Returns at least one
+    chunk; stops at `_DOC_CHUNK_MAX` so monster files cannot flood a project
+    with hundreds of vectors.
+    """
+    chunks: list[str] = []
+    start = 0
+    total = len(content)
+    while start < total and len(chunks) < _DOC_CHUNK_MAX:
+        end = min(start + _DOC_CHUNK_CHARS, total)
+        chunks.append(content[start:end])
+        if end >= total:
+            break
+        start = end - _DOC_CHUNK_OVERLAP
+    return chunks or [content[:_DOC_CHUNK_CHARS]]
 
 
 def _tokens_per_second(tokens: int, duration_ns: int) -> float | None:
@@ -126,15 +178,19 @@ class RagService:
         project: Project,
         progress: Callable[[int, int, float | None], None] | None = None,
     ) -> int:
-        """Embed the first chunk of each *unembedded* file (incremental, v1.17.1).
+        """Embed every *unembedded* file (incremental, v1.17.1; chunked
+        Markdown since v1.17.6.6).
 
         Files whose `embedding_id` is already set are skipped — a re-index
         only embeds new files instead of re-embedding the whole project
         (the laptop's second auto-index pass was re-doing all 2.9k files).
         `embedding_id` is committed only *after* the Chroma upsert, so a crash
         mid-run leaves untouched files unmarked and they are retried later.
-        Progress ticks carry an aggregate `tokens_per_second` from Ollama's
-        own counters (v1.17.2).
+        Since v1.17.6.6, documentation files are split into overlapping
+        chunks — each chunk is one Chroma row id `f"{row.id}#{i}"` — while
+        code files stay a single 4k-chunk; the ProjectFile row keeps marking
+        the whole file as embedded either way. Progress ticks carry an
+        aggregate `tokens_per_second` from Ollama's own counters (v1.17.2).
         """
         files = ProjectFileRepository(self.session).get_by_project(project.id)
         total = len(files)
@@ -157,22 +213,27 @@ class RagService:
                 if progress:
                     progress(done, total, None)
                 continue
-            doc = f"{record.path}\n\n{_truncate(content)}"
-            vector, metrics = self._embed_with_metrics(doc)
-            embeds.append(vector)
-            docs.append(doc)
-            metas.append(
-                {
-                    "project_id": project.id,
-                    "file_path": record.path,
-                    "language": record.language or "",
-                }
-            )
+            if _is_doc_path(record.path):
+                chunks = _chunk_document(content)
+            else:
+                chunks = [content[:_MAX_DOC_CHARS]]
+            for chunk_index, chunk_text in enumerate(chunks):
+                doc = f"{record.path}\n\n{chunk_text}"
+                vector, metrics = self._embed_with_metrics(doc)
+                embeds.append(vector)
+                docs.append(doc)
+                metas.append(
+                    {
+                        "project_id": project.id,
+                        "file_path": record.path,
+                        "language": record.language or "",
+                    }
+                )
+                batch_tokens += int(metrics.get("tokens") or 0)
+                batch_duration_ns += int(metrics.get("duration_ns") or 0)
             record.embedding_id = record.id
-            embedded.append(record)
+            embedded.append((record, len(chunks)))
             done += 1
-            batch_tokens += int(metrics.get("tokens") or 0)
-            batch_duration_ns += int(metrics.get("duration_ns") or 0)
             if progress and (done % 25 == 0 or done == total):
                 speed = _tokens_per_second(batch_tokens, batch_duration_ns)
                 progress(done, total, speed)
@@ -181,9 +242,12 @@ class RagService:
         if not embeds:
             self.session.commit()
             return 0
+        ids: list[str] = []
+        for record, chunk_count in embedded:
+            ids.extend(f"{record.id}#{i}" for i in range(chunk_count))
         self.chroma.upsert(
             "file_summaries",
-            ids=[record.id for record in embedded],
+            ids=ids,
             embeddings=embeds,
             documents=docs,
             metadatas=metas,
@@ -352,13 +416,80 @@ class RagService:
             return False
 
     def _file_summary_context(self, project: Project) -> str:
+        """Docs-first context for the AI architecture summary (v1.17.6.6).
+
+        Previously the first 8 files *by path* were sampled (600 chars each)
+        — sorted paths buried the README and docs under .github/ and source
+        directories, which is why summaries only described the overall
+        architecture. Now the ranking favours READMEs and Markdown docs
+        (sprint/implementation/master/runbook files first), then root entry
+        files, then code, and recent commit messages are appended so the
+        summary can describe the project's phase history (sprints ~ commits).
+        """
         files = ProjectFileRepository(self.session).get_by_project(project.id)
-        blocks = []
-        for record in files[:8]:
+        blocks: list[str] = []
+        for record in self._rank_summary_files(files)[:_SUMMARY_FILES]:
             content = _read_local_file(record.absolute_path)
             if content:
-                blocks.append(f"{record.path}\n{_truncate(content, 600)}")
+                blocks.append(
+                    f"{record.path}\n" f"{_truncate(content, _SUMMARY_FILE_CHARS)}"
+                )
+        commits = GitCommitRepository(self.session).get_by_project(
+            project.id, limit=_SUMMARY_COMMITS
+        )
+        messages = [c.message for c in commits if c.message]
+        if messages:
+            blocks.append(
+                "Recent commit history (newest first):\n"
+                + "\n".join(f"- {m.strip()}" for m in messages)
+            )
         return "\n\n".join(blocks)
+
+    @staticmethod
+    def _rank_summary_files(files: list) -> list:
+        """Rank files for the summary context: root README, then docs/
+        Markdown (sprint/implementation/master/runbook names first), then
+        other Markdown, then root entry files, then everything else."""
+        _ENTRY_LEAFS = {
+            "run.py",
+            "main.py",
+            "package.json",
+            "pyproject.toml",
+            "setup.py",
+            "docker-compose.yml",
+            "docker-compose.yaml",
+        }
+
+        def score(record) -> int:
+            path = (record.path or "").replace("\\", "/").lower()
+            leaf = path.rsplit("/", 1)[-1]
+            s = 0
+            if leaf == "readme" or leaf.startswith("readme."):
+                s += 400
+            if path.endswith(_DOC_EXTENSIONS):
+                s += 300
+            if "/docs/" in f"/{path}":
+                s += 150
+            for keyword in (
+                "sprint",
+                "implementation",
+                "master",
+                "runbook",
+                "architecture",
+                "readme",
+                "getting-started",
+            ):
+                if keyword in leaf:
+                    s += 60
+            if leaf in _ENTRY_LEAFS:
+                s += 100
+            return s
+
+        return sorted(files, key=score, reverse=True)
+
+    def _indexed_project_count(self) -> int:
+        """Number of known projects — used to scale the all-scope search."""
+        return int(self.session.exec(select(func.count()).select_from(Project)).one())
 
     def _upsert_simple(
         self,
@@ -421,23 +552,18 @@ class RagService:
         """Answer a question grounded in retrieved ChromaDB context (docs/02 §6.3).
 
         v1.17.6: without a project scope the search is summary-first —
-        `project_summaries` is consulted before the noise-heavy collections,
-        so whole-project questions answered by an architecture summary get
-        the top slots; context lines then name the source project instead of
-        showing a bare id (no names existed in the metadata at all before)."""
+        `project_summaries` is consulted before the noise-heavy collections;
+        context lines then name the source project instead of showing a bare
+        id (no names existed in the metadata at all before).
+        v1.17.6.6: the all-scope `top_k` scales up so every indexed project
+        can contribute its summary ("what do these projects do?" no longer
+        stops at 5), combined hits are ranked by true distance (no collection
+        bias — chunked docs can outrank a generic summary), and the context
+        is budgeted to fit num_ctx."""
         if project_id:
             sources = self.search(question, project_id=project_id, top_k=top_k)
         else:
-            summaries = self.search(
-                question, top_k=top_k, collections=("project_summaries",)
-            )
-            sources = summaries
-            if len(summaries) < top_k:
-                others = tuple(
-                    name for name in COLLECTIONS if name != "project_summaries"
-                )
-                fill = self.search(question, top_k=top_k, collections=others)
-                sources = summaries + fill[: top_k - len(summaries)]
+            sources = self._search_all_projects(question, top_k)
         if not sources:
             return RagResponse(
                 answer=(
@@ -469,6 +595,38 @@ class RagService:
             generated_at=datetime.datetime.now(datetime.timezone.utc),
             confidence=confidence,
         )
+
+    def _search_all_projects(self, question: str, top_k: int) -> list[RagResult]:
+        """Summary-first, then chunk fills, across every project (v1.17.6.6).
+
+        `top_k` is raised to the indexed-project count (capped at
+        `_ALL_PROJECT_CAP`) so portfolio-wide questions retrieve one summary
+        per project; remaining slots are filled by the other collections
+        (doc chunks now carry the README/sprint/implementation content).
+        Combined hits are re-sorted by distance and trimmed to
+        `_QUERY_CONTEXT_BUDGET` characters so the prompt always fits
+        `settings.ollama_num_ctx`.
+        """
+        scaled = max(top_k, min(self._indexed_project_count(), _ALL_PROJECT_CAP))
+        summaries = self.search(
+            question, top_k=scaled, collections=("project_summaries",)
+        )
+        if len(summaries) < scaled:
+            others = tuple(name for name in COLLECTIONS if name != "project_summaries")
+            fill = self.search(question, top_k=scaled, collections=others)
+        else:
+            fill = []
+        combined = sorted(summaries + fill, key=lambda s: s.distance)[:_ALL_PROJECT_CAP]
+        kept: list[RagResult] = []
+        budget = _QUERY_CONTEXT_BUDGET
+        for result in combined:
+            if (
+                kept
+                and sum(len(r.content) for r in kept) + len(result.content) > budget
+            ):
+                break
+            kept.append(result)
+        return kept
 
     # --- internals -------------------------------------------------------
 

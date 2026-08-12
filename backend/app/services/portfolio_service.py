@@ -12,8 +12,9 @@ Scoring (Sprint 10 + Sprint 15 refinements):
   command does not change because a build failed (Sprint 15 decision).
 - tests = 24 static (test files exist in the repo) + 6 when the latest test
   run is green. Same static-first logic as build.
-- security: unresolved findings deduct by severity; an all-resolved finding set
-  (a scan happened) is "clean"; no findings at all is "pending" (never scanned)
+- security: unresolved findings deduct by severity; scanned with no open
+  findings (including zero findings — `last_scanned` is stamped on every run
+  since v1.17.6.6) is "clean"; no findings AND never scanned is "pending"
 - docs = fraction of indexed files that are README/Markdown/docs files;
   >= 50% counts as a green ✓ in the feature matrix (Sprint 15 threshold).
 - a component with no data yet scores 0 (never assumed healthy)
@@ -158,9 +159,13 @@ class PortfolioService:
             return float(TESTS_STATIC), "failing"
         return float(TESTS_STATIC), "configured"
 
-    def _security_component(self, project_id: str) -> tuple[float, str]:
-        findings = self._findings(project_id)
-        if not findings:
+    def _security_component(self, project: Project) -> tuple[float, str]:
+        # v1.17.6.6: the scanner stamps `project.last_scanned` on every run,
+        # so a clean scan (no finding rows at all) is now visibly "clean"
+        # instead of the old permanent "pending" ✗. Pending means: never
+        # scanned AND no findings — the two prove-one-another case.
+        findings = self._findings(project.id)
+        if not findings and project.last_scanned is None:
             return 0.0, "pending"
         penalty = 0.0
         has_open = False
@@ -205,6 +210,12 @@ class PortfolioService:
         if project.last_indexed is not None:
             value = project.last_indexed
             epochs.append(value.replace(tzinfo=None) if value.tzinfo else value)
+        # v1.17.6.6: a clean scan stamps only `last_scanned` — no finding row
+        # changes — so without this the cached "pending" score would persist
+        # forever after the first clean scan.
+        if project.last_scanned is not None:
+            value = project.last_scanned
+            epochs.append(value.replace(tzinfo=None) if value.tzinfo else value)
         if not epochs:
             return datetime.datetime.min
         return max(epochs)
@@ -227,7 +238,7 @@ class PortfolioService:
     def _components(self, project: Project) -> dict:
         build, build_status = self._build_component(project)
         tests, test_status = self._test_component(project.id)
-        security, security_status = self._security_component(project.id)
+        security, security_status = self._security_component(project)
         docs, docs_pct = self._docs_component(project.id)
         return {
             "score": round(build + tests + security + docs, 1),

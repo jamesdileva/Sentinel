@@ -41,6 +41,11 @@ class Settings(BaseSettings):
     embedding_model: str = "nomic-embed-text"
     ollama_timeout_seconds: int = 600  # v1.17.6.4: 120s timed out arch-summary
     # generation while 4 embedding workers were saturating the local Ollama
+    # v1.17.6.6: llama3.1:8b supports 128k context, but Ollama's default
+    # num_ctx is only 2048 — big summary/query prompts would be silently
+    # truncated. 32768 covers the largest prompt we build (~12k tokens) with
+    # room to spare and a modest KV-cache memory footprint on the laptop.
+    ollama_num_ctx: int = 32768
 
     # Defaults to the current user's home directory instead of a hardcoded
     # path, so a fresh install on any machine (e.g. the laptop, user `james`)
@@ -61,7 +66,6 @@ class Settings(BaseSettings):
     auto_index_knowledge: bool = True  # queue RAG indexing for new/unembedded projects
 
     api_key: str = ""
-    schedule_interval_minutes: int = 60
 
     scheduler_enabled: bool = True
     command_timeout_seconds: int = 300

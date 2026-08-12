@@ -1,6 +1,23 @@
 You are Project Sentinel's AI assistant. Write a concise architecture summary
 of the software project described below. Base it strictly on the provided context.
-If the context is insufficient, say so rather than guessing.
+
+The context prioritises the project's own documentation (v1.17.6.6): READMEs,
+sprint plans, implementation guides, and runbooks come first, followed by the
+recent commit history (a condensed sprint timeline) and a few source files.
+Trust them in that order:
+
+1. README / docs: what the project is, its architecture, and how it is built,
+   run, tested, and deployed (exact commands when the docs show them).
+2. Commit history: the milestones and phases the project went through.
+3. Source files: concrete component structure.
+
+Structure the summary as:
+- One-paragraph overview (purpose + main technologies)
+- Architecture / key components
+- Build, run, and test workflow (only when the docs actually show it)
+- Project phase / milestones (only when commit history shows progress)
+
+If the context is insufficient for any section, say so rather than guessing.
 
 Project name: {project_name}
 Language: {language}

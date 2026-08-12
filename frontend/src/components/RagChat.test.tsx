@@ -78,6 +78,45 @@ describe("RagChat", () => {
     expect(screen.getByText(/gemma2/)).toBeInTheDocument();
   });
 
+  it("loads the all-projects room (__all__) when no project is selected", async () => {
+    render(<RagChat />);
+    expect(mockGetChatHistory).toHaveBeenCalledWith("__all__");
+    expect(
+      await screen.findByText(
+        'Ask anything, e.g. "What does this project do?"',
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("persists all-scope exchanges into the __all__ room", async () => {
+    mockRagQuery.mockResolvedValue(response());
+
+    const user = userEvent.setup();
+    render(<RagChat />);
+    await screen.findByText('Ask anything, e.g. "What does this project do?"');
+
+    await user.type(screen.getByPlaceholderText("Ask a question…"), "Hi");
+    await user.click(screen.getByRole("button", { name: "Ask" }));
+    await screen.findByText("The project uses FastAPI.");
+
+    expect(mockSaveChatMessage).toHaveBeenCalledWith("__all__", {
+      role: "user",
+      text: "Hi",
+      sources: undefined,
+      model: null,
+      confidence: null,
+      error: null,
+    });
+    expect(mockSaveChatMessage).toHaveBeenCalledWith(
+      "__all__",
+      expect.objectContaining({
+        role: "assistant",
+        text: "The project uses FastAPI.",
+        sources: ["backend/app/main.py"],
+      }),
+    );
+  });
+
   it("persists each user question and assistant answer", async () => {
     mockRagQuery.mockResolvedValue(response());
 
