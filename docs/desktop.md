@@ -1,0 +1,138 @@
+# Desktop Deploy Checklist (the always-on machine — localhost only)
+
+Quick reference for this desktop (the single always-on machine since v1.17.7;
+the laptop is retired). Full runbook: `docs/02` §13.4 (Sprint 15 native install
+— no Docker, no compose).
+
+> **venv never needs activating.** PowerShell's default execution policy blocks
+> `Activate.ps1` on most machines, so every command below uses the venv's
+> python explicitly (`backend\.venv\Scripts\python.exe` here — the repo-root
+> `.venv` on other machines; `scripts/install_service.py` resolves either).
+> The autostart task does the same (via `pythonw.exe`).
+
+## One-time setup
+
+```powershell
+git clone https://github.com/jamesdileva/Sentinel.git   # or cd into existing clone + git pull
+cd Sentinel
+
+# Only a Python venv is required — the repo ships the built dashboard in
+# backend/app/static, so no Node toolchain is needed on this machine:
+backend\.venv\Scripts\python.exe -m pip install -e "backend[dev]"   # or .\.venv\... if the venv is at the repo root
+
+# .env (gitignored) — from .env.example; defaults are safe, nothing is required:
+#   SENTINEL_OLLAMA_HOST=http://127.0.0.1:11434   (native Ollama, same host — the default)
+#   SENTINEL_GITHUB_TOKEN=<read-only PAT>         (OPTIONAL — repo auto-sync, Sprint 12.1; tokenless is first-class since v1.17.7)
+```
+
+(Optional) To rebuild the dashboard from the frontend sources you need Node:
+`cd frontend; npm install; npm run build; cd ..` then
+`backend\.venv\Scripts\python.exe scripts\build.py --dist` — skip this if you
+never touch the frontend.
+
+**Start the server** (recommended): `backend\.venv\Scripts\python.exe run.py`
+→ startup checks (SQLite, Ollama, frontend built) then uvicorn on
+`127.0.0.1:8000` (localhost only — nothing is exposed on the LAN). For
+always-on runs from login:
+`backend\.venv\Scripts\python.exe scripts\install_service.py --install`
+registers a `Sentinel` Task-Scheduler task that runs `run.py --service` every
+5 minutes (exits instantly if the port is already serving — the server itself
+runs 24/7, the task only restarts it after crashes/reboots).
+
+Repos are found under `SENTINEL_WATCH_DIRS`; it **defaults to the current
+user's home directory** (`C:\Users\j` — all local projects live there
+directly), so you do NOT need to set it (or set an explicit value in `.env`).
+Since v1.17.7 GitHub is optional: with **no token** the local checkouts are
+indexed straight from the watch dirs and the `repo-sync` beat isn't registered;
+with a token the beat keeps GitHub checkouts current every 24 h
+(`SENTINEL_SYNC_INTERVAL_MINUTES` — a sync also runs once at startup, and the
+header "Sync now" button forces one immediately). **Security scans** run on
+their own daily beat (`SENTINEL_SCAN_INTERVAL_MINUTES`, default 1440) since
+v1.17.7 — independent of the sync — so every project is scanned at least once
+per 24 h cycle even tokenless. Indexing auto-queues knowledge (RAG) jobs when
+Ollama is up.
+
+## Daily operations
+
+```powershell
+git pull                         # update the repo (includes the staged dashboard)
+backend\.venv\Scripts\python.exe run.py --service   # ensure it's running (the scheduler task does this)
+backend\.venv\Scripts\python.exe -m app.cli sync   # immediate repo sync if impatient (run from inside backend)
+```
+
+- Dashboard: `http://127.0.0.1:8000` · System page: `/system`
+- **The staged dashboard ships inside the release commit** (`backend/app/static`
+  is versioned, v1.16.2) — `git pull` alone updates the dashboard; you never
+  need Node or a rebuild on this machine. Only if you changed `frontend/`
+  locally do you run `scripts/build.py --dist` (from the repo root).
+- If the Dashboard's "Live activity" panel is empty on load even though things
+  are running: check `http://127.0.0.1:8000/api/v1/system/activity?limit=10`
+  in the browser (rows = fine; `events:[]` + a `activity persist failed`
+  WARNING in the server log = the SQLite writer is failing) — the panel
+  re-seeds history on mount (v1.17.2).
+
+## Rules of thumb
+
+- **Never move the `data/` directory** while the server runs — it holds
+  `sqlite/sentinel.db`, `chroma/`, and `world_sim/`. If you do relocate, re-run
+  `sentinel index --all` once.
+- No Docker, no nginx, no reverse proxy — one uvicorn process serves API +
+  dashboard (http://127.0.0.1:8000). Keep that port for Sentinel.
+- Ollama runs natively on this machine (`http://127.0.0.1:11434`) — a localhost
+  URL, never exposed (the laptop's `OLLAMA_HOST=0.0.0.0` setup is retired).
+- Pi-hole is gone and the router DNS is back to Automatic — Sentinel never
+  controlled it; the laptop no longer hosts anything for this project.
+
+## Known issues (see docs/02 §13.4 troubleshooting table)
+
+- **RAG chat says "knowledge index is damaged on disk"** (503) → rebuild:
+  the Knowledge page shows a "Rebuild knowledge index" button since v1.17.6.2
+  (the earlier probe missed this damage), or from inside `backend`:
+  `backend\.venv\Scripts\python.exe -m app.cli rag-index --reset` — then
+  restart `run.py` and the startup auto-index re-embeds everything, including
+  the AI architecture summary (once per project, v1.17.6.2). Note: bare
+  `sentinel` is never on PATH — always use the venv python by path.
+- `frontend` changed but dashboard is stale → forgot `scripts/build.py --dist`;
+  the backend serves the *staged* build from `backend/app/static`.
+- Port 8000 already in use → another Sentinel is running (a second console
+  left open is the usual cause). Since v1.17.6.3 `run.py` names the owner:
+  it prints the PID (from `netstat -ano`) with a
+  `taskkill /F /PID <pid>` hint instead of a raw bind traceback. Close the
+  other console, kill that PID, or serve on another port
+  (`backend\.venv\Scripts\python.exe run.py --port 8100` +
+  `SENTINEL_PORT=8100` in `.env`).
+- "What happened this run?" → `data/logs/sentinel.log` (repo `data/logs/`).
+  Overwritten at every start, INFO level, includes uvicorn's own logs —
+  the place to look after a forced shutdown or an error cascade that
+  scrolled past the console. Since v1.17.6.4 the `POST /api/embed` httpx
+  flood is silenced (WARNING), so the file shows app + uvicorn activity
+  only, each line exactly once.
+- Projects indexed but the AI architecture summary is missing (files show
+  embedded, no summary; v1.17.6.3 timeout or post-reset case) → **Re-index
+  all projects** button on the Knowledge page (v1.17.6.4): incremental —
+  already-embedded files are skipped, the missing summaries regenerate. The
+  exact same pass from the console (from inside `backend`):
+  `backend\.venv\Scripts\python.exe -m app.cli rag-index --all`.
+- Arch-summary generation "timed out" in the log → the client timeout was
+  120 s and 4 concurrent embedding workers saturate Ollama at startup;
+  v1.17.6.4 raises the default to 600 s, v1.17.6.8 to **1800 s** (the
+  v1.17.6.6 doc-first summary prompt alone is a ~10k-token prefill that can
+  outgrow 600 s mid re-index). `SENTINEL_OLLAMA_TIMEOUT_SECONDS` overrides in
+  `.env`. Summary still failed → run the re-index-all above, it backfills.
+  Since v1.17.6.8 summaries generate up to **1250 tokens**
+  (`SENTINEL_OLLAMA_SUMMARY_MAX_TOKENS`) instead of the shared 500.
+- Need a full re-embed (new chunking/summary prompt, e.g. right after an
+  upgrade)? Since v1.17.6.8 the Knowledge page always shows **Rebuild
+  knowledge index** (was hidden behind the damaged-index banner) → then
+  **Re-index all projects**. Or from the console (from inside `backend`):
+  `backend\.venv\Scripts\python.exe -m app.cli rag-index --reset` and
+  restart — the startup auto-index re-embeds.
+- After moving the repo folder on disk: the venv paths in the Task-Scheduler task
+  are absolute — uninstall and re-install it (`scripts/install_service.py`).
+- Portfolio security cell shows `⚠ pending` on every project right after an
+  upgrade → not a bug since v1.17.6.6: "never scanned" is now distinct from
+  "scanned and clean". Scans run on their own daily beat since v1.17.7
+  (`SENTINEL_SCAN_INTERVAL_MINUTES` — tokenless installs included; or force
+  one with `POST /api/v1/security/scan?project_id=` from the dashboard's
+  Security page); the cell flips to `✓ clean` after the first scan with no
+  findings.

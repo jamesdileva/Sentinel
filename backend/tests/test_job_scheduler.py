@@ -99,19 +99,42 @@ def test_submit_async_does_not_block_on_error():
 
 def test_beats_registered_with_config_intervals(monkeypatch):
     monkeypatch.setattr(settings, "world_sim_enabled", True)
+    monkeypatch.setattr(settings, "github_token", "")
+    scheduler = JobScheduler()
+    scheduler.start()
+    try:
+        jobs = scheduler.beat_jobs
+        # v1.17.7: the security scan-all is its own beat (tokenless installs
+        # still scan daily); the repo-sync beat is token-gated.
+        assert "scan-all" in jobs
+        assert "world-sim-tick" in jobs
+        assert "repo-sync" not in jobs
+        from datetime import timedelta
+
+        assert jobs["scan-all"].trigger.interval == timedelta(
+            minutes=settings.scan_interval_minutes
+        )
+    finally:
+        scheduler.shutdown()
+
+
+def test_repo_sync_beat_registered_when_token_configured(monkeypatch):
+    """v1.17.7: with SENTINEL_GITHUB_TOKEN set the repo-sync beat registers
+    too (clone/pull flow); scan-all stays independent of it."""
+    monkeypatch.setattr(settings, "github_token", "ghp_test_token")
     scheduler = JobScheduler()
     scheduler.start()
     try:
         jobs = scheduler.beat_jobs
         assert "repo-sync" in jobs
-        assert "world-sim-tick" in jobs
-        # v1.17.6.6: the security scan-all is no longer its own beat — it
-        # runs as the final step of the repo-sync pass.
-        assert "nightly-security-scan" not in jobs
+        assert "scan-all" in jobs
         from datetime import timedelta
 
         assert jobs["repo-sync"].trigger.interval == timedelta(
             minutes=settings.sync_interval_minutes
+        )
+        assert jobs["scan-all"].trigger.interval == timedelta(
+            minutes=settings.scan_interval_minutes
         )
     finally:
         scheduler.shutdown()
@@ -124,7 +147,7 @@ def test_beats_skip_world_when_disabled(monkeypatch):
     try:
         ids = scheduler.beat_job_ids
         assert "world-sim-tick" not in ids
-        assert "repo-sync" in ids
+        assert "scan-all" in ids
     finally:
         scheduler.shutdown()
 
@@ -133,7 +156,7 @@ def test_start_is_idempotent_shutdown_is_safe():
     scheduler = JobScheduler()
     scheduler.start()
     scheduler.start()  # must not double-register beats
-    assert len(scheduler.beat_jobs) <= 2
+    assert len(scheduler.beat_jobs) <= 3
     scheduler.shutdown()
     scheduler.shutdown()  # second shutdown must not raise
 

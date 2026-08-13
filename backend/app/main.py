@@ -55,6 +55,8 @@ def _background_initial_scan() -> None:
     * If a GitHub token is configured, one repo sync runs first (clone/pull),
       so newly added repos exist before the scan walks the watch dirs
       (*then* the daily beat takes over — see SENTINEL_SYNC_INTERVAL_MINUTES).
+      Tokenless (v1.17.7: the supported local-only setup) skips this silently —
+      local projects are indexed straight from the watch dirs.
     * Discovery scan of known repositories (.git) under watch dirs.
     * When `auto_index_knowledge` is on, projects with unembedded files are
       queued for RAG indexing (Ollama-gated). Both outcomes are published on
@@ -78,11 +80,7 @@ def _background_initial_scan() -> None:
                     "sync", "Startup repo sync failed", data={"configured": True}
                 )
         else:
-            activity_bus.publish_event(
-                "sync",
-                "Repo sync skipped on startup — SENTINEL_GITHUB_TOKEN not configured",
-                data={"configured": False},
-            )
+            logger.info("Startup repo sync skipped (no SENTINEL_GITHUB_TOKEN)")
     except Exception:  # noqa: BLE001
         logger.exception("Startup sync step failed")
 

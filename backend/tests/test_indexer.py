@@ -64,6 +64,46 @@ def test_detect_language(tmp_db):
     assert svc.detect_language(REACT_PROJECT) == "typescript"
 
 
+def test_discover_prunes_noise_dirs(tmp_db, tmp_path):
+    """v1.17.7: a home-dir watch root (AppData, OneDrive, node_modules,
+    .venv, ...) never descends into noise — those cannot hold sync-owned
+    checkouts, and the old rglob walk visited every file under them."""
+    _checkout(tmp_path, "real-proj", url="https://github.com/o/real-proj.git")
+    _checkout(tmp_path, "AppData", "Local", "noise-repo")
+    _checkout(tmp_path, "OneDrive", "Desktop", "backup-repo")
+    _checkout(tmp_path, "node_modules", "dep-repo")
+    _checkout(tmp_path, ".venv", "site-packages", "embedded-repo")
+    _checkout(tmp_path, ".codex", "memories", "agent-repo")
+    svc = _service(tmp_db)
+    found = [
+        p.relative_to(tmp_path).as_posix() for p in svc.discover_repositories(tmp_path)
+    ]
+    assert found == ["real-proj"]
+
+
+def test_discover_is_case_insensitive_on_noise_dirs(tmp_db, tmp_path):
+    _checkout(tmp_path, "keep", url="https://github.com/o/keep.git")
+    _checkout(tmp_path, "APPData", "nested", "repo")
+    _checkout(tmp_path, "Node_Modules", "x", "repo")
+    svc = _service(tmp_db)
+    found = [
+        p.relative_to(tmp_path).as_posix() for p in svc.discover_repositories(tmp_path)
+    ]
+    assert found == ["keep"]
+
+
+def test_discover_respects_depth_boundary(tmp_db, tmp_path):
+    """v1.17.7: checkouts at depth <= _DISCOVERY_DEPTH are found, deeper
+    trees are never entered (the old rglob only *filtered* at depth)."""
+    _checkout(tmp_path, "a", "b", "c", "repo")  # depth 4 -> found
+    _checkout(tmp_path, "x", "y", "z", "q", "repo")  # depth 5 -> not found
+    svc = _service(tmp_db)
+    found = sorted(
+        p.relative_to(tmp_path).as_posix() for p in svc.discover_repositories(tmp_path)
+    )
+    assert found == ["a/b/c/repo"]
+
+
 def test_detect_framework(tmp_db):
     svc = _service(tmp_db)
     assert svc.detect_framework(PY_PROJECT) == "fastapi"

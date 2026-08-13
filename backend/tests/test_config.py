@@ -22,6 +22,20 @@ def test_sync_interval_defaults_to_daily():
     assert fresh.sync_interval_minutes == 1440
 
 
+def test_scan_interval_defaults_to_daily():
+    """v1.17.7: the security scan-all beat owns its own daily schedule,
+    independent of the (optional) GitHub sync."""
+    fresh = Settings(_env_file=None)
+    assert fresh.scan_interval_minutes == 1440
+
+
+def test_scan_interval_loads_from_env(tmp_path):
+    env_file = tmp_path / ".env"
+    env_file.write_text("SENTINEL_SCAN_INTERVAL_MINUTES=60\n", encoding="utf-8")
+    fresh = Settings(_env_file=env_file)
+    assert fresh.scan_interval_minutes == 60
+
+
 def test_values_load_from_dotenv_file(tmp_path):
     env_file = tmp_path / ".env"
     env_file.write_text(

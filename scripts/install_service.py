@@ -1,11 +1,12 @@
 #!/usr/bin/env python
 """Project Sentinel — Windows Task Scheduler autostart (Sprint 15).
 
-Registers the "Sentinel" task so the always-on laptop runs the server from
+Registers the "Sentinel" task so the always-on machine runs the server from
 login: every 5 minutes `run.py --service` runs, which exits immediately if
 the port is already serving. Runs the repo's own venv (pythonw, no console
 window); paths are derived at runtime so the same script works for any
-checkout location.
+checkout location. The venv lives at `backend/.venv` or the repo root
+(`.venv`) — either layout is resolved (v1.17.7).
 
 Usage:
     python scripts/install_service.py --install [REPO_ROOT]
@@ -27,9 +28,16 @@ def locate_repo_root() -> Path:
 
 def task_command(repo: Path) -> str:
     """Full command line Task Scheduler stores (single string)."""
-    pythonw = repo / ".venv" / "Scripts" / "pythonw.exe"
-    if not pythonw.exists():
-        pythonw = repo / ".venv" / "Scripts" / "python.exe"
+    # v1.17.7: prefer pythonw (no console window) and accept either venv
+    # layout — the documented repo-root `.venv` first, then `backend/.venv`
+    # (this machine).
+    candidates = [
+        repo / ".venv" / "Scripts" / "pythonw.exe",
+        repo / "backend" / ".venv" / "Scripts" / "pythonw.exe",
+        repo / ".venv" / "Scripts" / "python.exe",
+        repo / "backend" / ".venv" / "Scripts" / "python.exe",
+    ]
+    pythonw = next((c for c in candidates if c.exists()), candidates[0])
     run_script = repo / "run.py"
     return f'"{pythonw}" "{run_script}" --service'
 

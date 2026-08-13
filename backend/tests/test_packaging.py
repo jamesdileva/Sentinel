@@ -13,7 +13,41 @@ sys.path.insert(0, str(REPO_ROOT / "scripts"))
 sys.path.insert(0, str(REPO_ROOT))
 
 import build  # noqa: E402
+import install_service  # noqa: E402
 import release  # noqa: E402
+
+
+def test_install_service_resolves_backend_venv(tmp_path):
+    """v1.17.7: the Task Scheduler command must point at the real pythonw in
+    either venv layout — backend/.venv (this machine) or the repo-root .venv
+    (the laptop)."""
+    repo = tmp_path / "sentinel"
+    repo.mkdir(parents=True)
+    (repo / "run.py").write_text("", encoding="utf-8")
+    backend_venv = repo / "backend" / ".venv" / "Scripts"
+    backend_venv.mkdir(parents=True)
+    (backend_venv / "pythonw.exe").write_text("", encoding="utf-8")
+
+    cmd = install_service.task_command(repo)
+    assert str(backend_venv / "pythonw.exe") in cmd
+    assert "run.py" in cmd
+    assert "--service" in cmd
+
+
+def test_install_service_prefers_root_venv_when_present(tmp_path):
+    """Repo-root .venv beats backend/.venv when both layouts exist."""
+    repo = tmp_path / "sentinel"
+    repo.mkdir(parents=True)
+    (repo / "run.py").write_text("", encoding="utf-8")
+    root_venv = repo / ".venv" / "Scripts"
+    root_venv.mkdir(parents=True)
+    (root_venv / "pythonw.exe").write_text("", encoding="utf-8")
+    backend_venv = repo / "backend" / ".venv" / "Scripts"
+    backend_venv.mkdir(parents=True)
+    (backend_venv / "pythonw.exe").write_text("", encoding="utf-8")
+
+    cmd = install_service.task_command(repo)
+    assert str(root_venv / "pythonw.exe") in cmd
 
 
 def test_release_collects_core_files():

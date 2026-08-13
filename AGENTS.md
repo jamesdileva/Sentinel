@@ -57,21 +57,31 @@ These are the project's constitution. They must be upheld in every decision, cha
   dashboard from the same origin (`backend/app/static`).
   `.\.venv\Scripts\python.exe run.py` is the single starting point (startup
   checks: SQLite, Ollama, frontend built; **no venv activation needed — the
-  venv python is called by path everywhere**) and
+  venv python is called by path everywhere**; the venv is `backend\.venv` on
+  this machine, the repo-root `.venv` elsewhere — `scripts/install_service.py`
+  resolves either) and
   `scripts/install_service.py` registers a Task-Scheduler autostart task that
   runs `run.py --service` every 5 min (exits when the port is serving).
   `scripts/build.py --dist` verifies (backend pytest + lint, frontend test +
   build) and stages the dashboard; `scripts/release.py` ships
   `dist/sentinel-<v>.zip` + `.sha256` (run.py, scripts, `.env.example`, docs,
   `backend/app`).
-- **Laptop (192.168.4.40) is the always-on home server**: runbook in
-  docs/02 §13.4, dashboard at `http://192.168.4.40:8000` from any LAN device.
-  Ollama runs natively (`OLLAMA_HOST=0.0.0.0:11434`) and Pi-hole remains the
-  network DNS — **independent of Sentinel since Sprint 15** (no code, no env,
-  no System-page panel; never start/stop it from Sentinel).
-- **Env overrides**: `SENTINEL_OLLAMA_HOST`, `SENTINEL_GITHUB_TOKEN` +
-  `SENTINEL_WATCH_DIRS` (repos auto-synced from GitHub by `repo-sync`, no SMB),
-  `SENTINEL_PORT`, `SENTINEL_DB_PATH`/`SENTINEL_CHROMA_PATH` — see `.env.example`.
+- **The desktop (this machine) is the single always-on server** (laptop retired
+  since v1.17.7): runbook in docs/02 §13.4 and `docs/desktop.md`, dashboard at
+  `http://127.0.0.1:8000` (localhost only, Rule 1). Ollama runs natively on the
+  same machine (`http://127.0.0.1:11434`); Pi-hole remains an independent
+  network DNS — **never start/stop it from Sentinel** (no code, no env).
+- **GitHub is optional (v1.17.7)**: tokenless first-class — all projects live
+  under `C:\Users\j` (the default watch dir, `Path.home()`, plus
+  `C:\Users\j\jamesdileva` and `C:\Users\j\juduncan` canonical checkouts) and
+  are indexed directly from disk; the `repo-sync` beat registers only when
+  `SENTINEL_GITHUB_TOKEN` is set. The security scan-all runs on its own daily
+  beat (`SENTINEL_SCAN_INTERVAL_MINUTES`) regardless of the token. Discovery
+  prunes noise dirs (AppData, OneDrive, node_modules, .venv, ...), so the home
+  dir with its non-project folders scans cheaply.
+- **Env overrides**: `SENTINEL_OLLAMA_HOST`, `SENTINEL_GITHUB_TOKEN` (optional),
+  `SENTINEL_WATCH_DIRS`, `SENTINEL_PORT`, `SENTINEL_DB_PATH`/
+  `SENTINEL_CHROMA_PATH`, `SENTINEL_SCAN_INTERVAL_MINUTES` — see `.env.example`.
 - **System page**: `/system` is a read-only home snapshot (Ollama availability/
   models/tokens-per-sec + startup checks). Per Rule 2 it never toggles
   anything server-side.
@@ -79,7 +89,9 @@ These are the project's constitution. They must be upheld in every decision, cha
   `dist/sentinel-<v>.zip` + `.sha256` (run.py, scripts/install_service.py,
   scripts/build.py, `.env.example`, docs, `backend/app`);
   `.\.venv\Scripts\python.exe scripts\build.py --dist` verifies and stages.
-- **Laptop operations**: `docs/laptop.md` is the on-server checklist (venv setup,
-  build/stage, autostart task, known issues); troubleshooting table in docs/02 §13.4.
-  Never register the autostart task twice with a different repo path (uninstall
-  first), and keep port 8000 free of other services.
+- **Machine operations**: `docs/desktop.md` is the on-server checklist (venv
+  setup, build/stage, autostart task, known issues); troubleshooting table in
+  docs/02 §13.4. The venv lives at `backend\.venv` on this machine (install
+  tasks resolve it, or the repo-root `.venv`). Never register the autostart
+  task twice with a different repo path (uninstall first), and keep port 8000
+  free of other services.

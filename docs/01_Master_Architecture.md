@@ -67,7 +67,11 @@ This is the single source of truth for what Project Sentinel is and how it is st
 
 > **North Star:** Project Sentinel is a local-first, privacy-respecting personal software operations platform that continuously understands, maintains, tests, documents, and analyzes the user's software projects.
 
-Project Sentinel transforms a dedicated laptop into an always-on personal software operations center. Instead of scattered folders and forgotten projects, Sentinel builds a living model of everything the user has created. It remembers why each project exists, verifies it still works, and helps maintain it forever.
+Project Sentinel transforms a dedicated desktop (or any always-on machine) into
+an always-on personal software operations center. Instead of scattered folders
+and forgotten projects, Sentinel builds a living model of everything the user
+has created. It remembers why each project exists, verifies it still works, and
+helps maintain it forever.
 
 Sentinel acts as:
 - A **Personal CI/CD Server**
@@ -78,7 +82,8 @@ Sentinel acts as:
 - An **Automated QA System**
 - A **Development History Archive**
 
-The final system runs locally on a dedicated laptop and exposes services through a local web dashboard and API.
+The final system runs locally on a dedicated machine (since v1.17.7: the single
+desktop) and exposes services through a local web dashboard and API.
 
 ---
 
@@ -87,7 +92,7 @@ The final system runs locally on a dedicated laptop and exposes services through
 ### Must-Have (MVP)
 
 - Continuously understand and index personal software projects
-- Use SQLite as the primary knowledge database (zero-config, file-based, ideal for a local-first laptop platform)
+- Use SQLite as the primary knowledge database (zero-config, file-based, ideal for a local-first platform)
 - Expose project intelligence through a local web dashboard and API
 - Automate CI/CD: discover build/test commands, run them, report status
 - Perform automated security scanning (dependencies, secrets, static analysis)
@@ -194,7 +199,7 @@ The MVP is the minimal set of features that demonstrates the core value proposit
 
 The MVP is complete when a user can:
 
-1. Start the Sentinel server on their laptop
+1. Start the Sentinel server on their machine
 2. Add a local repository to indexing
 3. See the project appear on the dashboard with tech stack, health score, and last scan time
 4. Trigger a manual build/test cycle and view results
@@ -550,74 +555,70 @@ Events:
 
 Sentinel is not just Project Intelligence — its identity is a **Home Development Server with Project Intelligence as its flagship capability**. The services below are not random add-ons; they are infrastructure running on the same always-on machine, and they make the server genuinely useful even when it is not indexing code or answering questions.
 
-### 9.1 Two-machine topology
+### 9.1 Single-machine topology
+
+Since v1.17.7 the topology is **one machine**: the desktop is both the dev
+workstation and the always-on server. The laptop (previously `192.168.4.40`)
+is retired — all projects live locally on the desktop, so no GitHub sync and
+no LAN exposure are needed (Rule 1: everything stays local).
 
 | Machine | Role | Hardware |
 |---------|------|----------|
-| Laptop (`desktop-slur95L`, `192.168.4.40`) | Always-on **home server** — hosts Pi-hole + Ollama (shared AI), future home of the Sentinel API | Dell Inspiron 13 5310, Iris Xe, 16 GB RAM |
-| Desktop (`192.168.4.28`) | **Dev workstation** — Sentinel repo, airadio, browser dashboard; Ollama runs here only as a manual fallback | iBUYPOWER, Ryzen 5 5500, 16 GB RAM |
+| Desktop (dev machine, this repo) | **Dev workstation + always-on server** — Sentinel repo + all 21 project checkouts, airadio, native Ollama, browser dashboard | iBUYPOWER, Ryzen 5 5500, 16 GB RAM |
 
 ### 9.2 Infrastructure Services
 
-Initial services hosted by the home server (laptop):
+All services run on the single desktop (no network sharing — the laptop is
+retired since v1.17.7):
 
-- **Ollama** — local AI inference shared by every device on the network (`http://192.168.4.40:11434`). Laptop runs it natively (Windows); Sentinel and airadio reach it over the LAN via `SENTINEL_OLLAMA_HOST` / `OLLAMA_URL`.
+- **Ollama** — local AI inference (`http://127.0.0.1:11434`), native Windows
+  install on the same machine. airadio uses the same local instance (its code
+  defaults to `http://localhost:11434`).
 - **Local API** — Sentinel modules and future desktop/mobile apps.
 - **Background scheduler** — indexing, builds, nightly scans, maintenance jobs.
 
 (Pi-hole was deployed alongside Sentinel from Sprint 8.5 to 13, removed from
-the stack in Sprint 15, and decommissioned entirely in v1.16.1 — the laptop's
-router DNS is back to Automatic (see docs/pi-hole-idea.md for why it was never
-the project's purpose).)
+the stack in Sprint 15, and decommissioned entirely in v1.16.1 — the router
+DNS is back to Automatic (see docs/pi-hole-idea.md for why it was never the
+project's purpose).)
 
-The laptop acts as:
+The desktop acts as:
 
-- **Always-on home server**: Runs 24/7, accessible via local network
-- **Local AI inference machine**: Hosts Ollama for summaries/explanations, shared by all devices
-- **Project analysis machine**: Indexes and analyzes code repositories
+- **Always-on server**: Runs 24/7 (Task-Scheduler autostart), dashboard at `http://127.0.0.1:8000`
+- **Local AI inference machine**: Hosts Ollama for summaries/explanations
+- **Project analysis machine**: Indexes and analyzes the local code repositories
 - **Automation worker**: Executes builds, tests, scans on schedule
-- **Network service host**: Exposes web dashboard, local API, Pi-hole
+- **Local service host**: Web dashboard + API bound to localhost only
 
 Supports:
-- Ollama (local LLM inference, shared across the LAN)
-- Pi-hole (network-wide ad blocking)
-- Web services (dashboard, API)
-- Background jobs (builds, tests, scans)
+- Ollama (local LLM inference)
+- Web services (dashboard, API — `127.0.0.1` only)
+- Background jobs (builds, tests, scans — scan-all on its own daily beat, v1.17.7)
 - Database storage (SQLite, ChromaDB)
 - Repository indexing (file system access)
+- Project discovery without GitHub (v1.17.7: tokenless first-class — local
+  checkouts with a GitHub origin are indexed directly from the watch dirs)
 
 ---
 
 ## 10. Networking Model
 
-```
-Desktop (dev workstation)   Phone          Tablet
-    192.168.4.28                │               │
-     │             ─────────────┼───────────────┘
-     └─────────────┼────────────┘
-                   │
-             Home Network
-                   │
-                   ▼
-        Home server laptop (always-on)
-          192.168.4.40 (DHCP-reserved)
+Single machine, nothing on the network (v1.17.7: laptop retired, localhost only):
 
-Services:
-  http://192.168.4.40:8000      Sentinel dashboard + API (native install, Sprint 15)
-  http://192.168.4.40:11434     Ollama (shared AI inference)
-  http://192.168.4.28:5173      Sentinel dashboard (desktop dev)
-  http://192.168.4.28:8000      Sentinel API (desktop dev)
-  (Pi-hole retired v1.16.1 — router DNS is back on Automatic)
+```
+Desktop (dev machine + always-on server)
+   │
+   └── http://127.0.0.1:8000      Sentinel dashboard + API (native install)
+       http://127.0.0.1:11434     Ollama (local AI inference)
 ```
 
 **Connectivity Rules**:
-- Sentinel binds `127.0.0.1` (or `SENTINEL_HOST`); the laptop's Ollama binds all
-  interfaces (`0.0.0.0`) so LAN devices can use it
-- Router DHCP keeps the **reservation** for `192.168.4.40`; DNS is on
-  **Automatic** since Pi-hole was decommissioned (v1.16.1) — Sentinel never
-  participates in DNS
-- No public exposure by default
-- Optional future enhancement: WireGuard/OpenVPN for secure remote access
+- Sentinel binds `127.0.0.1` (or `SENTINEL_HOST`) — no LAN exposure by default
+- Ollama binds `127.0.0.1` (the desktop's own `localhost` default); it is no
+  longer shared across the LAN
+- No public exposure
+- Optional future enhancement: bind `0.0.0.0` (+ firewall rule) if phone or
+  tablet access is ever wanted
 
 ---
 
@@ -898,7 +899,7 @@ A separate entertainment subsystem:
 ### Why This Stack
 
 - **FastAPI**: Excellent for both REST APIs and async background tasks; type-safe with Pydantic
-- **SQLite**: Zero-config, file-based, no service to manage — ideal for a local-first laptop platform
+- **SQLite**: Zero-config, file-based, no service to manage — ideal for a local-first platform
 - **React/Vite**: Modern, performant frontend with excellent dev experience
 - **Ollama**: Clean HTTP API, no cloud dependency, strong community
 - **ChromaDB**: Python-native, easy to integrate with existing pipelines
@@ -1197,6 +1198,7 @@ When contributing to or extending Project Sentinel, agents should follow these p
 
 | Date | Version | Change | Author |
 |------|---------|--------|--------|
+| 2026-08-12 | 1.17.7 | **Single-desktop deployment; GitHub is now optional; scans decoupled from sync.** Topology simplified to one machine (docs/01 §9.1, §10): the desktop is the dev workstation AND the always-on server, the laptop is retired, and the dashboard is localhost-only (`http://127.0.0.1:8000`) — see docs/desktop.md (renamed from laptop.md) and 02 §13. **Tokenless first-class**: no token → the `repo-sync` beat isn't registered and startup logs a single INFO line (no "skipped" activity event); local checkouts with a GitHub origin are indexed directly from the watch dirs anyway (`C:\Users\j` — all 21 projects sit in the home dir). **Security scan-all owns its own beat**: new `SENTINEL_SCAN_INTERVAL_MINUTES` (default 1440); previously the daily scan ran chained to the repo-sync pass, so a tokenless install would never scan (`run_repo_sync` no longer calls `run_security_scan_all`). **Home-dir discovery pruning**: `discover_repositories` is now a depth-aware walk that prunes noise dirs (`AppData`, `OneDrive`, `node_modules`, `.venv`, tool caches — `_DISCOVERY_SKIP_DIRS`) instead of rglob-ing the whole home directory; the eligible set is unchanged (worktrees/stray copies/nested sub-repos still excluded by `is_sync_owned`). **install_service venv fallback**: the autostart task resolves `backend\.venv` or the repo-root `.venv` (previously only the root — would point at a nonexistent pythonw on this machine). Tests: +8 backend (beat registration tokenless/token, scan decoupled, scan interval config, discovery pruning ×3, install_service venv ×2), 93.95 % | AI agent |
 | 2026-08-12 | 1.17.6.8 | **Full re-embed is now a button, and Ollama timeouts are fixed.** Knowledge page: "Rebuild knowledge index" is always visible (it lived only inside the damaged-index banner, so a healthy-but-stale index had no in-UI path to re-embed with new chunking/summaries) — the confirm dialog covers both cases; the amber banner is informational. Timeout hardening (laptop `sentinel(2).log`: 3 of 17 post-reset jobs died at `ingest_project_summary` while the v1.17.6.6 ~10k-token prefill contended with the embed flood): `ollama_timeout_seconds` default 600 → 1800. Summary output budget: new `ollama_summary_max_tokens` default **1250** — the old shared 500 cap truncated the fed-more, structured summaries; chat answers keep 500 (`_generate_with_metrics` now forwards `max_tokens`). `.env.example` documents both overrides. Tests: +1 backend (summary call carries 1250, chat stays 500), +1 frontend (rebuild action visible when healthy) | AI agent |
 | 2026-08-12 | 1.17.6.7 | **"Re-index all projects" 500 fixed.** The 1.17.6.4 `/api/v1/rag/index/all` endpoint submits the job name `run_index_knowledge_all`, but `_build_registry()` (`services/job_scheduler.py`) never registered the task — every click 500'd with a `KeyError` from `submit`. The exact-equality registry test pinned the pre-1.17.6.4 name set, so the suite stayed green; `EXPECTED_TASKS` now includes the name, plus a new regression test asserting the exact names the API routers submit all resolve through the real registry (catches this bug class). CLI `rag-index --all` was unaffected (calls the task directly). **CLI `rag-index --reset` fixed**: it called `get_chroma_manager().reset_all()` directly, dropping the collections but never clearing `ProjectFile.embedding_id` (the v1.17.6.1 flag-clearing existed only in the API reset path) — the startup auto-index then found nothing to re-embed, leaving the Knowledge page reporting every file embedded against an empty index. It now runs the same `run_reset_knowledge()` task as the API button and prints `files_unflagged`. **Flaky gate fixed**: the lifespan startup scan (`main.py` `_background_initial_scan`) ran as a daemon thread that outlived its TestClient and could persist a `SyncRun` into a later test's engine — intermittently failing `test_system_sync_endpoint`; the autouse conftest fixture now pins `auto_scan_on_startup=False` (renamed `_quiet_background`). Tests: +1 backend, +1 backend updated | AI agent |
 

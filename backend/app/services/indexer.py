@@ -43,6 +43,41 @@ _REQUIREMENT_RE = re.compile(
 )
 _MAX_WALK_DEPTH = 6
 _DISCOVERY_DEPTH = 4
+# v1.17.7: the watch root defaults to the user's home directory, whose noise
+# dirs (AppData, OneDrive, tool caches, vendored deps) would otherwise be
+# walked on every full scan. None of these can hold a sync-owned checkout
+# (flat direct child or <owner>/<name>), so they are pruned during the walk.
+_DISCOVERY_SKIP_DIRS = {
+    "appdata",
+    "onedrive",
+    "node_modules",
+    ".venv",
+    "venv",
+    "__pycache__",
+    ".pytest_cache",
+    ".git",
+    "dist",
+    "build",
+    ".cache",
+    ".ollama",
+    ".vscode",
+    ".config",
+    ".codex",
+    ".local",
+    ".docker",
+    ".thumbnails",
+    ".copilot",
+    ".dotnet",
+    ".templateengine",
+    ".windows-build-tools",
+    ".aws",
+    ".claude",
+    ".openclaw",
+    ".u2net",
+    ".vscode-shared",
+    ".matplotlib",
+    ".runelite",
+}
 
 
 def _pretty_name(directory_name: str) -> str:
@@ -257,19 +292,40 @@ class IndexerService:
         self.session.flush()
 
     def discover_repositories(self, watch_dir: str | Path) -> list[Path]:
-        """Find directories containing a `.git` folder, depth-limited."""
+        """Find directories containing a `.git` folder, depth-limited.
+
+        v1.17.7: an explicit depth-aware walk instead of `rglob("*")` — the
+        earlier walk descended into every subdirectory of the watch root
+        (e.g. the whole home dir) and only filtered the results; the noisy
+        `_DISCOVERY_SKIP_DIRS` are now pruned during the walk, and paths
+        beyond `_DISCOVERY_DEPTH` are never entered. Symlinked dirs
+        (Windows junctions) are not followed.
+        """
         root = Path(watch_dir)
         if not root.is_dir():
             return []
         if (root / ".git").exists():
             return [root]
         repos: list[Path] = []
-        for entry in root.rglob("*"):
-            rel = entry.relative_to(root)
-            if len(rel.parts) > _DISCOVERY_DEPTH:
+        stack: list[tuple[Path, int]] = [(root, 0)]
+        while stack:
+            base, depth = stack.pop()
+            if depth >= _DISCOVERY_DEPTH:
                 continue
-            if entry.is_dir() and (entry / ".git").exists():
-                repos.append(entry)
+            try:
+                with os.scandir(base) as entries:
+                    names = list(entries)
+            except OSError:
+                continue
+            for entry in names:
+                if not entry.is_dir(follow_symlinks=False):
+                    continue
+                if entry.name.lower() in _DISCOVERY_SKIP_DIRS:
+                    continue
+                path = Path(entry.path)
+                if (path / ".git").exists():
+                    repos.append(path)
+                stack.append((path, depth + 1))
         return sorted(repos)
 
     def detect_language(self, project_path: str | Path) -> str:

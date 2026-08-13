@@ -924,16 +924,17 @@ Read from the repo-root `.env` (Sprint 15: no containers — the backend process
 | `SENTINEL_PORT` | `8000` | Listen port (dashboard + API, same origin) |
 | `SENTINEL_DB_PATH` | `data/sqlite/sentinel.db` | SQLite database path (repo root) |
 | `SENTINEL_CHROMA_PATH` | `data/chroma` | ChromaDB persistence directory |
-| `SENTINEL_OLLAMA_HOST` | `http://localhost:11434` | Ollama server endpoint (laptop: `http://192.168.4.40:11434`) |
+| `SENTINEL_OLLAMA_HOST` | `http://localhost:11434` | Ollama server endpoint (native Ollama on the same machine) |
 | `SENTINEL_OLLAMA_MODEL` | `llama3.1:8b` | LLM model for project AI |
 | `SENTINEL_OLLAMA_NUM_CTX` | `32768` | v1.17.6.6: `num_ctx` sent to Ollama for generations (default 2048 would truncate long summary/query inputs) |
 | `SENTINEL_EMBEDDING_MODEL` | `nomic-embed-text` | Embedding model |
-| `SENTINEL_WATCH_DIRS` | `<home>` (current user) | Comma-separated project directories (v1.16.2: defaults to `Path.home()` so the laptop works out of the box) |
+| `SENTINEL_WATCH_DIRS` | `<home>` (current user) | Comma-separated project directories (v1.16.2: defaults to `Path.home()`; v1.17.7: the discovery walk prunes noise dirs like `AppData`/`OneDrive`/`node_modules`, so the home directory works even when non-project folders live in it) |
 | `SENTINEL_AUTO_INDEX_KNOWLEDGE` | `true` | v1.17: after the startup scan, queue RAG indexing for projects with unembedded files (Ollama-gated) |
 | `SENTINEL_API_KEY` | (empty) | Optional API key for authentication |
 | `SENTINEL_SCHEDULE_INTERVAL` | `60` | Minutes between automation runs |
-| `SENTINEL_GITHUB_TOKEN` | (empty) | Read-only PAT for `repo-sync` (clone/pull from GitHub) |
-| `SENTINEL_SYNC_INTERVAL_MINUTES` | `1440` | Minutes between repo auto-syncs (v1.17.1: every 24 h — startup always syncs once, then daily unless the header "Sync now" button is pressed) |
+| `SENTINEL_GITHUB_TOKEN` | (empty) | **Optional** read-only PAT for `repo-sync` (clone/pull from GitHub). Since v1.17.7 the tokenless setup is first-class: local checkouts with a GitHub origin are indexed directly from the watch dirs, and the daily security scan runs on its own beat regardless |
+| `SENTINEL_SYNC_INTERVAL_MINUTES` | `1440` | Minutes between repo auto-syncs (v1.17.1: every 24 h — startup always syncs once, then daily unless the header "Sync now" button is pressed). Only relevant with a token |
+| `SENTINEL_SCAN_INTERVAL_MINUTES` | `1440` | v1.17.7: minutes between the security scan-all beat (runs on its own schedule, independent of the GitHub sync — tokenless installs still scan daily) |
 
 ---
 
@@ -1629,22 +1630,20 @@ components, E2E covering key user workflows.
 runs natively — one uvicorn process serves the API and the built dashboard from
 the same origin (`backend/app/static`), so there is no nginx, no CORS, no
 containers, no Redis/Celery (the background scheduler is the in-process
-APScheduler). The always-on machine is the laptop at `192.168.4.40`; the
-dashboard is at `http://192.168.4.40:8000` (docs/01 §9).
+APScheduler). **v1.17.7: the always-on machine is the desktop itself** (dev +
+server in one, laptop retired); the dashboard is at `http://127.0.0.1:8000`
+(docs/01 §9).
 
 Pi-hole also left the Sentinel stack in Sprint 15: it was never the project's
 purpose (docs/pi-hole-idea.md) and Sentinel no longer reads its stats — the
-System page shows Ollama + startup checks only. The laptop's migration (v1.16.1)
-removes Pi-hole entirely: `docker system prune -a --volumes` wipes its
-containers/volumes and the router DNS returns to Automatic (see
-`docs/laptop.md` → "Moving off Docker").
+System page shows Ollama + startup checks only.
 
 ### 13.1. Install (one-time)
 
 ```powershell
 git clone https://github.com/jamesdileva/Sentinel.git   # or cd into an existing clone + git pull
 cd Sentinel
-py -3.11 -m venv .venv                                   # backend venv (repo root)
+py -3.11 -m venv .venv                                   # backend venv (repo root, or backend\.venv)
 .venv\Scripts\python.exe -m pip install -e "backend[dev]"   # runtime + dev deps (sqlmodel, pytest, lint)
 cd frontend
 npm install
@@ -1653,11 +1652,11 @@ cd ..
 .venv\Scripts\python.exe scripts\build.py --dist   # verify (backend+frontend tests, lint) and stage
 ```
 
-`.env` (gitignored) is optional; defaults are safe (§4.2). The only variables
-that usually matter on the laptop: `SENTINEL_OLLAMA_HOST=http://192.168.4.40:11434`
-(native Ollama on the same machine, `setx OLLAMA_HOST "0.0.0.0:11434"` once and
-restart the tray app) and `SENTINEL_GITHUB_TOKEN=<read-only PAT>` (repo
-auto-sync).
+`.env` (gitignored) is optional; defaults are safe (§4.2). On a single desktop
+**no variables are required**: Ollama runs natively on the same machine
+(`http://127.0.0.1:11434`), the watch dirs default to the current user's home
+(`C:\Users\j` — all local projects are found there), and the GitHub token is
+only needed if you want clone/pull auto-sync.
 
 ### 13.2. Running
 
@@ -1669,16 +1668,16 @@ auto-sync).
 .\.venv\Scripts\python.exe run.py --reload     # dev-only file-watch reload
 ```
 
-The dashboard is `http://192.168.4.40:8000` (System page: `/system`). The API is
+The dashboard is `http://127.0.0.1:8000` (System page: `/system`). The API is
 same-origin (`/api/v1/*`) — the SPA fallback route in `app/main.py` serves
 `index.html` for any non-API path.
 
 > **Note:** the dashboard ships **prebuilt** in the repo (`backend/app/static`,
-> committed). A fresh `git pull` is all the laptop needs — `npm install`,
+> committed). A fresh `git pull` is all the machine needs — `npm install`,
 > `npm run build`, and even `scripts\build.py` are only required when you have
-> changed the frontend code yourself (e.g. the Tauri ride-along next sprint).
+> changed the frontend code yourself.
 
-### 13.3. Autostart (always-on laptop)
+### 13.3. Autostart (always-on desktop)
 
 ```powershell
 .\.venv\Scripts\python.exe scripts\install_service.py --install    # registers the "Sentinel" Task-Scheduler task
@@ -1686,85 +1685,80 @@ same-origin (`/api/v1/*`) — the SPA fallback route in `app/main.py` serves
 ```
 
 The task runs `run.py --service` every 5 minutes with the repo's own venv
-(`pythonw.exe`, no console window). `--service` exits immediately when the port
+(`pythonw.exe`, no console window; v1.17.7 resolves either the repo-root
+`.venv` or `backend\.venv`). `--service` exits immediately when the port
 is already serving, so the server stays up (or comes back up) with no superuser
 rights and no service wrapper.
 
-### 13.4. Home Server Deployment (Sprint 12, reworked in Sprint 15)
+### 13.4. Home Server Deployment (Sprint 12, reworked in Sprint 15 and 1.17.7)
 
-The laptop is the always-on home server. After the one-time setup (§13.1) the
-whole application is reachable at **http://192.168.4.40:8000** from any device
-on the LAN. `.\.venv\Scripts\python.exe run.py` performs the same startup
-checks the server itself performs at boot (database, chroma, watch dirs, Ollama)
-and refuses to launch a broken process — cases that in the compose world
-silently rolled over.
+The desktop is the always-on machine. After the one-time setup (§13.1) the
+dashboard is at **http://127.0.0.1:8000** on this machine only (localhost —
+nothing is exposed on the LAN; bind `SENTINEL_HOST=0.0.0.0` + a firewall rule
+only if phone/tablet access is ever wanted). `.\.venv\Scripts\python.exe run.py`
+performs the same startup checks the server itself performs at boot (database,
+chroma, watch dirs, Ollama) and refuses to launch a broken process.
 
-**One-time laptop setup:**
+**One-time desktop setup:**
 
 ```powershell
-git clone https://github.com/jamesdileva/Sentinel.git
+git clone https://github.com/jamesdileva/Sentinel.git   # or cd into the existing clone
 cd Sentinel
-py -3.11 -m venv .venv
-.venv\Scripts\python.exe -m pip install -e "backend[dev]"
-cd frontend && npm install && npm run build && cd ..
-.venv\Scripts\python.exe scripts\build.py --dist
-# .env (gitignored) — from .env.example; the only laptop-specific values:
-#   SENTINEL_OLLAMA_HOST=http://192.168.4.40:11434   (native Ollama, same host)
-#   SENTINEL_GITHUB_TOKEN=<read-only PAT>            (repo auto-sync, Sprint 12.1)
-.venv\Scripts\python.exe scripts\install_service.py --install   # autostart (optional)
-.venv\Scripts\python.exe run.py                # or reboot — the Task-Scheduler task starts it
+py -3.11 -m venv .venv                                   # venv lives at backend\.venv on this machine
+backend\.venv\Scripts\python.exe -m pip install -e "backend[dev]"
+backend\.venv\Scripts\python.exe scripts\build.py --dist
+# .env (gitignored) — from .env.example; a tokenless install needs NOTHING:
+#   (optional) SENTINEL_GITHUB_TOKEN=<read-only PAT>   → enables clone/pull auto-sync
+backend\.venv\Scripts\python.exe scripts\install_service.py --install   # autostart (optional)
+backend\.venv\Scripts\python.exe run.py                # or reboot — the Task-Scheduler task starts it
 ```
 
-**Projects via GitHub auto-sync (Sprint 12.1):**
+**Projects — tokenless by default (v1.17.7):**
 
-The laptop keeps watch on `SENTINEL_WATCH_DIRS`; the `repo-sync` service fills
-them from GitHub — no SMB share or manual second copy needed:
+The machine keeps watch on `SENTINEL_WATCH_DIRS` (default: the current user's
+home directory — `C:\Users\j` here, where all 21 project checkouts live). The
+startup scan discovers every `.git` checkout and indexes the *sync-owned* ones:
+flat direct children with a GitHub origin (e.g. `C:\Users\j\sentinel`) or
+`<owner>/<name>`-shaped checkouts whose origin matches (e.g.
+`C:\Users\j\jamesdileva\cse455`). Worktrees, stray copies, nested sub-repos
+and `.codex`-style junk are never projects (v1.17.5); since v1.17.7 the
+discovery walk prunes noise directories (`AppData`, `OneDrive`, `node_modules`,
+`.venv`, …), so the home dir with all its non-project folders is cheap to scan.
 
-1. Create a **read-only PAT** on GitHub (Settings → Developer settings →
-   Personal access tokens; `repo` scope) and set `SENTINEL_GITHUB_TOKEN` in the
-   laptop `.env` (gitignored — never commit it).
-2. `SENTINEL_WATCH_DIRS` contains every `.git` checkout (default: the current
-   user's home directory — the laptop user's `C:\Users\james` is found
-   automatically, no setup).
-3. The beat schedule syncs on `SENTINEL_SYNC_INTERVAL_MINUTES` (v1.17.1
-   default `1440` = every 24 h): new repos are `git clone`d, existing
-   checkouts `git pull --ff-only`. A sync always runs once at startup; the
-   header "Sync now" button (`POST /system/sync`) or `sentinel sync` (inside
-   `backend`) runs one pass immediately (agent-safe, Rule 3 — git only, never
-   AI).
-   **Change detection (v1.15):** a repo's HEAD is recorded (`git rev-parse --short
-   HEAD`) before and after each pull — only repos whose HEAD actually moved are
-   re-indexed, and when nothing changed anywhere the whole scan is skipped
-   (no directory walks, no re-parsing, portfolio caches stay valid). `sentinel sync`
-   (inside `backend`) runs one pass immediately; agent-safe (Rule 3) — git only,
-   never AI. After a sync pass the CLI schedules **best-effort knowledge
-   indexing** (v1.14, narrowed in v1.15 to the changed repos only): untouched
-   `project_files` under the changed repos are queued to the RAG indexer
-   (`run_index_knowledge`), skipped silently when Ollama is unavailable — new
-   projects become answerable in chat shortly after sync without any manual step.
-   Every pass is persisted to the `SyncRun` table and `GET /system/sync`
-   (dashboard header pill) shows the last outcome (cloned/pulled counts,
-   failures, indexed count, knowledge queued).
+With **no token**, GitHub is not contacted at all: the `repo-sync` beat is not
+registered, startup reports a one-line INFO, and the header "Sync now" button
+answers with a clear message. The **security scan-all still runs daily** — it
+has its own beat (`SENTINEL_SCAN_INTERVAL_MINUTES`, default 1440; v1.17.7,
+previously it rode the repo-sync pass and tokenless installs never scanned).
 
-Only repos reachable with the token are synced. Repos that live only locally (no
-GitHub `origin`) are simply not part of this sync — push them to GitHub to have
-the laptop pick them up.
+Optionally, setting `SENTINEL_GITHUB_TOKEN` (read-only PAT, `repo` scope)
+restores the Sprint 12.1 flow: the `repo-sync` beat (`SENTINEL_SYNC_INTERVAL_MINUTES`)
+clones repos missing from the watch dirs and `git pull --ff-only`s existing
+checkouts every 24 h (a sync also runs once at startup; "Sync now" forces one
+immediately). Change detection (v1.15) re-indexes only repos whose HEAD moved;
+untouched repos skip the scan entirely. Every pass is persisted to `SyncRun`
+and `GET /system/sync` shows the last outcome.
 
-The laptop keeps its own `data/sqlite/sentinel.db` and `data/chroma` (the
-desktop's indexes do not transfer); after first boot run
-`.venv\Scripts\python -m app.cli index --all` (inside `backend`) to build the
-laptop's database from the synced projects.
+Repos that live only locally (no GitHub `origin`) are not projects under Rule 5
+(known entities) — the origin-URL check in `is_sync_owned` (v1.17.5) filters
+them out, so they are never indexed and the project-row GC never touches them
+unless a stale row exists.
+
+The machine keeps its own `data/sqlite/sentinel.db` and `data/chroma`; after
+first boot the startup scan + auto knowledge-index build the database from the
+local projects (`backend\.venv\Scripts\python.exe -m app.cli rag-index --all`
+re-runs it manually).
 
 **System page (Sprint 12, Pi-hole removed in Sprint 15):**
 
-`http://192.168.4.40:8000/system` shows read-only status for Ollama
+`http://127.0.0.1:8000/system` shows read-only status for Ollama
 (availability, installed models, tokens/sec of recent generations) plus the
 backend startup checks — per Project Rule 2 nothing on the page toggles
 anything server-side.
 
 **Release artifacts:** `.\.venv\Scripts\python.exe scripts\release.py` produces
 `dist/sentinel-<version>.zip` + `.sha256` (run.py, scripts, `.env.example`,
-docs, `backend/app` + `pyproject.toml`) — copy that archive to the laptop
+docs, `backend/app` + `pyproject.toml`) — copy that archive to another machine
 instead of cloning if preferred, then follow §13.1 minus `git clone`.
 
 **Troubleshooting:**
@@ -1776,9 +1770,9 @@ instead of cloning if preferred, then follow §13.1 minus `git clone`.
 | Dashboard shows stale UI after `git pull` | The served build is the staged one, not `frontend/dist` | Re-run `scripts/build.py --dist`; restart the backend |
 | Port 8000 already in use | Another Sentinel instance is running (a second console left open, or an orphaned uvicorn child after a hard kill of `run.py`) | Since v1.17.6.3 `run.py` prints the owning PID (`netstat -ano`) and a `taskkill /F /PID <pid>` hint instead of a raw bind traceback — close the other console, kill that PID, or serve elsewhere (`--port 8100` / `SENTINEL_PORT`) |
 | Projects indexed but missing the AI architecture summary (files embedded, no summary) | Summary embedding absent — wiped by a reset (v1.17.6.2/6.3 dedupe bug) or its generation timed out (v1.17.6.3, 120 s default) | Knowledge page **Re-index all projects** button (v1.17.6.4) or `rag-index --all` — incremental: embedded files are skipped, missing summaries regenerate, one bad project never aborts the pass |
-| `rag-index` / `sentinel` "not recognized" | The CLI is `python -m app.cli` from inside `backend`, never a bare command (`sentinel` is not on PATH) | `cd backend` then `..\.venv\Scripts\python.exe -m app.cli rag-index --all` (venv lives at the repo root; other machines may use `backend\.venv\...`) |
+| `rag-index` / `sentinel` "not recognized" | The CLI is `python -m app.cli` from inside `backend`, never a bare command (`sentinel` is not on PATH) | `cd backend` then `..\backend\.venv\Scripts\python.exe -m app.cli rag-index --all` (v1.17.7: the venv may live at the repo root OR `backend\.venv` — both are resolved) |
 | Server dies after reboot | Autostart task not installed, or paths moved | `.\.venv\Scripts\python.exe scripts\install_service.py --install` (task uses absolute venv paths) |
-| `sentinel sync` → *SENTINEL_GITHUB_TOKEN is not configured* | Token missing in `.env` | Set the PAT; restart the backend |
+| `sentinel sync` → *SENTINEL_GITHUB_TOKEN is not configured* | Token missing in `.env` | Optional since v1.17.7 — tokenless installs index local projects directly and scan on their own beat. Set the PAT only if you want clone/pull auto-sync |
 | New repos never appear after a push | Sync interval not elapsed | `..\.venv\Scripts\python.exe -m app.cli sync` (from inside `backend`) for an immediate pass |
 | Task-Scheduler task runs but nothing listens | Absolute paths point at a moved repo | `--uninstall` then `--install` again |
 | RAG chat returns *knowledge index is damaged on disk* (503) | A killed write corrupted the HNSW index (v1.17.6) | Rebuild: Knowledge page banner → "Rebuild knowledge index" (since v1.17.6.2 the probe detects this damage reliably), or `..\.venv\Scripts\python.exe -m app.cli rag-index --reset` from inside `backend`; then restart `run.py` — the startup auto-index re-embeds everything, including the AI architecture summary (once per project, v1.17.6.2). Bare `sentinel` is never on PATH — always call the venv python by path |
@@ -1908,6 +1902,7 @@ relationships aren't persisted, so they're intentionally absent.
 
 | Date | Version | Change | Author |
 |------|---------|--------|--------|
+| 2026-08-12 | 1.17.7 | **Single-desktop deployment; GitHub is now optional; scans decoupled from sync.** The laptop is retired — the desktop is both the dev workstation and the always-on server (docs/laptop.md → `docs/desktop.md`; docs/01 §9/§10, docs/02 §13 rewritten; dashboard at `http://127.0.0.1:8000`, localhost only). **Tokenless first-class**: `sync_tasks.run_repo_sync` no longer says "skipped" and startup no longer publishes a token warning (`main.py` logs one INFO line instead); the `repo-sync` beat registers only when `SENTINEL_GITHUB_TOKEN` is set (`job_scheduler.py`). **Security scan-all owns its own beat**: new `SENTINEL_SCAN_INTERVAL_MINUTES` (default 1440, `config.py`) — previously the daily scan ran chained to the repo-sync pass, so a tokenless install never scanned; `run_repo_sync` no longer calls `run_security_scan_all`. **Home-dir discovery pruning** (`indexer.py`): the full-home `rglob` walk replaced with a depth-aware walk that prunes noise dirs (`AppData`, `OneDrive`, `node_modules`, `.venv`, tool caches — `_DISCOVERY_SKIP_DIRS`) during traversal and never enters paths beyond `_DISCOVERY_DEPTH`; checkouts at depth ≤ 4 still found, eligible set unchanged (validated: 21 sync-owned projects in `C:\Users\j`). **install_service venv fallback**: the Task-Scheduler command resolves `backend\.venv` (this machine) or the repo-root `.venv` (previously only repo-root `.venv` — the task would point at a nonexistent pythonw here). Tests: +8 backend (scan-all/repo-sync beat registration tokenless+token, scan decoupled from sync, scan interval config, discovery pruning ×3, install_service venv ×2), 93.95 % total | AI agent |
 | 2026-08-10 | 1.17.5 | Duplicates eliminated at the source (Rule 5: projects are known entities). **Discovery eligibility**: only *sync-owned* checkouts can become projects — a canonical `<root>/<owner>/<name>` clone whose origin URL matches `github.com/<owner>/<name>`, or a flat direct-child checkout with any GitHub origin (the repos repo-sync adopted in v1.17.4 live there) — so git worktrees (`CG.worktrees\agents-*`), stray copies (`Desktop\airadio`, `Documents\CG`, `Desktop\backups\algo-trader`), nested sub-repos (`AG\stable-fast-3d`, `Python Projects\main`), `.codex\*` and seed fixtures are disqualified; same-origin duplicates keep the canonical nested checkout. **Project-row GC**: nothing ever deleted a `project` row — deleted dirs (the laptop's `jamesdileva\*` clone folders, the old `Projects\jamesdileva\*` copies) survived as zombie projects that looked alive forever; the full startup scan now drops rows whose checkout is gone, disqualified, or outside the watch roots, cascading files/dependencies/findings/results/logs/summaries/chat/portfolio + stored Chroma docs (FK-safe `delete`). Repo-sync's targeted rescans never GC. Verified read-only against the real desktop home dir: 60 checkouts discovered → 21 kept (18 flat-adopted + 2 new clones + 1 fork), zero churn. Tests: +7 indexer (eligibility variants, origin normalization, canonical-vs-flat dedupe, GC ×3), 94.5 % total | AI agent |
 | 2026-08-11 | 1.17.6 | Damaged knowledge index made detectable and recoverable. **ChromaManager** (`services/chroma_manager.py`): per-collection operation locks (RLock — two knowledge jobs can no longer interleave upserts on one collection), cached health probe that actually touches each non-empty collection's HNSW segment reader (`count()` only reads metadata, so a wiped segment dir still reported healthy), `RagIndexError` translating ChromaDB's `InternalError: Nothing found on disk` (killed write) into a **503 + rebuild hint** instead of a bare 500, `delete_by_project()` sweeping the **real** collections (the GC previously deleted from a phantom `knowledge` collection, orphaning vectors forever) and `reset_all()` as the deterministic recovery. **API**: `GET /rag/index/status` now carries `health` (`broken`/`checked`); `POST /rag/index/reset` (202 job) runs `run_reset_knowledge` (registry entry). **CLI**: `rag-index --reset` (no Ollama, no project id needed). **Frontend**: Knowledge page shows a damaged-index banner + "Rebuild knowledge index" confirm-action. **Scheduler**: graceful shutdown — `cancel_futures=True` used to kill an in-flight index mid-upsert, the exact corruption this release detects; workers now drain. **RAG queries**: all-project questions are summary-first (architecture summaries fill the top slots before noisier collections) and context lines now name the source project (metadata only ever stored ids). Tests: +10 backend (API 503/reset/health, delete_by_project on real collections, reset heals the probe, summary-first ordering, project names in context, task/registry/CLI reset), +2 frontend (banner + rebuild action, cancel path) | AI agent |
 | 2026-08-11 | 1.17.6.1 | Reset recovery completed: `run_reset_knowledge` (`tasks/rag_tasks.py`) now also clears `ProjectFile.embedding_id` after dropping the collections — `ingest_files` skips any file whose flag is set (the v1.17.1 incremental optimization), so a reset that kept the flags would re-embed **nothing** and the index would stay empty forever. The task returns `files_unflagged`; the next index (startup auto-index or `sentinel rag-index`) rebuilds everything. Tests: +1 (flags cleared after reset; the v1.17.6 task test updated for the new return value) | AI agent |
