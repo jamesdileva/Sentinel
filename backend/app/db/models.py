@@ -67,6 +67,9 @@ class ProjectFile(SQLModel, table=True):
     absolute_path: str
     language: str | None = None
     size_bytes: int | None = None
+    # v1.17.7.1: nanosecond mtime of the file on disk when it was last parsed.
+    # An unchanged size+mtime lets a full scan skip re-reading/re-parsing.
+    mtime_ns: int | None = None
     summary: str | None = None
     embedding_id: str | None = None
     created_at: datetime.datetime = Field(default_factory=_utcnow)

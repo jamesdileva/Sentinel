@@ -9,6 +9,7 @@ import datetime
 import fnmatch
 import os
 import re
+from collections.abc import Callable
 from pathlib import Path
 
 from sqlmodel import Session, select
@@ -43,6 +44,68 @@ _REQUIREMENT_RE = re.compile(
 )
 _MAX_WALK_DEPTH = 6
 _DISCOVERY_DEPTH = 4
+# v1.17.7.1: files with these suffixes are never parsed or stored as project
+# files — ML model checkpoints, media assets, archives, vendored binaries and
+# database files. They are binary, useless for language parsing, and their
+# full-content reads dominated the file walk (e.g. a 3.3 GB ONNX model being
+# decoded to a multi-GB string on every scan).
+_BINARY_SUFFIXES = frozenset(
+    {
+        ".onnx",
+        ".onnx_data",
+        ".pt",
+        ".pth",
+        ".safetensors",
+        ".ckpt",
+        ".pkl",
+        ".pickle",
+        ".npy",
+        ".npz",
+        ".h5",
+        ".hdf5",
+        ".tflite",
+        ".dll",
+        ".so",
+        ".dylib",
+        ".exe",
+        ".bin",
+        ".dat",
+        ".db",
+        ".sqlite",
+        ".sqlite3",
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".gif",
+        ".bmp",
+        ".webp",
+        ".ico",
+        ".mp4",
+        ".mkv",
+        ".avi",
+        ".mov",
+        ".wmv",
+        ".webm",
+        ".mp3",
+        ".wav",
+        ".flac",
+        ".ogg",
+        ".aac",
+        ".zip",
+        ".tar",
+        ".gz",
+        ".tgz",
+        ".bz2",
+        ".xz",
+        ".7z",
+        ".rar",
+        ".whl",
+        ".jar",
+        ".pyc",
+        ".pyd",
+        ".class",
+    }
+)
 # v1.17.7: the watch root defaults to the user's home directory, whose noise
 # dirs (AppData, OneDrive, tool caches, vendored deps) would otherwise be
 # walked on every full scan. None of these can hold a sync-owned checkout
@@ -193,7 +256,11 @@ class IndexerService:
             raise ValueError(f"Unknown project: {project_id}")
         return self.index_project(project.path)
 
-    def scan_all_projects(self, watch_dirs: list[str] | None = None) -> list[Project]:
+    def scan_all_projects(
+        self,
+        watch_dirs: list[str] | None = None,
+        progress: Callable[[int, int, str], None] | None = None,
+    ) -> list[Project]:
         """Discover known repositories (.git) under watch dirs and index them.
 
         v1.17.5: only sync-owned checkouts become projects (see
@@ -201,18 +268,25 @@ class IndexerService:
         checkout, mirroring RepoSyncService. On the full startup scan (no
         explicit dirs) stale Project rows are garbage-collected; targeted
         rescans from repo-sync never remove projects.
+
+        `progress(done, total, checkout_name)` is called after each checkout
+        is indexed (v1.17.7.1: the CLI prints a per-project line so long runs
+        don't look frozen).
         """
         dirs = watch_dirs or settings.watch_dirs
         indexed: list[Project] = []
         keep: set[str] = set()
         for watch_dir in dirs:
             watch_root = Path(watch_dir)
-            for checkout in self._sync_owned_checkouts(watch_root):
+            checkouts = self._sync_owned_checkouts(watch_root)
+            for index, checkout in enumerate(checkouts, start=1):
                 keep.add(self._norm(checkout))
                 try:
                     indexed.append(self.index_project(checkout))
                 except Exception:
                     logger.exception("Index failed for %s", checkout)
+                if progress is not None:
+                    progress(index, len(checkouts), checkout.name)
         if watch_dirs is None:
             self._gc_projects(keep)
         return indexed
@@ -404,8 +478,8 @@ class IndexerService:
                 if Path(changed).is_absolute()
                 else project_root / changed
             )
-            if not absolute.exists() or self._is_ignored(
-                absolute.relative_to(project_root)
+            if not absolute.exists() or self._is_skippable(
+                absolute.relative_to(project_root), absolute
             ):
                 continue
             self._upsert_file(project, absolute)
@@ -439,14 +513,63 @@ class IndexerService:
                 return True
         return False
 
+    def _is_ignored_dir(self, rel_dir: Path) -> bool:
+        """Directory-level ignore (v1.17.7.1): patterns ending in `/` prune the
+        walk so ignored subtrees are never descended into. Wildcards are
+        supported (fnmatch) — `.venv*/` catches `.venv`, `.venv_sf3d`, ..."""
+        for pattern in settings.ignore_patterns:
+            if not pattern.endswith("/"):
+                continue
+            name = pattern[:-1]
+            if any(fnmatch.fnmatch(part, name) for part in rel_dir.parts):
+                return True
+        return False
+
+    def _is_skippable(self, rel_path: Path, absolute: Path) -> bool:
+        """File-level gate (v1.17.7.1): ignore patterns, binary suffixes and
+        the size cap. Shared by the full scan and incremental updates."""
+        if self._is_ignored(rel_path):
+            return True
+        if absolute.suffix.lower() in _BINARY_SUFFIXES:
+            return True
+        try:
+            return absolute.stat().st_size > settings.max_file_size_kb * 1024
+        except OSError:
+            return True
+
     def _iter_source_files(self, project_root: Path) -> list[Path]:
+        """All parseable source files under the project root (sorted).
+
+        v1.17.7.1: a depth-first walk that never descends into ignored
+        directories (`.git`, `node_modules`, `.venv*`, `dist`, `data`, ...)
+        — the previous `rglob` visited every file in those trees (24k entries
+        in the Sentinel repo alone) and only filtered afterwards. Binary and
+        oversized files are skipped without being read.
+        """
         files: list[Path] = []
-        for entry in project_root.rglob("*"):
-            if entry.is_file() and not self._is_ignored(
-                entry.relative_to(project_root)
-            ):
-                files.append(entry)
-        return files
+        stack: list[Path] = [project_root]
+        while stack:
+            base = stack.pop()
+            try:
+                with os.scandir(base) as entries:
+                    names = list(entries)
+            except OSError:
+                continue
+            for entry in names:
+                try:
+                    is_dir = entry.is_dir(follow_symlinks=False)
+                except OSError:
+                    continue
+                if is_dir:
+                    rel_dir = Path(entry.path).relative_to(project_root)
+                    if not self._is_ignored_dir(rel_dir):
+                        stack.append(Path(entry.path))
+                    continue
+                absolute = Path(entry.path)
+                if self._is_skippable(absolute.relative_to(project_root), absolute):
+                    continue
+                files.append(absolute)
+        return sorted(files, key=lambda p: p.relative_to(project_root).as_posix())
 
     def _index_files(self, project: Project) -> None:
         """Re-parse a project's tree without destroying row identity.
@@ -476,13 +599,26 @@ class IndexerService:
         existing: ProjectFile | None = None,
     ) -> ProjectFile:
         rel = absolute.relative_to(Path(project.path))
-        parsed = parse_file_for_project(absolute, project.language, project.framework)
+        try:
+            stat = absolute.stat()
+        except OSError:
+            return existing or ProjectFile(project_id=project.id, path=rel.as_posix())
         row = existing or self.files.get_by_path(project.id, rel.as_posix())
+        # v1.17.7.1 fast path: an unchanged file (same size + mtime) is not
+        # re-read or re-parsed — full scans stay cheap after the first pass.
+        if (
+            row is not None
+            and row.mtime_ns == stat.st_mtime_ns
+            and row.size_bytes == stat.st_size
+        ):
+            return row
+        parsed = parse_file_for_project(absolute, project.language, project.framework)
         if row is None:
             row = ProjectFile(project_id=project.id, path=rel.as_posix())
         row.absolute_path = str(absolute)
         row.language = parsed.language if parsed else None
-        row.size_bytes = absolute.stat().st_size
+        row.size_bytes = stat.st_size
+        row.mtime_ns = stat.st_mtime_ns
         self.session.add(row)
         return row
 

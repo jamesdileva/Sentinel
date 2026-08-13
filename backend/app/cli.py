@@ -36,7 +36,11 @@ def index(
     with Session(get_engine()) as session:
         service = IndexerService(session)
         if all_projects:
-            projects = service.scan_all_projects()
+
+            def progress(done: int, total: int, name: str) -> None:
+                typer.echo(f"Indexed {done}/{total}: {name}")
+
+            projects = service.scan_all_projects(progress=progress)
             typer.echo(f"Indexed {len(projects)} project(s) from watch dirs.")
             return
         if project_path is None:

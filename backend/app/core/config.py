@@ -60,17 +60,25 @@ class Settings(BaseSettings):
     # path, so a fresh install on any machine (e.g. the laptop, user `james`)
     # finds its repos with no SENTINEL_WATCH_DIRS setup.
     watch_dirs: list[str] = Field(default_factory=lambda: [str(Path.home())])
+    # v1.17.7.1: `data/` — a repo's own database/chroma/logs must never be
+    # parsed as project files; `.venv*/` (wildcard dir pattern) covers odd
+    # venv names like `.venv_sf3d` that the exact `.venv/` missed.
     ignore_patterns: list[str] = [
         ".git/",
         "__pycache__/",
         "node_modules/",
-        ".venv/",
+        ".venv*/",
         "venv/",
         "dist/",
         "build/",
+        "data/",
         "*.pyc",
         ".pytest_cache/",
     ]
+    # v1.17.7.1: files larger than this are never parsed or stored as project
+    # files. ML models (multi-GB ONNX/checkpoints), media and other binaries
+    # bloated the file walk and were read fully by the parsers.
+    max_file_size_kb: int = 5120
     auto_scan_on_startup: bool = True
     auto_index_knowledge: bool = True  # queue RAG indexing for new/unembedded projects
 

@@ -37,12 +37,17 @@ LOG_DIR = DATA / "logs"
 
 PYTHON_MIN = (3, 11)
 
-PYWIN = ROOT / ".venv" / "Scripts" / "pythonw.exe"
-PY = ROOT / ".venv" / "Scripts" / "python.exe"
-if not PY.exists():
-    PY = ROOT / ".venv" / "bin" / "python3"
-if not PYWIN.exists():
-    PYWIN = PY
+PY_CANDIDATES = [
+    ROOT / ".venv" / "Scripts" / "python.exe",
+    BACKEND / ".venv" / "Scripts" / "python.exe",  # v1.17.7: backend/.venv layout
+    ROOT / ".venv" / "bin" / "python3",  # Linux-style fallback
+]
+PYWIN_CANDIDATES = [
+    ROOT / ".venv" / "Scripts" / "pythonw.exe",
+    BACKEND / ".venv" / "Scripts" / "pythonw.exe",
+]
+PY = next((c for c in PY_CANDIDATES if c.exists()), PY_CANDIDATES[0])
+PYWIN = next((c for c in PYWIN_CANDIDATES if c.exists()), PYWIN_CANDIDATES[0])
 
 
 def _ok(msg: str) -> None:

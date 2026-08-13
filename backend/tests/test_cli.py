@@ -48,7 +48,9 @@ def test_index_project(project_id):
 def test_index_all(project_id, monkeypatch):
     from app.services import indexer
 
-    monkeypatch.setattr(indexer.IndexerService, "scan_all_projects", lambda self: [])
+    monkeypatch.setattr(
+        indexer.IndexerService, "scan_all_projects", lambda self, progress=None: []
+    )
     result = runner.invoke(cli.app, ["index", "--all"])
     assert result.exit_code == 0
     assert "Indexed 0 project(s)" in result.output

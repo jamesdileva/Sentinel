@@ -60,38 +60,41 @@ def _migrate_columns(engine) -> None:
     writers hold the file) and failures are logged loudly — a failed extra
     column must never silently wedge a read path.
     """
-    attempts = 3
-    for attempt in range(1, attempts + 1):
-        try:
-            inspector = __import__("sqlalchemy").inspect(engine)
-            table = next(
-                (
-                    name
-                    for name in ("ollama_query_log", "ollamaquerylog")
-                    if inspector.has_table(name)
-                ),
-                None,
-            )
-            if table is None:
-                return
-            columns = {c["name"] for c in inspector.get_columns(table)}
-            if "purpose" not in columns:
+    # (probe table names, column, column type) — applied in order.
+    _MIGRATIONS = (
+        (
+            ("ollama_query_log", "ollamaquerylog"),
+            "purpose",
+            "VARCHAR(80) NOT NULL DEFAULT 'query'",
+        ),
+        (("projectfile",), "mtime_ns", "BIGINT"),  # v1.17.7.1
+    )
+    inspector = __import__("sqlalchemy").inspect(engine)
+    for table_names, column, column_type in _MIGRATIONS:
+        table = next((name for name in table_names if inspector.has_table(name)), None)
+        if table is None:
+            continue
+        columns = {c["name"] for c in inspector.get_columns(table)}
+        if column in columns:
+            continue
+        attempts = 3
+        for attempt in range(1, attempts + 1):
+            try:
                 with engine.begin() as conn:
                     conn.exec_driver_sql(
-                        f"ALTER TABLE {table} "
-                        "ADD COLUMN purpose VARCHAR(80) NOT NULL DEFAULT 'query'"
+                        f"ALTER TABLE {table} ADD COLUMN {column} {column_type}"
                     )
-                logger.info("Migrated %s: added purpose column", table)
-            return
-        except Exception:  # noqa: BLE001 — one bad attempt should not kill startup
-            if attempt < attempts:
-                time.sleep(1.0)
-            else:
-                logger.exception(
-                    "Schema migration failed after %d attempts — reads on new "
-                    "columns will degrade until the DB is migrated",
-                    attempts,
-                )
+                logger.info("Migrated %s: added %s column", table, column)
+                break
+            except Exception:  # noqa: BLE001 — one bad attempt should not kill startup
+                if attempt < attempts:
+                    time.sleep(1.0)
+                else:
+                    logger.exception(
+                        "Schema migration failed after %d attempts — reads on "
+                        "new columns will degrade until the DB is migrated",
+                        attempts,
+                    )
 
 
 def init_db() -> None:

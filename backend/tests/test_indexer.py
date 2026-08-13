@@ -1,5 +1,6 @@
 """Sprint 3: IndexerService acceptance tests."""
 
+import os
 from pathlib import Path
 
 from sqlmodel import Session, select
@@ -453,6 +454,8 @@ def test_update_incremental_only_changes_files(tmp_db):
     new_file.write_text("def helper():\n    return 1\n", encoding="utf-8")
     try:
         processed = svc.update_incremental(project.id, ["app/extra.py", "app/main.py"])
+        # Both listed files are handled; main.py is unchanged so the
+        # v1.17.7.1 mtime fast-path skips its re-read/re-parse internally.
         assert processed == 2
         files = ProjectFileRepository(Session(connection.get_engine())).get_by_project(
             project.id
@@ -461,6 +464,89 @@ def test_update_incremental_only_changes_files(tmp_db):
         assert {f.path for f in files} >= {"app/extra.py"}
     finally:
         new_file.unlink()
+
+
+def test_index_skips_binary_and_oversized_files(tmp_db, tmp_path, monkeypatch):
+    """v1.17.7.1: binary suffixes and files above the size cap are never
+    parsed or stored — multi-GB model trees must not bloat the scan."""
+    monkeypatch.setattr(settings, "max_file_size_kb", 1)  # 1 KB cap
+    repo = tmp_path / "ml-project"
+    for rel in ("src", "models/sd15/unet", "assets"):
+        (repo / rel).mkdir(parents=True)
+    (repo / "src" / "train.py").write_text("import torch\n", encoding="utf-8")
+    (repo / "models" / "sd15" / "unet" / "model.onnx").write_text(
+        "not really a model", encoding="utf-8"
+    )
+    (repo / "assets" / "weights.pth").write_bytes(b"\x00" * 64)
+    (repo / "src" / "big_output.bin").write_bytes(b"\xff" * 2048)
+
+    svc = _service(tmp_db)
+    project = svc.index_project(repo)
+    paths = {
+        f.path
+        for f in ProjectFileRepository(Session(connection.get_engine())).get_by_project(
+            project.id
+        )
+    }
+    assert paths == {"src/train.py"}
+
+
+def test_index_does_not_descend_into_ignored_dirs(tmp_db, tmp_path):
+    """v1.17.7.1: ignored directories prune the walk — `node_modules`,
+    `.venv*/` (wildcard: catches `.venv_sf3d`) and `data/` are never
+    descended into, so their contents produce no rows and no reads."""
+    repo = tmp_path / "repo"
+    for rel in ("src", "node_modules/pkg", ".venv_sf3d/Lib", "data"):
+        (repo / rel).mkdir(parents=True)
+    (repo / "src" / "main.py").write_text("print('hi')\n", encoding="utf-8")
+    (repo / "node_modules" / "pkg" / "index.js").write_text(
+        "module.exports = 1\n", encoding="utf-8"
+    )
+    (repo / ".venv_sf3d" / "Lib" / "torch.dll").write_bytes(b"\x00" * 16)
+    (repo / "data" / "state.db").write_bytes(b"\x00" * 16)
+
+    svc = _service(tmp_db)
+    project = svc.index_project(repo)
+    paths = {
+        f.path
+        for f in ProjectFileRepository(Session(connection.get_engine())).get_by_project(
+            project.id
+        )
+    }
+    assert paths == {"src/main.py"}
+
+
+def test_mtime_fast_path_skips_reparse(tmp_db, tmp_path, monkeypatch):
+    """v1.17.7.1: an unchanged file (same size + mtime) is not re-read or
+    re-parsed on a full rescan; a touched file is."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    target = repo / "app.py"
+    target.write_text("x = 1\n", encoding="utf-8")
+
+    calls = []
+    import app.services.indexer as indexer_module
+
+    real_parse = indexer_module.parse_file_for_project
+
+    def counting_parse(file_path, language, framework):
+        calls.append(Path(file_path).name)
+        return real_parse(file_path, language, framework)
+
+    monkeypatch.setattr(indexer_module, "parse_file_for_project", counting_parse)
+
+    svc = _service(tmp_db)
+    project = svc.index_project(repo)
+    assert calls == ["app.py"]
+
+    calls.clear()
+    svc.index_project(project.path)  # untouched -> no parse calls
+    assert calls == []
+
+    new_mtime = target.stat().st_mtime_ns + 1_000_000_000
+    os.utime(target, ns=(new_mtime, new_mtime))
+    svc.index_project(project.path)  # touched -> re-parsed
+    assert calls == ["app.py"]
 
 
 def test_index_project_survives_non_utf8_requirements(tmp_db, tmp_path):
