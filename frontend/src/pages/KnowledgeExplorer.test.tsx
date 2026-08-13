@@ -191,6 +191,22 @@ describe("KnowledgeExplorer", () => {
     expect(mockGetIndexStatus).toHaveBeenCalledTimes(2);
   });
 
+  it("shows the rebuild action even when the index is healthy", async () => {
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const user = userEvent.setup();
+    render(<KnowledgeExplorer />);
+    await screen.findByText(/2 of 4 files embedded across projects/);
+    expect(
+      screen.queryByText(/Knowledge index damaged on disk/),
+    ).not.toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: "Rebuild knowledge index" }),
+    );
+    expect(confirmSpy).toHaveBeenCalledTimes(1);
+    expect(mockResetKnowledgeIndex).toHaveBeenCalledTimes(1);
+    confirmSpy.mockRestore();
+  });
+
   it("shows the damaged-index banner with a rebuild action", async () => {
     mockGetIndexStatus.mockResolvedValue({
       project_id: null,
@@ -216,6 +232,9 @@ describe("KnowledgeExplorer", () => {
     render(<KnowledgeExplorer />);
     expect(
       await screen.findByText(/Knowledge index damaged on disk/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Rebuild knowledge index" }),
     ).toBeInTheDocument();
     await user.click(
       screen.getByRole("button", { name: "Rebuild knowledge index" }),

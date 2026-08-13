@@ -166,9 +166,18 @@ git pull                         # update the repo (includes the staged dashboar
   `..\.venv\Scripts\python.exe -m app.cli rag-index --all`.
 - Arch-summary generation "timed out" in the log → the client timeout was
   120 s and 4 concurrent embedding workers saturate Ollama at startup;
-  v1.17.6.4 raises the default to 600 s (`SENTINEL_OLLAMA_TIMEOUT_SECONDS`
-  overrides in `.env`). Summary still failed → run the re-index-all above,
-  it backfills.
+  v1.17.6.4 raises the default to 600 s, v1.17.6.8 to **1800 s** (the
+  v1.17.6.6 doc-first summary prompt alone is a ~10k-token prefill that can
+  outgrow 600 s mid re-index). `SENTINEL_OLLAMA_TIMEOUT_SECONDS` overrides in
+  `.env`. Summary still failed → run the re-index-all above, it backfills.
+  Since v1.17.6.8 summaries generate up to **1250 tokens**
+  (`SENTINEL_OLLAMA_SUMMARY_MAX_TOKENS`) instead of the shared 500.
+- Need a full re-embed (new chunking/summary prompt, e.g. right after an
+  upgrade)? Since v1.17.6.8 the Knowledge page always shows **Rebuild
+  knowledge index** (was hidden behind the damaged-index banner) → then
+  **Re-index all projects**. Or from the console (from inside `backend`):
+  `..\.venv\Scripts\python.exe -m app.cli rag-index --reset` and restart —
+  the startup auto-index re-embeds.
 - After moving the repo folder on disk: the venv paths in the Task-Scheduler task
   are absolute — uninstall and re-install it (`scripts/install_service.py`).
 - Portfolio security cell shows `⚠ pending` on every project right after an

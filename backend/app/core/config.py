@@ -39,13 +39,22 @@ class Settings(BaseSettings):
     # stronger instruction following); see docs changelog for the test.
     ollama_model: str = "llama3.1:8b"
     embedding_model: str = "nomic-embed-text"
-    ollama_timeout_seconds: int = 600  # v1.17.6.4: 120s timed out arch-summary
-    # generation while 4 embedding workers were saturating the local Ollama
+    ollama_timeout_seconds: int = 1800  # v1.17.6.4: 120s timed out arch-summary
+    # generation while embedding workers were saturating the local Ollama
+    # v1.17.6.8: 600s still timed out with the v1.17.6.6 doc-first summary
+    # context (~10k-token prefill) contending with a full re-index; 1800s
+    # covers the slowest laptop generation.
     # v1.17.6.6: llama3.1:8b supports 128k context, but Ollama's default
     # num_ctx is only 2048 — big summary/query prompts would be silently
     # truncated. 32768 covers the largest prompt we build (~12k tokens) with
     # room to spare and a modest KV-cache memory footprint on the laptop.
     ollama_num_ctx: int = 32768
+    # v1.17.6.8: summaries get more output budget than the shared 500-token
+    # default (chat answers stay concise) — the doc-first prompt feeds ~10k
+    # tokens of context, and a structured components/stack/notes summary
+    # grows past 500. 1250 tokens ~= 2-2.5 min on the laptop, inside the
+    # 1800s timeout.
+    ollama_summary_max_tokens: int = 1250
 
     # Defaults to the current user's home directory instead of a hardcoded
     # path, so a fresh install on any machine (e.g. the laptop, user `james`)

@@ -121,4 +121,4 @@ It explains why the World Simulator belongs.
 They're not random add-ons—they're services running on the same always-on machine. The flagship feature remains Project Intelligence, but the server itself becomes genuinely useful even when it's not indexing code or answering questions. That's the cohesive vision I think we've arrived at.
 
 
-SEPARATELY have airadio project that uses ollama how do we make that communicate with the ollama on my laptop rather than being served by my main PC and using my GPU/CPU
+SEPARATELY have aira    io project that uses ollama how do we make that communicate with the ollama on my laptop rather than being served by my main PC(this pc) and using my GPU/CPU

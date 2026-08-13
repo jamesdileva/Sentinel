@@ -67,6 +67,7 @@ def test_metered_generate_publishes_event_and_query_log(tmp_db, tmp_path, monkey
         ),
     )
     recorded: list[dict] = []
+    caps: list[int] = []
     monkeypatch.setattr(
         OllamaStatus,
         "record_query",
@@ -77,7 +78,8 @@ def test_metered_generate_publishes_event_and_query_log(tmp_db, tmp_path, monkey
         monkeypatch.setattr(
             service.ollama,
             "generate_with_metrics",
-            lambda prompt, purpose="query": {
+            lambda prompt, purpose="query", max_tokens=500: caps.append(max_tokens)
+            or {
                 "model": "gemma2",
                 "response": "grounded answer",
                 "eval_count": 42,
@@ -88,6 +90,7 @@ def test_metered_generate_publishes_event_and_query_log(tmp_db, tmp_path, monkey
         answer = service._generate_with_metrics("p", purpose="rag-query")
 
     assert answer == "grounded answer"
+    assert caps == [500]  # chat answers keep the shared 500-token cap
     assert events and events[0]["kind"] == "ollama"
     assert "42 tokens" in events[0]["message"]
     assert events[0]["data"]["purpose"] == "rag-query"
@@ -630,6 +633,63 @@ def test_summary_regenerated_after_reset(tmp_db, tmp_path):
     assert first["project_summaries"] == 1
     assert reindex["project_summaries"] == 1  # row alone must not block rebuild
     assert len(rows) == 1  # the same row was reused, not duplicated
+
+
+def test_summary_uses_dedicated_token_cap(tmp_db, tmp_path):
+    """v1.17.6.8: architecture summaries generate with the dedicated
+    `ollama_summary_max_tokens` cap (1250), not the shared 500-token
+    default — the doc-first prompt feeds ~10k tokens of context and a
+    structured components/stack/notes summary outgrows 500. Chat answers
+    keep the 500 default."""
+    from sqlmodel import select
+
+    from app.core.config import settings
+    from app.db.models import KnowledgeSummary
+
+    project_id = _index_project(tmp_db)
+
+    class RecordingOllama:
+        def __init__(self) -> None:
+            self.calls: list[dict] = []
+
+        def generate_with_metrics(
+            self,
+            prompt: str,
+            purpose: str = "query",
+            max_tokens: int = 500,
+            temperature: float = 0.3,
+            model: str | None = None,
+        ) -> dict:
+            self.calls.append({"purpose": purpose, "max_tokens": max_tokens})
+            return {
+                "response": "Summary text",
+                "model": model or settings.ollama_model,
+                "purpose": purpose,
+                "eval_count": 12,
+                "eval_duration_ns": 1,
+                "total_duration_ns": 1,
+            }
+
+    ollama = RecordingOllama()
+    with Session(connection.get_engine()) as session:
+        project = RagService.get_project(session, project_id)
+        rag = RagService(
+            session,
+            embedder=_fake_embedder,
+            chroma=ChromaManager(path=tmp_path / "chroma"),
+        )  # no llm arg -> the real metrics path runs against RecordingOllama
+        rag.ollama = ollama  # type: ignore[assignment]
+        counts = rag.index_project(project, with_summary=True)
+        rag._generate_with_metrics("question?", purpose="rag-query")
+    with Session(connection.get_engine()) as session:
+        rows = session.exec(
+            select(KnowledgeSummary).where(KnowledgeSummary.project_id == project_id)
+        ).all()
+    assert counts["project_summaries"] == 1
+    assert len(rows) == 1
+    summary_call = next(c for c in ollama.calls if c["purpose"] == "summary")
+    assert summary_call["max_tokens"] == settings.ollama_summary_max_tokens == 1250
+    assert ollama.calls[-1] == {"purpose": "rag-query", "max_tokens": 500}
 
 
 # ── v1.17.6.6: doc chunking / docs-first summaries / scaled all-scope ──

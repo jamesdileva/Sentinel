@@ -363,7 +363,11 @@ class RagService:
             framework=project.framework or "unknown",
             context=context or "No file content available.",
         )
-        content = self._generate_with_metrics(prompt, purpose="summary")
+        content = self._generate_with_metrics(
+            prompt,
+            purpose="summary",
+            max_tokens=settings.ollama_summary_max_tokens,
+        )
         if not content:
             return 0
         existing_rows = KnowledgeSummaryRepository(self.session).get_by_project(
@@ -630,12 +634,19 @@ class RagService:
 
     # --- internals -------------------------------------------------------
 
-    def _generate_with_metrics(self, prompt: str, purpose: str = "query") -> str:
+    def _generate_with_metrics(
+        self,
+        prompt: str,
+        purpose: str = "query",
+        max_tokens: int = 500,
+    ) -> str:
         """Generate, record deterministic metrics, and publish an Ollama event."""
         if not self._uses_real_llm:
             return self._llm(prompt)
         try:
-            result = self.ollama.generate_with_metrics(prompt, purpose=purpose)
+            result = self.ollama.generate_with_metrics(
+                prompt, purpose=purpose, max_tokens=max_tokens
+            )
         except Exception:  # noqa: BLE001  (fall back to the plain path)
             return self._llm(prompt)
         from app.services import activity_bus
