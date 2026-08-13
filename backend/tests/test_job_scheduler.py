@@ -97,6 +97,51 @@ def test_submit_async_does_not_block_on_error():
     scheduler.shutdown()
 
 
+def test_cancel_queued_cancels_not_started_jobs():
+    """v1.17.7.2: a reset must be able to drop queued re-index jobs before
+    they re-embed — `future.cancel()` only succeeds for jobs the pool has
+    not started yet."""
+    import threading
+
+    started = threading.Event()
+    release = threading.Event()
+
+    def slow() -> None:
+        started.set()
+        release.wait(timeout=5)
+
+    scheduler = JobScheduler(pool_size=1)
+    scheduler.run_inline = False
+    monkeypatch_replace(scheduler, "slow", slow)
+    try:
+        scheduler.submit("slow")
+        assert started.wait(timeout=5), "first job must start"
+        scheduler.submit("run_index_knowledge", args=["p1"])
+        scheduler.submit("run_index_knowledge", args=["p2"])
+        scheduler.submit("run_security_scan", args=["p3"])
+
+        cancelled = scheduler.cancel_queued("run_index_knowledge")
+        assert cancelled == 2
+        assert scheduler.cancel_queued("run_index_knowledge") == 0
+
+        with scheduler._lock:
+            remaining = [
+                name for name, future in scheduler._pending if not future.cancelled()
+            ]
+        assert remaining == ["slow", "run_security_scan"]
+    finally:
+        release.set()
+        scheduler.shutdown()
+
+
+def test_cancel_queued_inline_mode_returns_zero():
+    scheduler = JobScheduler()
+    scheduler.run_inline = True
+    scheduler.submit("run_security_scan", args=["p1"])
+    assert scheduler.cancel_queued("run_index_knowledge") == 0
+    scheduler.shutdown()
+
+
 def test_beats_registered_with_config_intervals(monkeypatch):
     monkeypatch.setattr(settings, "world_sim_enabled", True)
     monkeypatch.setattr(settings, "github_token", "")

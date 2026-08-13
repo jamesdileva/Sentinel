@@ -10,17 +10,12 @@ What run.py does (deterministic checks + start):
   2. Ensures .env (copied from .env.example when missing) and data dirs.
   3. Startup checks: Ollama reachable, SQLite writable, frontend built.
   4. Launches uvicorn (with --reload for development).
-  [service] mode: skip if the port is already serving (Task Scheduler rerun).
-  [install|uninstall]: register/remove the "Sentinel" autostart task.
 
 Usage:
     python run.py                 # checks + start on 127.0.0.1:8000
     python run.py --port 8080     # different port (also SENTINEL_PORT)
     python run.py --reload        # dev file-watch reload
     python run.py --check         # only run the startup checks
-    python run.py --install       # register autostart (Task Scheduler)
-    python run.py --uninstall     # remove the autostart task
-    python run.py --service       # used by the autostart task itself
 """
 
 import argparse
@@ -42,12 +37,7 @@ PY_CANDIDATES = [
     BACKEND / ".venv" / "Scripts" / "python.exe",  # v1.17.7: backend/.venv layout
     ROOT / ".venv" / "bin" / "python3",  # Linux-style fallback
 ]
-PYWIN_CANDIDATES = [
-    ROOT / ".venv" / "Scripts" / "pythonw.exe",
-    BACKEND / ".venv" / "Scripts" / "pythonw.exe",
-]
 PY = next((c for c in PY_CANDIDATES if c.exists()), PY_CANDIDATES[0])
-PYWIN = next((c for c in PYWIN_CANDIDATES if c.exists()), PYWIN_CANDIDATES[0])
 
 
 def _ok(msg: str) -> None:
@@ -177,55 +167,24 @@ def start_server(args: argparse.Namespace) -> int:
     return subprocess.call(argv, cwd=BACKEND, env=env)
 
 
-def install_mode(install: bool, uninstall: bool) -> int | None:
-    if install or uninstall:
-        arg = "--install" if install else "--uninstall"
-        return subprocess.call(
-            [str(PY), "scripts/install_service.py", arg, str(ROOT)], cwd=ROOT
-        )
-    return None
-
-
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="run.py", description=__doc__)
     parser.add_argument(
         "--port", type=int, default=8000, help="listen port (default 8000)"
     )
     parser.add_argument("--check", action="store_true", help="run startup checks only")
-    parser.add_argument(
-        "--install", dest="install", action="store_true", help="register autostart task"
-    )
-    parser.add_argument(
-        "--uninstall",
-        dest="uninstall",
-        action="store_true",
-        help="remove autostart task",
-    )
     parser.add_argument("--reload", action="store_true", help="dev auto-reload")
-    parser.add_argument(
-        "--service",
-        action="store_true",
-        help="autostart mode: skip if port already in use",
-    )
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
-    if args.install or args.uninstall:
-        code = install_mode(args.install, args.uninstall)
-        return 0 if code is None else code
-
     port = int(os.environ.get("SENTINEL_PORT", str(args.port)))
 
     if args.check:
         startup_checks()
         _ok("all startup checks done (no server started)")
-        return 0
-
-    if args.service and port_taken(port):
-        _ok(f"port {port} already in use — server running, nothing to do")
         return 0
 
     if port_taken(port):

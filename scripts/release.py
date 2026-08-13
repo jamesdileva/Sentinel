@@ -6,7 +6,7 @@ Produces a versioned release archive a human can ship to the laptop server:
     dist/sentinel-<version>.zip
     dist/sentinel-<version>.sha256  (per-file manifest)
 
-The archive contains the native-install runbook, the run/install scripts,
+The archive contains the native-install runbook, the run/build scripts,
 env example, docs, and backend packaging metadata — everything needed to run
 `python run.py` on a fresh machine. It deliberately omits runtime `data/`,
 secrets, and venvs (they live on each host, per docs/01 Rule 1).
@@ -37,7 +37,6 @@ from app import __version__ as VERSION  # noqa: E402
 
 INCLUDED = [
     "run.py",
-    "scripts/install_service.py",
     "scripts/build.py",
     ".env.example",
     "docs",

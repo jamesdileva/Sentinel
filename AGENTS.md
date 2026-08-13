@@ -58,10 +58,10 @@ These are the project's constitution. They must be upheld in every decision, cha
   `.\.venv\Scripts\python.exe run.py` is the single starting point (startup
   checks: SQLite, Ollama, frontend built; **no venv activation needed — the
   venv python is called by path everywhere**; the venv is `backend\.venv` on
-  this machine, the repo-root `.venv` elsewhere — `scripts/install_service.py`
-  resolves either) and
-  `scripts/install_service.py` registers a Task-Scheduler autostart task that
-  runs `run.py --service` every 5 min (exits when the port is serving).
+  this machine, the repo-root `.venv` elsewhere).
+  The server is started manually (no autostart task — v1.17.7.2 removed
+  `scripts/install_service.py`: the 5-min Task-Scheduler rerun popped console
+  windows every time it spawned the server).
   `scripts/build.py --dist` verifies (backend pytest + lint, frontend test +
   build) and stages the dashboard; `scripts/release.py` ships
   `dist/sentinel-<v>.zip` + `.sha256` (run.py, scripts, `.env.example`, docs,
@@ -86,12 +86,11 @@ These are the project's constitution. They must be upheld in every decision, cha
   models/tokens-per-sec + startup checks). Per Rule 2 it never toggles
   anything server-side.
 - **Release tooling**: `.\.venv\Scripts\python.exe scripts\release.py` →
-  `dist/sentinel-<v>.zip` + `.sha256` (run.py, scripts/install_service.py,
-  scripts/build.py, `.env.example`, docs, `backend/app`);
+  `dist/sentinel-<v>.zip` + `.sha256` (run.py, scripts/build.py, `.env.example`,
+  docs, `backend/app`);
   `.\.venv\Scripts\python.exe scripts\build.py --dist` verifies and stages.
 - **Machine operations**: `docs/desktop.md` is the on-server checklist (venv
-  setup, build/stage, autostart task, known issues); troubleshooting table in
-  docs/02 §13.4. The venv lives at `backend\.venv` on this machine (install
-  tasks resolve it, or the repo-root `.venv`). Never register the autostart
-  task twice with a different repo path (uninstall first), and keep port 8000
-  free of other services.
+  setup, build/stage, manual start, known issues); troubleshooting table in
+  docs/02 §13.4. The venv lives at `backend\.venv` on this machine (or the
+  repo-root `.venv`). There is no autostart task since v1.17.7.2 — start the
+  server manually with `run.py` and keep port 8000 free of other services.

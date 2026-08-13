@@ -63,6 +63,10 @@ class Settings(BaseSettings):
     # v1.17.7.1: `data/` — a repo's own database/chroma/logs must never be
     # parsed as project files; `.venv*/` (wildcard dir pattern) covers odd
     # venv names like `.venv_sf3d` that the exact `.venv/` missed.
+    # v1.17.7.2: `Library/` (Unity's regenerable cache — PackageCache,
+    # Artifacts, BurstCache), `release/` + `win-unpacked/` (electron-builder
+    # output) and `*.pdb`/`*.bhc` (build symbols / Unity Burst caches) —
+    # build artifacts bloat the file index (47k files vs ~4k real source).
     ignore_patterns: list[str] = [
         ".git/",
         "__pycache__/",
@@ -72,7 +76,12 @@ class Settings(BaseSettings):
         "dist/",
         "build/",
         "data/",
+        "Library/",
+        "release/",
+        "win-unpacked/",
         "*.pyc",
+        "*.pdb",
+        "*.bhc",
         ".pytest_cache/",
     ]
     # v1.17.7.1: files larger than this are never parsed or stored as project

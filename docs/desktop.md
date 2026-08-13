@@ -7,8 +7,7 @@ the laptop is retired). Full runbook: `docs/02` §13.4 (Sprint 15 native install
 > **venv never needs activating.** PowerShell's default execution policy blocks
 > `Activate.ps1` on most machines, so every command below uses the venv's
 > python explicitly (`backend\.venv\Scripts\python.exe` here — the repo-root
-> `.venv` on other machines; `scripts/install_service.py` resolves either).
-> The autostart task does the same (via `pythonw.exe`).
+> `.venv` on other machines).
 
 ## One-time setup
 
@@ -30,14 +29,12 @@ backend\.venv\Scripts\python.exe -m pip install -e "backend[dev]"   # or .\.venv
 `backend\.venv\Scripts\python.exe scripts\build.py --dist` — skip this if you
 never touch the frontend.
 
-**Start the server** (recommended): `backend\.venv\Scripts\python.exe run.py`
-→ startup checks (SQLite, Ollama, frontend built) then uvicorn on
-`127.0.0.1:8000` (localhost only — nothing is exposed on the LAN). For
-always-on runs from login:
-`backend\.venv\Scripts\python.exe scripts\install_service.py --install`
-registers a `Sentinel` Task-Scheduler task that runs `run.py --service` every
-5 minutes (exits instantly if the port is already serving — the server itself
-runs 24/7, the task only restarts it after crashes/reboots).
+**Start the server**: `backend\.venv\Scripts\python.exe run.py` → startup
+checks (SQLite, Ollama, frontend built) then uvicorn on `127.0.0.1:8000`
+(localhost only — nothing is exposed on the LAN). There is **no autostart
+task** (v1.17.7.2 removed `scripts/install_service.py`): the old 5-minute
+Task-Scheduler rerun kept popping console windows every time it spawned the
+server, and the server is run manually now.
 
 Repos are found under `SENTINEL_WATCH_DIRS`; it **defaults to the current
 user's home directory** (`C:\Users\j` — all local projects live there
@@ -56,7 +53,7 @@ Ollama is up.
 
 ```powershell
 git pull                         # update the repo (includes the staged dashboard)
-backend\.venv\Scripts\python.exe run.py --service   # ensure it's running (the scheduler task does this)
+backend\.venv\Scripts\python.exe run.py                # start / restart the server
 backend\.venv\Scripts\python.exe -m app.cli sync   # immediate repo sync if impatient (run from inside backend)
 ```
 
@@ -127,8 +124,9 @@ backend\.venv\Scripts\python.exe -m app.cli sync   # immediate repo sync if impa
   **Re-index all projects**. Or from the console (from inside `backend`):
   `backend\.venv\Scripts\python.exe -m app.cli rag-index --reset` and
   restart — the startup auto-index re-embeds.
-- After moving the repo folder on disk: the venv paths in the Task-Scheduler task
-  are absolute — uninstall and re-install it (`scripts/install_service.py`).
+- After moving the repo folder on disk: nothing to re-register — there is no
+  autostart task anymore (v1.17.7.2); just start `run.py` from the new
+  location.
 - Portfolio security cell shows `⚠ pending` on every project right after an
   upgrade → not a bug since v1.17.6.6: "never scanned" is now distinct from
   "scanned and clean". Scans run on their own daily beat since v1.17.7

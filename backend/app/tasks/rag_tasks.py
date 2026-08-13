@@ -111,6 +111,14 @@ def run_reset_knowledge() -> dict:
     activity_bus.publish_event(
         "index", "Knowledge index reset started", data={"scope": "all"}
     )
+    # v1.17.7.2: drop queued re-index jobs first, or the pool would re-embed
+    # files seconds after their flags were cleared and the reset would look
+    # like a no-op (an auto-index boot queue of ~20 jobs did exactly that).
+    from app.services.job_scheduler import scheduler
+
+    cancelled = scheduler.cancel_queued("run_index_knowledge")
+    if cancelled:
+        logger.info("reset cancelled %d queued knowledge job(s)", cancelled)
     get_chroma_manager().reset_all()
     with Session(get_engine()) as session:
         result = session.exec(update(ProjectFile).values(embedding_id=None))

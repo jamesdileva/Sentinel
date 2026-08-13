@@ -491,6 +491,49 @@ def test_index_skips_binary_and_oversized_files(tmp_db, tmp_path, monkeypatch):
     assert paths == {"src/train.py"}
 
 
+def test_index_ignores_build_artifact_trees(tmp_db, tmp_path):
+    """v1.17.7.2: Unity's regenerable `Library/` cache, electron-builder
+    `release/` + `win-unpacked/` output and `*.pdb`/`*.bhc` files (build
+    symbols / Burst caches) never enter the file index — the desktop's
+    index had swollen to 47k files, 25.6k of them Khd4's Unity cache."""
+    repo = tmp_path / "game"
+    for rel in (
+        "Assets/Scripts",
+        "Library/PackageCache/com.unity.test/package",
+        "Library/BurstCache",
+        "Packages/com.vendor.foo",
+        "release/win-unpacked/resources/app",
+    ):
+        (repo / rel).mkdir(parents=True)
+    (repo / "Assets" / "Scripts" / "Player.cs").write_text(
+        "class Player {}\n", encoding="utf-8"
+    )
+    (
+        repo / "Library" / "PackageCache" / "com.unity.test" / "package" / "index.json"
+    ).write_text("{}", encoding="utf-8")
+    (repo / "Library" / "BurstCache" / "splat.bhc").write_bytes(b"\x00" * 16)
+    (repo / "Packages" / "com.vendor.foo" / "manifest.json").write_text(
+        "{}", encoding="utf-8"
+    )
+    (repo / "release" / "win-unpacked" / "resources" / "app" / "main.js").write_text(
+        "module.exports = 1\n", encoding="utf-8"
+    )
+    (repo / "Assets" / "Scripts" / "Player.pdb").write_bytes(b"\x00" * 16)
+
+    svc = _service(tmp_db)
+    project = svc.index_project(repo)
+    paths = {
+        f.path
+        for f in ProjectFileRepository(Session(connection.get_engine())).get_by_project(
+            project.id
+        )
+    }
+    assert paths == {
+        "Assets/Scripts/Player.cs",
+        "Packages/com.vendor.foo/manifest.json",
+    }
+
+
 def test_index_does_not_descend_into_ignored_dirs(tmp_db, tmp_path):
     """v1.17.7.1: ignored directories prune the walk — `node_modules`,
     `.venv*/` (wildcard: catches `.venv_sf3d`) and `data/` are never

@@ -425,6 +425,26 @@ def test_reset_knowledge_task_clears_embedding_ids(tmp_db, tmp_path, monkeypatch
         assert files and all(f.embedding_id is None for f in files)
 
 
+def test_reset_knowledge_cancels_queued_index_jobs(tmp_db, tmp_path, monkeypatch):
+    """v1.17.7.2: a reset must cancel queued re-index jobs before clearing
+    the flags — otherwise the pool re-embeds seconds later and the reset
+    looks like a no-op (the boot auto-index queues ~20 projects)."""
+    from app.core.config import settings
+    from app.services import job_scheduler
+    from app.tasks import rag_tasks
+
+    monkeypatch.setattr(settings, "chroma_path", tmp_path / "shared")
+    calls: list[str] = []
+    monkeypatch.setattr(
+        job_scheduler.scheduler,
+        "cancel_queued",
+        lambda prefix: calls.append(prefix) or 3,
+    )
+    result = rag_tasks.run_reset_knowledge()
+    assert calls == ["run_index_knowledge"]
+    assert result["files_unflagged"] == 0
+
+
 def test_run_index_knowledge_all_skips_embedded_and_backfills_summaries(
     tmp_db, tmp_path, monkeypatch
 ):

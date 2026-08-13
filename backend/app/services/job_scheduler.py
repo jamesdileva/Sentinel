@@ -16,8 +16,9 @@ The task functions in `app/tasks/*` are plain callables registered here by
 name. Tests drive them directly (no broker, eager by construction).
 """
 
+import threading
 import uuid
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Callable
 
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -62,6 +63,11 @@ class JobScheduler:
         # Tests flip this to True so jobs run synchronously on the calling
         # thread (replaces the old Celery `task_always_eager` escape hatch).
         self.run_inline = False
+        # (name, future) for on-demand jobs still queued in the pool
+        # (v1.17.7.2) — lets a reset cancel pending re-index jobs instead of
+        # re-embedding immediately after the flags are cleared.
+        self._pending: list[tuple[str, Future]] = []
+        self._lock = threading.Lock()
 
     # -- jobs bridged by routers ---------------------------------------------
 
@@ -86,8 +92,37 @@ class JobScheduler:
             detail=f"job {job_id}",
             data={"job_id": job_id, "name": name, "state": "queued"},
         )
-        self._executor.submit(self._run, job_id, name, func, args or [])
+        future = self._executor.submit(self._run, job_id, name, func, args or [])
+        with self._lock:
+            self._pending.append((name, future))
+        future.add_done_callback(self._discard)
         return job_id
+
+    def _discard(self, future: Future) -> None:
+        with self._lock:
+            self._pending[:] = [
+                (name, f) for name, f in self._pending if f is not future
+            ]
+
+    def cancel_queued(self, name_prefix: str) -> int:
+        """Cancel queued (not yet started) jobs whose task name starts with
+        `name_prefix` (v1.17.7.2). Returns the number cancelled; jobs already
+        running in the pool are untouched."""
+        with self._lock:
+            pending = list(self._pending)
+        cancelled = 0
+        for name, future in pending:
+            if name.startswith(name_prefix) and future.cancel():
+                cancelled += 1
+        with self._lock:
+            self._pending = [
+                (name, future)
+                for name, future in self._pending
+                if not (name.startswith(name_prefix) and future.cancelled())
+            ]
+        if cancelled:
+            logger.info("cancelled %d queued %r job(s)", cancelled, name_prefix)
+        return cancelled
 
     # -- lifecycle -----------------------------------------------------------
 
