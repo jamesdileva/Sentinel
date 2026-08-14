@@ -5,7 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
-JobStatusValue = Literal["queued", "running", "succeeded", "failed"]
+JobStatusValue = Literal["queued", "running", "succeeded", "failed", "skipped"]
 
 
 class BuildTrigger(BaseModel):
@@ -39,9 +39,18 @@ class JobStatus(BaseModel):
 
 
 def build_status_from_log(log) -> JobStatus:
-    """Derive a JobStatus from a BuildLog row (model_config from_attributes)."""
+    """Derive a JobStatus from a BuildLog row (model_config from_attributes).
+
+    v1.17.7.5: a completed build with `success=None` means no command was
+    discovered — "skipped", not "failed" (and never the old false "passed").
+    """
     if log.completed_at is not None:
-        status: JobStatusValue = "succeeded" if log.success else "failed"
+        if log.success is True:
+            status: JobStatusValue = "succeeded"
+        elif log.success is False:
+            status = "failed"
+        else:
+            status = "skipped"
     else:
         status = "running"
     return JobStatus(

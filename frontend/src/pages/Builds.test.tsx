@@ -113,4 +113,20 @@ describe("Builds", () => {
     await user.selectOptions(screen.getByRole("combobox"), "p1");
     expect(await screen.findByText("No builds yet. Trigger one above.")).toBeInTheDocument();
   });
+
+  it("labels completed no-command builds as skipped, not passed or running", async () => {
+    mockGetBuildHistory.mockResolvedValue([
+      makeLog({
+        success: null,
+        exit_code: null,
+        stdout: "No build command configured for this project.",
+      }),
+    ]);
+    const user = userEvent.setup();
+    render(<Builds />);
+    await user.selectOptions(screen.getByRole("combobox"), "p1");
+    expect(await screen.findByText("skipped")).toBeInTheDocument();
+    expect(screen.queryByText("succeeded")).not.toBeInTheDocument();
+    expect(screen.queryByText("running")).not.toBeInTheDocument();
+  });
 });

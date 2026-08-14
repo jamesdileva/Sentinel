@@ -5,6 +5,7 @@ A deterministic local advisory table and regex checks keep scanning testable and
 dependency-free on hosts without those tools.
 """
 
+import ast
 import datetime
 import re
 from pathlib import Path
@@ -12,7 +13,7 @@ from pathlib import Path
 from sqlmodel import Session, select
 
 from app.core.logging import get_logger
-from app.db.models import Project, SecurityFinding, Severity
+from app.db.models import Project, ProjectFile, SecurityFinding, Severity
 from app.repositories import DependencyRepository, ProjectRepository
 
 logger = get_logger(__name__)
@@ -41,23 +42,10 @@ _SECRET_PATTERNS: list[tuple[str, re.Pattern[str], Severity]] = [
     ),
 ]
 
-# Static analysis checks: name -> (regex, severity) applied to Python sources.
-# The negative lookbehind matters (v1.17.1 bug): `\bexec\s*\(` matched
-# `session.exec(` — the "." before exec IS a word boundary — so every
-# SQLModel project was flagged 10+ times for its ORM calls. Now only
-# bare eval()/exec() constructs are flagged.
-_STATIC_PATTERNS: list[tuple[str, re.Pattern[str], Severity]] = [
-    (
-        "Use of eval()",
-        re.compile(r"(?<!\.)\beval\s*\("),
-        Severity.MEDIUM,
-    ),
-    (
-        "Use of exec()",
-        re.compile(r"(?<!\.)\bexec\s*\("),
-        Severity.MEDIUM,
-    ),
-]
+# Static analysis targets (v1.17.7.5: detected via the Python AST, not regex —
+# string literals and comments can never match, which killed the scanner
+# flagging its own source and docs mentioning "Use of eval()").
+_DYNAMIC_EXEC_NAMES = ("eval", "exec")
 
 _IGNORED_NAME_PARTS = (
     ".git",
@@ -88,8 +76,10 @@ def _is_test_file(rel: Path) -> bool:
 
 
 # Placeholder/example values look like secrets but are not (v1.17.1): the
-# scanner used to flag `.env.example`-style values and fake test tokens such as
-# `ghp_abcdefghijklmnopqrst` and `ghp_xxxxxxxxxxxxxxxxxxxx` in fixtures.
+# scanner used to flag `.env.example`-style values and fake test tokens such
+# as `ghp_xxxxxxxxxxxxxxxxxxxx` in fixtures. An *alphabetical* token like
+# `ghp_abcdefghijklmnopqrst` deliberately stays flagged (it reads as a real
+# key) — this comment therefore uses the all-x placeholder form.
 _PLACEHOLDER_MARKERS = (
     "xxx",
     "example",
@@ -203,10 +193,39 @@ class SecurityScanner:
     def _collect(self, project: Project) -> list[dict]:
         """Collect all scan templates (dependencies + secrets + static)."""
         findings: list[dict] = []
+        files = self._iter_scan_files(project)
+        root = Path(project.path)
         findings += self.scan_dependencies(project)
-        findings += self.scan_secrets(project.path)
-        findings += self.scan_static_analysis(project.path)
+        findings += self.scan_secrets(files, root)
+        findings += self.scan_static_analysis(files, root)
         return findings
+
+    def _iter_scan_files(self, project: Project) -> list[Path]:
+        """The file set a scan covers = the project's *indexed* files
+        (git-tracked source with the indexer gates applied).
+
+        v1.17.7.5: the scanner used to rglob the raw tree, so untracked junk
+        flooded findings — `.venv_sf3d` site-packages (torch/numba/sympy
+        vendored eval/exec), an embedded Python runtime under
+        `backend/runtime/python/Lib`, and `release/`/`win-unpacked/`
+        electron output produced hundreds of false positives (AG 209,
+        Workflow Toolkit 183). The index is the source of truth; falls back
+        to the indexer's gated walk when a project has no rows yet.
+        """
+        root = Path(project.path)
+        rows = self.session.exec(
+            select(ProjectFile).where(ProjectFile.project_id == project.id)
+        ).all()
+        if rows:
+            files: list[Path] = []
+            for row in rows:
+                absolute = Path(row.absolute_path or root / row.path)
+                if absolute.is_file():
+                    files.append(absolute)
+            return files
+        from app.services.indexer import IndexerService
+
+        return IndexerService(self.session)._iter_source_files(root)
 
     def scan_dependencies(self, project: Project) -> list[dict]:
         """Flag known-vulnerable dependency versions from the advisory table."""
@@ -232,19 +251,17 @@ class SecurityScanner:
                 )
         return findings
 
-    def scan_secrets(self, project_path: str) -> list[dict]:
-        """Scan project files for secret patterns (deterministic, local)."""
+    def scan_secrets(self, files: list[Path], project_root: Path) -> list[dict]:
+        """Scan the indexed files for secret patterns (deterministic, local)."""
         findings: list[dict] = []
-        root = Path(project_path)
-        if not root.is_dir():
-            return findings
-        for file_path in root.rglob("*"):
-            if not file_path.is_file():
+        for absolute in files:
+            try:
+                rel = absolute.relative_to(project_root)
+            except ValueError:
                 continue
-            rel = file_path.relative_to(root)
             if any(part in _IGNORED_NAME_PARTS for part in rel.parts):
                 continue
-            if file_path.name.lower() in _ENV_TEMPLATE_NAMES:
+            if absolute.name.lower() in _ENV_TEMPLATE_NAMES:
                 continue
             if _is_test_file(rel):
                 # v1.17.1: test files routinely hold fixture/fake tokens
@@ -252,7 +269,7 @@ class SecurityScanner:
                 # with static analysis, they are not application source.
                 continue
             try:
-                content = file_path.read_text(encoding="utf-8", errors="replace")
+                content = absolute.read_text(encoding="utf-8", errors="replace")
             except OSError:
                 continue
             for name, pattern, severity in _SECRET_PATTERNS:
@@ -275,41 +292,60 @@ class SecurityScanner:
                     break  # one finding per file per pattern
         return findings
 
-    def scan_static_analysis(self, project_path: str) -> list[dict]:
-        """Flag risky constructs in Python sources (eval/exec)."""
+    def scan_static_analysis(self, files: list[Path], project_root: Path) -> list[dict]:
+        """Flag risky constructs in Python sources (eval/exec).
+
+        v1.17.7.5: parsed with the stdlib `ast` instead of regex, so only
+        *real* `eval(...)`/`exec(...)` calls are flagged — string literals
+        and comments (docs, scanner titles, `"Use of eval()"` examples) can
+        never match. Attribute calls (`session.exec(...)`) are not Name
+        nodes, so the v1.17.1 ORM false positive stays fixed.
+        """
         findings: list[dict] = []
-        root = Path(project_path)
-        if not root.is_dir():
-            return findings
-        for file_path in root.rglob("*.py"):
-            rel = file_path.relative_to(root)
+        for absolute in files:
+            if absolute.suffix.lower() != ".py":
+                continue
+            try:
+                rel = absolute.relative_to(project_root)
+            except ValueError:
+                continue
             if any(part in _IGNORED_NAME_PARTS for part in rel.parts):
                 continue
             if _is_test_file(rel):
                 continue
             try:
-                content = file_path.read_text(encoding="utf-8", errors="replace")
+                content = absolute.read_text(encoding="utf-8", errors="replace")
             except OSError:
                 continue
-            for name, pattern, severity in _STATIC_PATTERNS:
-                for match in pattern.finditer(content):
-                    line_no = content[: match.start()].count("\n") + 1
-                    findings.append(
-                        {
-                            "type": "static_analysis",
-                            "severity": severity,
-                            "title": name,
-                            "description": (
-                                "Dynamic code execution construct found; prefer "
-                                "a safe alternative."
-                            ),
-                            "file_path": str(rel),
-                            "line_number": line_no,
-                            "cve_id": None,
-                            "remediation": f"Avoid {'/'.join(name.lower().split())}",
-                        }
-                    )
-                    break
+            try:
+                tree = ast.parse(content)
+            except SyntaxError:
+                continue
+            seen: set[str] = set()
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                func = node.func
+                if not isinstance(func, ast.Name):
+                    continue
+                if func.id not in _DYNAMIC_EXEC_NAMES or func.id in seen:
+                    continue
+                seen.add(func.id)
+                findings.append(
+                    {
+                        "type": "static_analysis",
+                        "severity": Severity.MEDIUM,
+                        "title": f"Use of {func.id}()",
+                        "description": (
+                            "Dynamic code execution construct found; prefer "
+                            "a safe alternative."
+                        ),
+                        "file_path": str(rel),
+                        "line_number": node.lineno,
+                        "cve_id": None,
+                        "remediation": f"Avoid {func.id}",
+                    }
+                )
         return findings
 
     @staticmethod

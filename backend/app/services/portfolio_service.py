@@ -131,7 +131,14 @@ class PortfolioService:
 
     def _has_build_command(self, project: Project) -> bool:
         commands = (project.stack or {}).get("commands") or {}
-        return bool(commands.get("build"))
+        if commands.get("build"):
+            return True
+        # v1.17.7.5: the index-time stack may predate a README/manifest
+        # command; consult runtime discovery so the matrix matches what a
+        # build would actually run.
+        from app.utils.command_extractor import extract_build_commands
+
+        return bool(extract_build_commands(project.path).get("build"))
 
     def _has_test_files(self, project_id: str) -> bool:
         return any(is_test_file_path(f.path) for f in self._files(project_id))

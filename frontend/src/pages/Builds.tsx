@@ -18,6 +18,7 @@ function statusTone(job: BuildJob | BuildLog) {
 function statusLabel(job: BuildJob | BuildLog) {
   if (job.success === true) return "succeeded";
   if (job.success === false) return "failed";
+  if (job.completed_at) return "skipped";
   return "running";
 }
 

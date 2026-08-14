@@ -39,8 +39,13 @@ class BuildRunner:
         log = self.session.get(BuildLog, log.id)
 
         if not command:
-            log.success = True
-            log.exit_code = 0
+            # v1.17.7.5: a project with no discoverable build command is
+            # *not* a successful build — previously success=True/exit 0 made
+            # the Builds page, the activity feed and job results claim a
+            # pass. success stays None (nullable column) so callers can tell
+            # "never actually built" from "built and passed/failed".
+            log.success = None
+            log.exit_code = None
             log.stdout = "No build command configured for this project."
             log.completed_at = datetime.datetime.now(datetime.timezone.utc)
             self.session.add(log)

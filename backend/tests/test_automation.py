@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 from sqlmodel import Session, select
 
 from app.db import connection
-from app.db.models import Project, SecurityFinding
+from app.db.models import Project, ProjectFile, SecurityFinding
 from app.main import app
 from app.services.build_runner import BuildRunner
 from app.services.command_runner import CommandResult
@@ -64,13 +64,17 @@ def _project_with_commands(session, commands: dict) -> Project:
 
 
 def test_build_runner_no_build_command(tmp_db):
+    """v1.17.7.5: no discoverable command is NOT a successful build — the
+    log records success=None so the UI/feed can say "skipped" instead of
+    claiming a pass that never ran anything."""
     with Session(connection.get_engine()) as session:
         project = _project_with_commands(session, {})
         log = BuildRunner(session).run_build(project)
-        assert log.success is True
-        assert log.exit_code == 0
+        assert log.success is None
+        assert log.exit_code is None
         assert log.completed_at is not None
         assert log.commands.get("build") == ""
+        assert "No build command" in (log.stdout or "")
 
 
 def test_build_runner_success(tmp_db):
@@ -231,7 +235,8 @@ def test_security_scanner_skips_false_positives(tmp_db, tmp_path):
 def test_static_analysis_ignores_attribute_calls(tmp_db, tmp_path):
     """v1.17.1 regression: '\\bexec\\s*\\(' matched `session.exec(` because a
     dot is a word boundary — every SQLModel project was flagged for its ORM
-    calls (17 of the laptop's 20 findings were this false positive)."""
+    calls (17 of the laptop's 20 findings were this false positive). AST-based
+    detection only flags bare Name calls, so attribute calls still pass."""
     root = tmp_path / "orm-project"
     root.mkdir()
     (root / "service.py").write_text(
@@ -243,15 +248,64 @@ def test_static_analysis_ignores_attribute_calls(tmp_db, tmp_path):
     )
     (root / "pyproject.toml").write_text("[tool.pytest.ini_options]\n")
 
-    from app.services.security_scanner import _STATIC_PATTERNS
+    with Session(connection.get_engine()) as session:
+        project = IndexerService(session).index_project(str(root))
+        assert SecurityScanner(session).scan_project(project) == []
 
-    content = (root / "service.py").read_text(encoding="utf-8")
-    for _name, pattern, _severity in _STATIC_PATTERNS:
-        assert pattern.findall(content) == []
+
+def test_static_analysis_ignores_string_literals(tmp_db, tmp_path):
+    """v1.17.7.5 regression: the regex static scan flagged the string
+    literals `"Use of eval()"`/`"Use of exec()"` in the scanner's own
+    pattern titles — Sentinel flagged itself 3×. AST detection only flags
+    real calls, so strings and comments can never match."""
+    root = tmp_path / "string-project"
+    root.mkdir()
+    (root / "app.py").write_text(
+        'MSG = "Use of eval() and Use of exec() in this string"\n'
+        "# ghp_xxxxxxxxxxxxxxxxxxxx\n"
+        "TITLE = 'Use of eval()'\n",
+        encoding="utf-8",
+    )
+    (root / "pyproject.toml").write_text("[tool.pytest.ini_options]\n")
 
     with Session(connection.get_engine()) as session:
         project = IndexerService(session).index_project(str(root))
         assert SecurityScanner(session).scan_project(project) == []
+
+
+def test_scanner_scans_indexed_files_only(tmp_db, tmp_path):
+    """v1.17.7.5: the scan covers the project's *indexed* files (git-tracked,
+    indexer gates applied) — never the raw tree. Untracked junk
+    (.venv_sf3d site-packages, electron release output) exists on disk but
+    must not produce findings; the real tracked source still is."""
+    root = tmp_path / "indexed-project"
+    (root / "app").mkdir(parents=True)
+    (root / "app" / "real.py").write_text(
+        "result = exec(user_input())\n", encoding="utf-8"
+    )
+    junk_venv = root / ".venv_sf3d" / "Lib" / "site-packages"
+    junk_venv.mkdir(parents=True)
+    (junk_venv / "vendored.py").write_text("x = eval('1+1')\n", encoding="utf-8")
+    release = root / "release" / "bundle.js"
+    release.parent.mkdir()
+    release.write_text("const key = 'AKIA1234567890ABCDEF';\n", encoding="utf-8")
+    (root / "pyproject.toml").write_text("[tool.pytest.ini_options]\n")
+
+    with Session(connection.get_engine()) as session:
+        project = IndexerService(session).index_project(str(root))
+        indexed = {
+            f.path.replace("\\", "/")
+            for f in session.exec(
+                select(ProjectFile).where(ProjectFile.project_id == project.id)
+            ).all()
+        }
+        assert not any(
+            p.startswith(".venv_sf3d") or p.startswith("release") for p in indexed
+        )
+        findings = SecurityScanner(session).scan_project(project)
+        paths = {f.file_path.replace("\\", "/") for f in findings}
+        assert paths == {"app/real.py"}
+        assert {f.title for f in findings} == {"Use of exec()"}
 
 
 def test_static_analysis_still_flags_bare_exec(tmp_db, tmp_path):
@@ -313,17 +367,19 @@ def test_secret_scanning_skips_test_files(tmp_db, tmp_path):
 
 
 def test_build_run_status_and_history(eager, tmp_db):
+    """v1.17.7.5: a project with no build command completes as "skipped"
+    (success=None) — it must not claim a pass it never ran."""
     project_id = _seed(tmp_db)
     resp = client.post("/api/v1/builds/run", json={"project_id": project_id})
     assert resp.status_code == 202
     body = resp.json()
     assert body["project_id"] == project_id
-    assert body["status"] == "succeeded"
-    assert body["exit_code"] == 0
+    assert body["status"] == "skipped"
+    assert body["exit_code"] is None
 
     status = client.get(f"/api/v1/builds/status/{body['id']}")
     assert status.status_code == 200
-    assert status.json()["status"] == "succeeded"
+    assert status.json()["status"] == "skipped"
 
     history = client.get("/api/v1/builds/history", params={"project_id": project_id})
     assert history.status_code == 200

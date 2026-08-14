@@ -33,10 +33,19 @@ def run_build_task(project_id: str, log_id: str) -> dict:
         if log is None:
             log = BuildLog(id=log_id, project_id=project.id)
         log = BuildRunner(session).run_build(project, log=log)
+        if log.success is None:
+            message = f"Build skipped for {project.name} — no build command"
+            detail = "no command configured"
+        elif log.success:
+            message = f"Build passed for {project.name}"
+            detail = f"exit code {log.exit_code}"
+        else:
+            message = f"Build failed for {project.name}"
+            detail = f"exit code {log.exit_code}"
         activity_bus.publish_event(
             "build",
-            f"Build {'passed' if log.success else 'failed'} for {project.name}",
-            detail=f"exit code {log.exit_code}",
+            message,
+            detail=detail,
             data={"project_id": project.id, "success": bool(log.success)},
         )
         return {

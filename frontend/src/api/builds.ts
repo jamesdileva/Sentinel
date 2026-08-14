@@ -3,7 +3,7 @@ import { api } from "./client";
 export interface BuildJob {
   id: string;
   project_id: string;
-  status: "queued" | "running" | "succeeded" | "failed";
+  status: "queued" | "running" | "succeeded" | "failed" | "skipped";
   success: boolean | null;
   exit_code: number | null;
   started_at: string | null;

@@ -67,10 +67,13 @@ def test_full_pipeline(tmp_db, tmp_path, monkeypatch):
     assert isinstance(findings, list)
 
     # 3. Build and 4. test with no-op command executors -> stored rows.
+    #    The fixture has no build command, so the honest outcome is a
+    #    *skipped* build (success=None) — not a fake pass (v1.17.7.5).
     with Session(get_engine()) as session:
         project = BuildRunner.get_project(session, project_id)
         log = BuildRunner(session).run_build(project, executor=_noop)
-        assert log.success is True
+        assert log.success is None
+        assert log.completed_at is not None
         project = TestRunnerService.get_project(session, project_id)
         result = TestRunnerService(session).run_tests(project, executor=_noop)
         assert result.summary is not None

@@ -156,6 +156,102 @@ def test_extract_build_commands_react(tmp_db):
     assert commands["startup"] == "vite"
 
 
+@pytest.mark.parametrize(
+    "files,expected",
+    [
+        ({"Makefile": "build:\n\tgcc main.c\n"}, {"build": "make build"}),
+        ({"Makefile": "all:\n\tgcc main.c\n"}, {"build": "make all"}),
+        (
+            {"Makefile": "build:\n\tgcc main.c\ntest:\n\t./run_tests\n"},
+            {"build": "make build", "test": "make test"},
+        ),
+        (
+            {"Cargo.toml": "[package]\nname = 'x'\n"},
+            {"build": "cargo build", "test": "cargo test"},
+        ),
+        (
+            {"go.mod": "module example.com/x\n"},
+            {"build": "go build ./...", "test": "go test ./..."},
+        ),
+        ({"pom.xml": "<project/>"}, {"build": "mvn package", "test": "mvn test"}),
+        (
+            {"app.csproj": "<Project/>"},
+            {"build": "dotnet build", "test": "dotnet test"},
+        ),
+        ({"app.sln": ""}, {"build": "dotnet build", "test": "dotnet test"}),
+        (
+            {"build.gradle": "tasks {}\n"},
+            {"build": "gradle build", "test": "gradle test"},
+        ),
+    ],
+)
+def test_extract_build_commands_new_manifests(tmp_path, files, expected):
+    """v1.17.7.5: Makefile, Cargo, go, Maven, dotnet and Gradle projects all
+    get deterministic build/test commands."""
+    root = tmp_path / "manifest-project"
+    root.mkdir()
+    for name, content in files.items():
+        (root / name).write_text(content, encoding="utf-8")
+    from app.utils.command_extractor import extract_build_commands
+
+    commands = extract_build_commands(root)
+    for key, value in expected.items():
+        assert commands[key] == value, f"{key} mismatch: {commands}"
+
+
+def test_extract_build_commands_from_readme(tmp_path):
+    """v1.17.7.5: build commands documented in READMEs are discovered —
+    the user's ask: "find it better in the docs if there is one"."""
+    root = tmp_path / "readme-project"
+    root.mkdir()
+    (root / "README.md").write_text(
+        "# App\n\n## Build\n\n```bash\nnpm run build\n```\n", encoding="utf-8"
+    )
+    from app.utils.command_extractor import extract_build_commands
+
+    assert extract_build_commands(root)["build"] == "npm run build"
+
+
+def test_extract_build_commands_from_readme_plain_line(tmp_path):
+    root = tmp_path / "readme-project"
+    root.mkdir()
+    (root / "README.md").write_text(
+        "# App\nTo build this project run make build first.\n", encoding="utf-8"
+    )
+    from app.utils.command_extractor import extract_build_commands
+
+    assert extract_build_commands(root)["build"] == "make build"
+
+
+def test_extract_build_commands_readme_does_not_invent(tmp_path):
+    """Only known spellings are accepted — arbitrary doc lines never become
+    commands (Rule 3: determinism)."""
+    root = tmp_path / "readme-project"
+    root.mkdir()
+    (root / "README.md").write_text(
+        "# App\nRun my magic compile-step, then deploy to the cloud.\n",
+        encoding="utf-8",
+    )
+    from app.utils.command_extractor import extract_build_commands
+
+    commands = extract_build_commands(root)
+    assert commands["build"] == ""
+    assert commands["test"] == ""
+
+
+def test_extract_build_commands_manifest_beats_readme(tmp_path):
+    """Explicit package.json scripts win over README prose."""
+    root = tmp_path / "manifest-readme-project"
+    root.mkdir()
+    (root / "package.json").write_text(
+        '{"scripts": {"build": "tsc -b && vite build"}}', encoding="utf-8"
+    )
+    (root / "README.md").write_text("Run npm run build.\n", encoding="utf-8")
+    from app.utils.command_extractor import extract_build_commands
+
+    assert extract_build_commands(root)["build"] == "tsc -b && vite build"
+
+
 def test_index_project_creates_entries(tmp_db):
     svc = _service(tmp_db)
     project = svc.index_project(PY_PROJECT)
@@ -491,6 +587,56 @@ def test_git_indexes_tracked_files_only(tmp_db, tmp_path):
         )
     }
     assert paths == {".gitignore", "main.py"}
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git not installed")
+def test_git_index_is_complete_across_dirs(tmp_db, tmp_path):
+    """v1.17.7.5: the index covers *every* tracked file — docs, backend and
+    frontend — not just the root or one language. Regression for "are we
+    grabbing the docs + backend/frontend files?"."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    tracked = [
+        "README.md",
+        "docs/guide.md",
+        "backend/app/main.py",
+        "backend/app/services/core.py",
+        "frontend/src/App.tsx",
+        "frontend/package.json",
+        "scripts/build.py",
+        ".gitignore",
+    ]
+    for rel in tracked:
+        path = repo / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("x = 1\n" if rel.endswith(".py") else "{}", encoding="utf-8")
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    subprocess.run(["git", "-C", str(repo), "add", "."], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "user.name=t",
+            "commit",
+            "-qm",
+            "init",
+        ],
+        check=True,
+    )
+    svc = _service(tmp_db)
+    project = svc.index_project(repo)
+    with Session(connection.get_engine()) as session:
+        indexed = {
+            f.path.replace("\\", "/")
+            for f in ProjectFileRepository(session).get_by_project(project.id)
+        }
+    assert indexed == set(
+        tracked
+    ), f"indexed={indexed} must equal the full git-tracked set"
 
 
 def test_git_fake_git_dir_falls_back_to_walk(tmp_db, tmp_path):
