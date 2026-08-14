@@ -36,9 +36,12 @@ task** (v1.17.7.2 removed `scripts/install_service.py`): the old 5-minute
 Task-Scheduler rerun kept popping console windows every time it spawned the
 server, and the server is run manually now.
 
-Repos are found under `SENTINEL_WATCH_DIRS`; it **defaults to the current
-user's home directory** (`C:\Users\j` — all local projects live there
-directly), so you do NOT need to set it (or set an explicit value in `.env`).
+Repos are found under `SENTINEL_WATCH_DIRS`. Since v1.17.7.3 this machine
+sets it explicitly: `SENTINEL_WATCH_DIRS=C:\Users\j\projects` in `.env` — all
+projects live there directly (v1.17.7.3 moved them from `C:\Users\j`; see
+`scripts/migrate_projects_root.py`), so the home dir with its non-project
+folders is never walked. The default (when unset) remains the current user's
+home directory.
 Since v1.17.7 GitHub is optional: with **no token** the local checkouts are
 indexed straight from the watch dirs and the `repo-sync` beat isn't registered;
 with a token the beat keeps GitHub checkouts current every 24 h

@@ -4,10 +4,12 @@ The .env file lives at the repo root (next to run.py); the docs, laptop.md,
 and .env.example all agree. See docs/02_Implementation_Guide.md §4.2.
 """
 
+import json
 from pathlib import Path
+from typing import Annotated
 
-from pydantic import Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field, field_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from app import __version__
 
@@ -59,7 +61,31 @@ class Settings(BaseSettings):
     # Defaults to the current user's home directory instead of a hardcoded
     # path, so a fresh install on any machine (e.g. the laptop, user `james`)
     # finds its repos with no SENTINEL_WATCH_DIRS setup.
-    watch_dirs: list[str] = Field(default_factory=lambda: [str(Path.home())])
+    # v1.17.7.3: NoDecode + before-validator — the docs always promised
+    # comma-separated values, but pydantic-settings' complex-field parser
+    # only accepted JSON and raised SettingsError on the documented format.
+    # Plain, comma-separated and JSON forms are all accepted now.
+    watch_dirs: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: [str(Path.home())]
+    )
+
+    @field_validator("watch_dirs", mode="before")
+    @classmethod
+    def _parse_watch_dirs(cls, value: object) -> object:
+        if not isinstance(value, str):
+            return value
+        text = value.strip()
+        if not text:
+            return []
+        if text.startswith("["):
+            try:
+                return json.loads(text)
+            except json.JSONDecodeError as exc:
+                raise ValueError(
+                    f"Invalid JSON for SENTINEL_WATCH_DIRS: {value!r}"
+                ) from exc
+        return [part.strip() for part in text.split(",") if part.strip()]
+
     # v1.17.7.1: `data/` — a repo's own database/chroma/logs must never be
     # parsed as project files; `.venv*/` (wildcard dir pattern) covers odd
     # venv names like `.venv_sf3d` that the exact `.venv/` missed.
@@ -96,7 +122,9 @@ class Settings(BaseSettings):
     scheduler_enabled: bool = True
     command_timeout_seconds: int = 300
 
-    world_sim_enabled: bool = True
+    # v1.17.7.3: off by default — the world simulator is an opt-in toy; the
+    # API router and the beat tick register only when it is enabled.
+    world_sim_enabled: bool = False
     world_sim_db_path: Path = BASE_DIR / "data" / "world_sim" / "world.db"
     world_sim_tick_seconds: int = 60
     world_sim_max_catchup_days: int = 48

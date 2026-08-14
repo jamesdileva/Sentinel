@@ -72,13 +72,19 @@ These are the project's constitution. They must be upheld in every decision, cha
   same machine (`http://127.0.0.1:11434`); Pi-hole remains an independent
   network DNS — **never start/stop it from Sentinel** (no code, no env).
 - **GitHub is optional (v1.17.7)**: tokenless first-class — all projects live
-  under `C:\Users\j` (the default watch dir, `Path.home()`, plus
-  `C:\Users\j\jamesdileva` and `C:\Users\j\juduncan` canonical checkouts) and
-  are indexed directly from disk; the `repo-sync` beat registers only when
+  under `C:\Users\j\projects` (v1.17.7.3 moved them from home; the watch root
+  is `SENTINEL_WATCH_DIRS=C:\Users\j\projects` in `.env`, with
+  `projects\jamesdileva` and `projects\juduncan` canonical checkouts) and are
+  indexed directly from disk; the `repo-sync` beat registers only when
   `SENTINEL_GITHUB_TOKEN` is set. The security scan-all runs on its own daily
   beat (`SENTINEL_SCAN_INTERVAL_MINUTES`) regardless of the token. Discovery
-  prunes noise dirs (AppData, OneDrive, node_modules, .venv, ...), so the home
-  dir with its non-project folders scans cheaply.
+  prunes noise dirs (node_modules, .venv, ...), so the projects root scans
+  cheaply — the home dir is no longer walked at all.
+- **Indexing is git-tracked (v1.17.7.3)**: file lists come from
+  `git ls-files` for git checkouts (fallback: the walk), so untracked `.env`
+  secrets and junk never enter the index; `SENTINEL_WATCH_DIRS` accepts a
+  single directory, comma-separated, or JSON. The world simulator is off by
+  default (`SENTINEL_WORLD_SIM_ENABLED=true` re-enables it).
 - **Env overrides**: `SENTINEL_OLLAMA_HOST`, `SENTINEL_GITHUB_TOKEN` (optional),
   `SENTINEL_WATCH_DIRS`, `SENTINEL_PORT`, `SENTINEL_DB_PATH`/
   `SENTINEL_CHROMA_PATH`, `SENTINEL_SCAN_INTERVAL_MINUTES` — see `.env.example`.

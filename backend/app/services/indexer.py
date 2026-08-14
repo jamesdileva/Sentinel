@@ -9,6 +9,7 @@ import datetime
 import fnmatch
 import os
 import re
+import subprocess
 from collections.abc import Callable
 from pathlib import Path
 
@@ -35,6 +36,7 @@ from app.repositories import (
     ProjectFileRepository,
     ProjectRepository,
 )
+from app.services.command_runner import resolve_git
 from app.utils import detect_framework, detect_language, extract_build_commands
 
 logger = get_logger(__name__)
@@ -571,6 +573,41 @@ class IndexerService:
                 files.append(absolute)
         return sorted(files, key=lambda p: p.relative_to(project_root).as_posix())
 
+    def _git_tracked_files(self, project_root: Path) -> list[Path] | None:
+        """v1.17.7.3: tracked file list via `git ls-files` for git checkouts.
+
+        Sentinel indexes git-tracked source only: untracked files (`.env`
+        secrets, IDE state, uncommitted build output) never enter the index,
+        and untracked junk trees (`.venv_sf3d`, regenerable caches) disappear
+        without pattern maintenance. Returns None when the checkout is not a
+        real git repo or git is unavailable, so callers fall back to the
+        filesystem walk — a bare `.git/` dir without a valid index still
+        fails with rc 128 and keeps the walk fallback.
+        """
+        if not (project_root / ".git").exists():
+            return None
+        git = resolve_git()
+        if git is None:
+            return None
+        creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+        try:
+            proc = subprocess.run(
+                [git, "-C", str(project_root), "ls-files", "-z"],
+                capture_output=True,
+                check=False,
+                timeout=60,
+                creationflags=creationflags,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        if proc.returncode != 0:
+            return None
+        files: list[Path] = []
+        for rel in proc.stdout.decode("utf-8", errors="replace").split("\0"):
+            if rel:
+                files.append(project_root / rel)
+        return files
+
     def _index_files(self, project: Project) -> None:
         """Re-parse a project's tree without destroying row identity.
 
@@ -580,11 +617,24 @@ class IndexerService:
         from scratch after each restart. Rows are now keyed by relative path:
         unchanged files keep their id + embedding_id, new files create rows,
         and only files gone from disk are removed.
+        v1.17.7.3: the file list comes from `git ls-files` when the checkout
+        is a real git repo (tracked source only, gates still applied);
+        non-git checkouts keep the walk.
         """
         project_root = Path(project.path)
+        tracked = self._git_tracked_files(project_root)
+        if tracked is not None:
+            candidates = [
+                p
+                for p in tracked
+                if not p.is_dir()
+                and not self._is_skippable(p.relative_to(project_root), p)
+            ]
+        else:
+            candidates = self._iter_source_files(project_root)
         existing = {row.path: row for row in self.files.get_by_project(project.id)}
         seen: set[str] = set()
-        for absolute in self._iter_source_files(project_root):
+        for absolute in candidates:
             rel = absolute.relative_to(project_root)
             seen.add(rel.as_posix())
             self._upsert_file(project, absolute, existing.get(rel.as_posix()))

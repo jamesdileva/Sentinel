@@ -16,6 +16,7 @@ from sqlmodel import Session
 
 import app.api.v1.world_sim as ws_api
 import app.db.world_sim_models as wdb
+from app.core.config import settings
 from app.db.world_sim_models import world_sim_metadata
 from app.main import app
 from app.services.world_sim import names
@@ -322,11 +323,32 @@ def test_catch_up_noop_with_fresh_world(tmp_path):
 
 @pytest.fixture()
 def world_client(tmp_db, tmp_path):
+    # v1.17.7.3: the world-sim router is opt-in (world_sim_enabled=False by
+    # default); tests mount it explicitly so they pass either way.
+    if settings.world_sim_enabled is False:
+        _mount_world_sim_router()
     svc = make_service(tmp_path / "api")
     svc.ensure_world()
     app.dependency_overrides[ws_api.get_world_service] = lambda: svc
     yield TestClient(app), svc
     app.dependency_overrides.pop(ws_api.get_world_service, None)
+
+
+def _mount_world_sim_router() -> None:
+    """Mount the world-sim router ahead of the SPA fallback route.
+
+    main.py registers `/{full_path:path}` at import time (it must stay the
+    last route); a router included afterwards would be shadowed by it for
+    GET requests, so the fallback is re-appended after the include."""
+    if any(getattr(r, "path", "").startswith("/api/v1/world-sim") for r in app.routes):
+        return
+    app.include_router(ws_api.router, prefix="/api/v1")
+    fallbacks = [
+        r for r in app.routes if getattr(r, "path", None) == "/{full_path:path}"
+    ]
+    for route in fallbacks:
+        app.routes.remove(route)
+        app.routes.append(route)
 
 
 def test_state_endpoint(world_client):

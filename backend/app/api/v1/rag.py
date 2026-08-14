@@ -95,6 +95,7 @@ def rag_index_all(session: Session = Depends(get_session)) -> JobEnvelope:
 def rag_index_status(
     project_id: str | None = None,
     session: Session = Depends(get_session),
+    rag: RagService = Depends(get_rag_service),
 ) -> dict:
     """Index progress: embedded vs total files, per project or across all
     projects (Sprint 15), plus knowledge-index health (v1.17.6).
@@ -102,7 +103,12 @@ def rag_index_status(
     `health` probes every non-empty collection's HNSW index on disk; a
     damaged index (killed write) lists its collections under `broken` so the
     dashboard can offer a rebuild instead of failing on the next query.
-    Read-only; no job is triggered here."""
+    Read-only; no job is triggered here.
+
+    v1.17.7.3: the service comes through `Depends` like every sibling route —
+    the direct `get_rag_service(session)` call silently bypassed
+    `dependency_overrides`, so the hermetic suite probed the real on-disk
+    Chroma and went green or red on its state instead of the fixture's."""
     stmt = (
         select(
             ProjectFile.project_id,
@@ -126,7 +132,7 @@ def rag_index_status(
         "projects": per_project,
         "files_total": files_total,
         "files_embedded": files_embedded,
-        "health": get_rag_service(session).chroma.health(),
+        "health": rag.chroma.health(),
     }
 
 

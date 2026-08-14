@@ -1,8 +1,11 @@
 """Sprint 3: IndexerService acceptance tests."""
 
 import os
+import shutil
+import subprocess
 from pathlib import Path
 
+import pytest
 from sqlmodel import Session, select
 
 from app.core.config import settings
@@ -464,6 +467,46 @@ def test_update_incremental_only_changes_files(tmp_db):
         assert {f.path for f in files} >= {"app/extra.py"}
     finally:
         new_file.unlink()
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git not installed")
+def test_git_indexes_tracked_files_only(tmp_db, tmp_path):
+    """v1.17.7.3: in a real git checkout the file list comes from
+    `git ls-files` — untracked files (`.env` secrets, stray junk) and
+    gitignored files never enter the index even though they exist on disk."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    (repo / "main.py").write_text("print('hi')\n", encoding="utf-8")
+    (repo / "secret.env").write_text("API_KEY=abc\n", encoding="utf-8")
+    (repo / "junk.tmp").write_bytes(b"\x00" * 16)
+    (repo / ".gitignore").write_text("junk.tmp\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", "main.py", ".gitignore"], check=True)
+    svc = _service(tmp_db)
+    project = svc.index_project(repo)
+    paths = {
+        f.path
+        for f in ProjectFileRepository(Session(connection.get_engine())).get_by_project(
+            project.id
+        )
+    }
+    assert paths == {".gitignore", "main.py"}
+
+
+def test_git_fake_git_dir_falls_back_to_walk(tmp_db, tmp_path):
+    """A `.git/` dir without a valid index (test checkouts, interrupted
+    clones) is not a working git repo — `ls-files` exits non-zero and the
+    walk fallback still indexes the tree."""
+    repo = _checkout(tmp_path, "repo", files={"a.py": "x=1\n"})
+    svc = _service(tmp_db)
+    project = svc.index_project(repo)
+    paths = {
+        f.path
+        for f in ProjectFileRepository(Session(connection.get_engine())).get_by_project(
+            project.id
+        )
+    }
+    assert paths == {"a.py"}
 
 
 def test_index_skips_binary_and_oversized_files(tmp_db, tmp_path, monkeypatch):
