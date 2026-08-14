@@ -139,6 +139,127 @@ def test_build_runner_timeout(tmp_db):
         assert "timed out" in log.stderr
 
 
+# --- v1.17.8.0 build->open -----------------------------------------------
+
+
+class _FakePopen:
+    """Records detached launches instead of spawning real apps."""
+
+    calls: list[dict] = []
+    error: Exception | None = None
+
+    def __init__(
+        self,
+        command,
+        shell=False,
+        cwd=None,
+        stdin=None,
+        stdout=None,
+        stderr=None,
+        creationflags=0,
+    ):
+        if _FakePopen.error:
+            raise _FakePopen.error
+        _FakePopen.calls.append({"command": command, "cwd": cwd})
+
+
+@pytest.fixture()
+def fake_popen(monkeypatch):
+    import types
+
+    fake = types.SimpleNamespace(DEVNULL=None, STDOUT=None, Popen=_FakePopen)
+    monkeypatch.setattr("app.services.build_runner.subprocess", fake)
+    _FakePopen.calls = []
+    _FakePopen.error = None
+    yield _FakePopen
+
+
+def _project_at(session, commands: dict, root) -> Project:
+    project = _project_with_commands(session, commands)
+    project.path = str(root)
+    session.add(project)
+    session.commit()
+    return project
+
+
+def test_build_runner_launches_app_when_no_build(tmp_db, tmp_path, fake_popen):
+    """v1.17.8.0: no compile step + a startup command -> "build not needed",
+    launch the app, record a success (the run did what it could do)."""
+    root = tmp_path / "run-only-app"
+    root.mkdir()
+    (root / "app.py").write_text("print('hi')\n", encoding="utf-8")
+    with Session(connection.get_engine()) as session:
+        project = _project_at(session, {"startup": "python app.py"}, root)
+        log = BuildRunner(session).run_build(project)
+        assert log.success is True
+        assert log.exit_code is None
+        assert "no compile step" in (log.stdout or "")
+        assert "App launched" in (log.stdout or "")
+        assert log.launch_command == "python app.py"
+        assert fake_popen.calls[0]["command"] == "python app.py"
+        assert fake_popen.calls[0]["cwd"] == str(root)
+
+
+def test_build_runner_launch_uses_repo_venv_python(tmp_db, tmp_path, fake_popen):
+    """The app is launched through the repo's own venv interpreter — a bare
+    `python` on the global PATH may not have the app's deps (AG: .venv_sf3d)."""
+    root = tmp_path / "venv-app"
+    root.mkdir()
+    venv = root / ".venv_sf3d" / "Scripts"
+    venv.mkdir(parents=True)
+    (venv / "python.exe").write_text("dummy")
+    with Session(connection.get_engine()) as session:
+        project = _project_at(
+            session, {"startup": "python -m streamlit run dashboard/app.py"}, root
+        )
+        log = BuildRunner(session).run_build(project)
+        assert log.launch_command is not None
+        assert ".venv_sf3d" in log.launch_command
+        assert log.launch_command.startswith('"')
+        assert "-m streamlit run dashboard/app.py" in log.launch_command
+
+
+def test_build_runner_does_not_launch_on_failure(tmp_db, tmp_path, fake_popen):
+    """A failed build never opens the app."""
+    root = tmp_path / "broken-app"
+    root.mkdir()
+    with Session(connection.get_engine()) as session:
+        project = _project_at(
+            session, {"build": "make", "startup": "python app.py"}, root
+        )
+        log = BuildRunner(session).run_build(project, executor=_fail_executor)
+        assert log.success is False
+        assert log.launch_command is None
+        assert fake_popen.calls == []
+
+
+def test_build_runner_launches_app_after_success(tmp_db, tmp_path, fake_popen):
+    """build -> open: a green build launches the app."""
+    root = tmp_path / "builds-app"
+    root.mkdir()
+    with Session(connection.get_engine()) as session:
+        project = _project_at(
+            session, {"build": "npm run build", "startup": "npm run start"}, root
+        )
+        log = BuildRunner(session).run_build(project, executor=_succeed_executor)
+        assert log.success is True
+        assert log.launch_command == "npm run start"
+        assert "App launched" in (log.stdout or "")
+
+
+def test_build_runner_launch_failure_recorded(tmp_db, tmp_path, fake_popen):
+    """A launch that cannot spawn is recorded honestly, not as a pass."""
+    root = tmp_path / "unlaunchable"
+    root.mkdir()
+    fake_popen.error = OSError("no such binary")
+    with Session(connection.get_engine()) as session:
+        project = _project_at(session, {"startup": "python app.py"}, root)
+        log = BuildRunner(session).run_build(project)
+        assert log.success is True
+        assert log.launch_command is None
+        assert "App launch failed" in (log.stdout or "")
+
+
 # --- TestRunner unit tests ---
 
 

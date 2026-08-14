@@ -68,6 +68,7 @@ def _migrate_columns(engine) -> None:
             "VARCHAR(80) NOT NULL DEFAULT 'query'",
         ),
         (("projectfile",), "mtime_ns", "BIGINT"),  # v1.17.7.1
+        (("buildlog",), "launch_command", "VARCHAR(500)"),  # v1.17.8.0
     )
     inspector = __import__("sqlalchemy").inspect(engine)
     for table_names, column, column_type in _MIGRATIONS:

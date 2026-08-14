@@ -38,6 +38,20 @@ export default function Builds() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [pollingJobId, setPollingJobId] = useState<string | null>(null);
 
+  const selectedProject = projects.find((project) => project.id === projectId);
+  const commands = selectedProject?.stack?.commands ?? {};
+  const hasBuild = Boolean(commands.build);
+  const hasStartup = Boolean(commands.startup);
+  const actionLabel = running
+    ? "Working…"
+    : hasBuild
+      ? hasStartup
+        ? "Build & Open"
+        : "Build"
+      : hasStartup
+        ? "Open app"
+        : "Run build";
+
   useEffect(() => {
     setPollingJobId(null);
     setRunning(false);
@@ -103,7 +117,11 @@ export default function Builds() {
         if (cancelled) return;
         if (job.completed_at !== null) {
           const failed = job.success === false;
-          await finish(`Build ${job.status}.`, failed ? "error" : "success");
+          const launched = job.launch_command ? " App launched." : "";
+          await finish(
+            `Build ${job.status}.${launched}`,
+            failed ? "error" : "success",
+          );
         } else if (elapsed >= POLL_CAP_MS) {
           await finish(
             "Build still running — refresh to see the result.",
@@ -153,7 +171,8 @@ export default function Builds() {
         </h2>
         <p className="text-xs text-slate-400 dark:text-slate-500">
           Deterministic builds: the known commands for each project, run in a
-          clean job (git history + CI logs, never AI).
+          clean job (git history + CI logs, never AI). A green build — or a
+          project with no compile step — launches the app (build → open).
         </p>
         {error && (
           <div className="mt-3 rounded-lg border border-red-300 bg-red-50 px-4 py-2 text-sm text-red-800 dark:border-red-800 dark:bg-red-950 dark:text-red-200">
@@ -185,7 +204,7 @@ export default function Builds() {
           disabled={!projectId || running}
           className="rounded-lg bg-slate-800 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-slate-700 disabled:opacity-50 dark:bg-slate-200 dark:text-slate-900 dark:hover:bg-white"
         >
-          {running ? "Building…" : "Run build"}
+          {actionLabel}
         </button>
       </div>
 
@@ -245,6 +264,14 @@ export default function Builds() {
                               </span>
                             ),
                           )}
+                        </div>
+                      )}
+                      {job.launch_command && (
+                        <div className="mb-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-[11px] text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300">
+                          App launched:{" "}
+                          <code className="font-mono">
+                            {job.launch_command}
+                          </code>
                         </div>
                       )}
                       <pre className="max-h-72 overflow-auto rounded-lg bg-slate-50 p-3 text-[11px] leading-relaxed text-slate-600 dark:bg-slate-950 dark:text-slate-300">

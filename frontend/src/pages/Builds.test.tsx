@@ -58,6 +58,7 @@ function makeLog(overrides: Partial<BuildLog> = {}): BuildLog {
     stdout: "Build done.",
     stderr: null,
     commands: { install: "pip install -r requirements.txt" },
+    launch_command: null,
     ...overrides,
   };
 }
@@ -71,6 +72,7 @@ function makeRunningJob(overrides: Partial<BuildJob> = {}): BuildJob {
     exit_code: null,
     started_at: "2026-01-01T00:00:00Z",
     completed_at: null,
+    launch_command: null,
     ...overrides,
   };
 }
@@ -99,6 +101,7 @@ describe("Builds", () => {
       exit_code: null,
       started_at: null,
       completed_at: null,
+      launch_command: null,
     });
   });
 
@@ -256,5 +259,91 @@ describe("Builds", () => {
       { timeout: 8000 },
     );
     expect(await screen.findByText("succeeded")).toBeInTheDocument();
+  });
+
+  it("labels the action Build & Open when build + startup exist", async () => {
+    mockUseProjectList.mockReturnValue({
+      projects: [
+        makeProject({
+          stack: {
+            commands: { build: "npm run build", startup: "npm run start" },
+          },
+        }),
+      ],
+      loading: false,
+      error: null,
+      refresh: vi.fn(),
+    } as never);
+    const user = userEvent.setup();
+    render(<Builds />);
+    await user.selectOptions(screen.getByRole("combobox"), "p1");
+    expect(
+      await screen.findByRole("button", { name: "Build & Open" }),
+    ).toBeEnabled();
+  });
+
+  it("labels the action Open app when only a startup command exists", async () => {
+    mockUseProjectList.mockReturnValue({
+      projects: [
+        makeProject({
+          stack: { commands: { startup: "python app.py" } },
+        }),
+      ],
+      loading: false,
+      error: null,
+      refresh: vi.fn(),
+    } as never);
+    const user = userEvent.setup();
+    render(<Builds />);
+    await user.selectOptions(screen.getByRole("combobox"), "p1");
+    expect(
+      await screen.findByRole("button", { name: "Open app" }),
+    ).toBeEnabled();
+  });
+
+  it("shows the launched app command in the expanded log", async () => {
+    mockGetBuildHistory.mockResolvedValue([
+      makeLog({
+        launch_command: "python app.py",
+        stdout:
+          "Build not needed — this project has no compile step.\nApp launched: python app.py",
+      }),
+    ]);
+    const user = userEvent.setup();
+    render(<Builds />);
+    await user.selectOptions(screen.getByRole("combobox"), "p1");
+    await user.click(await screen.findByRole("button", { name: /succeeded/ }));
+    expect(screen.getByText("App launched:")).toBeInTheDocument();
+    expect(screen.getByText("python app.py")).toBeInTheDocument();
+  });
+
+  it("notes the launched app in the completion toast", async () => {
+    mockGetBuildStatus
+      .mockResolvedValueOnce(makeRunningJob({ id: "j2" }))
+      .mockResolvedValue(
+        makeRunningJob({
+          id: "j2",
+          status: "succeeded",
+          success: true,
+          exit_code: 0,
+          completed_at: "2026-01-01T00:02:00Z",
+          launch_command: "python app.py",
+        }),
+      );
+    mockGetBuildHistory.mockResolvedValue([
+      makeLog({ launch_command: "python app.py" }),
+    ]);
+    const user = userEvent.setup();
+    render(<Builds />);
+    await user.selectOptions(screen.getByRole("combobox"), "p1");
+    await user.click(await screen.findByRole("button", { name: "Run build" }));
+    await waitFor(
+      () =>
+        expect(toastMock).toHaveBeenCalledWith(
+          expect.stringContaining("App launched."),
+          "success",
+        ),
+      { timeout: 8000 },
+    );
   });
 });

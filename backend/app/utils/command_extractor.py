@@ -157,6 +157,10 @@ _README_CANDIDATES = (
     # inside fenced code blocks are accepted from it (see _from_readme).
     "AGENTS.md",
     "docs/AGENTS.md",
+    # v1.17.8.0: DEVELOPMENT.md is a common setup guide (CG keeps its whole
+    # Quick Start there). Same whitelist scan as READMEs.
+    "DEVELOPMENT.md",
+    "docs/DEVELOPMENT.md",
 )
 
 # Fenced code block body (```bash ... ```), for AGENTS.md scanning.
@@ -209,6 +213,16 @@ _README_INSTALL_COMMANDS = (
     "uv sync",
 )
 
+# v1.17.8.0: startup commands documented in docs (build->open needs a way to
+# open the app). Longest/specific spellings first so `python -m streamlit run`
+# wins over any shorter lookalike.
+_README_STARTUP_COMMANDS = (
+    "python -m streamlit run",
+    "npm run start",
+    "npm run dev",
+    "npm start",
+)
+
 
 def _find_known_command(text: str, whitelist: tuple[str, ...]) -> str:
     """First whitelisted command found as a standalone phrase."""
@@ -241,7 +255,117 @@ def _from_readme(root: Path) -> dict[str, str]:
         commands["test"] = _find_known_command(text, _README_TEST_COMMANDS)
     if "install" not in commands:
         commands["install"] = _find_known_command(text, _README_INSTALL_COMMANDS)
+    if "startup" not in commands:
+        commands["startup"] = _find_known_command(text, _README_STARTUP_COMMANDS)
     return commands
+
+
+# --- Subdirectory manifests (v1.17.8.0) ------------------------------------
+#
+# Many real projects (CG, demake) keep their build one level down:
+# renderer/frontend hold the npm app, backend the Python service. The root
+# manifest extractors above always win; these only fill what a root scan
+# cannot see. Commands are prefixed `cd <dir> && ...` because the runner
+# executes with cwd = project root.
+
+_NPM_SUBDIRS = ("renderer", "frontend", "client", "web", "ui", "dashboard")
+_PIP_SUBDIRS = ("backend", "server", "api")
+
+
+def _from_subdir_manifests(root: Path) -> dict[str, str]:
+    commands: dict[str, str] = {}
+    for name in _NPM_SUBDIRS:
+        data = _read_json(root / name / "package.json")
+        scripts = data.get("scripts", {}) or {}
+        if not scripts:
+            continue
+        cd = f"cd {name} && "
+        if (root / name / "pnpm-lock.yaml").exists():
+            commands["install"] = cd + "pnpm install"
+        elif (root / name / "yarn.lock").exists():
+            commands["install"] = cd + "yarn install"
+        else:
+            commands["install"] = cd + "npm install"
+        # Subdirs prefer `start` over `dev`: in app dirs (renderer/frontend)
+        # `start` is the full-app launcher (e.g. CG's start boots the backend
+        # + Electron together), while `dev` is often just a dev server.
+        startup = scripts.get("start") or scripts.get("dev") or ""
+        if startup:
+            commands["startup"] = (
+                cd + "npm run start" if scripts.get("start") else cd + "npm run dev"
+            )
+        build = scripts.get("build") or scripts.get("dist") or ""
+        if build:
+            commands["build"] = (
+                cd + "npm run build" if scripts.get("build") else cd + "npm run dist"
+            )
+        if scripts.get("test"):
+            commands["test"] = cd + "npm run test"
+        break
+    for name in _PIP_SUBDIRS:
+        if (root / name / "requirements.txt").is_file():
+            commands.setdefault(
+                "install", f"cd {name} && pip install -r requirements.txt"
+            )
+            break
+    return commands
+
+
+# --- Python CLI entry points (v1.17.8.0) -----------------------------------
+#
+# A Python package whose entry module defines an argparse `gui` (or `web`)
+# subcommand is a launchable app by *code*, not prose — `add_parser("gui")`
+# is as deterministic as a manifest. AG's rigging_engine.main declares
+# "gui": "Launch the graphical application".
+
+_PY_CLI_FILES = ("main.py", "app.py", "cli.py", "__main__.py")
+_PY_CLI_SUBCOMMANDS = ("gui", "web")
+_PY_CLI_TEXT_CAP = 262144  # argparse blocks live near the bottom; cap reads
+
+
+def _from_python_cli(root: Path) -> dict[str, str]:
+    if not root.is_dir():
+        return {}
+    candidates: list[tuple[str, Path]] = []  # (module ref, file path)
+    for name in _PY_CLI_FILES:
+        path = root / name
+        if path.is_file():
+            candidates.append((name, path))
+    for entry in sorted(p for p in root.iterdir() if p.is_dir()):
+        if not (entry / "__init__.py").is_file():
+            continue
+        for name in _PY_CLI_FILES:
+            path = entry / name
+            if not path.is_file():
+                continue
+            if name == "__main__.py":
+                candidates.append((entry.name, path))
+            else:
+                candidates.append((f"{entry.name}.{name[:-3]}", path))
+    for module, path in candidates:
+        text = _read_text(path)[:_PY_CLI_TEXT_CAP]
+        if "import argparse" not in text:
+            continue
+        for subcommand in _PY_CLI_SUBCOMMANDS:
+            if re.search(rf'add_parser\(\s*["\']{subcommand}["\']', text):
+                if module.endswith(".py"):
+                    return {"startup": f"python {module} {subcommand}"}
+                return {"startup": f"python -m {module} {subcommand}"}
+    return {}
+
+
+def _from_entry_uvicorn(root: Path) -> dict[str, str]:
+    """A FastAPI entry module that documents itself with `uvicorn main:app`
+    (e.g. demake's backend/main.py: "Entry point. Run with: uvicorn
+    main:app --reload") is a startable service — deterministic docstring,
+    not prose guessing."""
+    for rel, cd_prefix in (("backend/main.py", "cd backend && "), ("main.py", "")):
+        path = root / rel
+        if not path.is_file():
+            continue
+        if re.search(r"uvicorn\s+main:app", _read_text(path)[:2000]):
+            return {"startup": cd_prefix + "uvicorn main:app --reload"}
+    return {}
 
 
 def _from_pytest_convention(root: Path) -> dict[str, str]:
@@ -256,13 +380,31 @@ def _from_pytest_convention(root: Path) -> dict[str, str]:
     return {"test": "pytest"}
 
 
+def _from_subdir_pytest_convention(root: Path) -> dict[str, str]:
+    """v1.17.8.0: the same convention one level down — a `backend/tests/`
+    dir with backend-level Python files means `cd backend && pytest` (CG:
+    tests live in backend/, the root is an Electron shell)."""
+    backend = root / "backend"
+    if not (backend / "tests").is_dir():
+        return {}
+    if not any(
+        entry.is_file() and entry.suffix == ".py" for entry in backend.iterdir()
+    ):
+        return {}
+    return {"test": "cd backend && pytest"}
+
+
 def _venv_python(root: Path) -> str:
-    """Locate the repo's own venv interpreter (`.venv` or `.venv*`-style
-    dirs). Running pytest through the repo's interpreter is the
+    """Locate the repo's own venv interpreter (`.venv`, `.venv*`-style or a
+    plain `venv/` dir). Running pytest through the repo's interpreter is the
     deterministic equivalent of the developer's workflow on machines where
-    `pytest` is not on the global PATH (e.g. AG: `.venv_sf3d`)."""
+    `pytest` is not on the global PATH (e.g. AG: `.venv_sf3d`; CG: `venv/`)."""
+    if not root.is_dir():
+        return ""
     for entry in root.iterdir():
-        if not (entry.is_dir() and entry.name.startswith(".venv")):
+        if not (
+            entry.is_dir() and (entry.name.startswith(".venv") or entry.name == "venv")
+        ):
             continue
         for rel in ("Scripts/python.exe", "bin/python"):
             candidate = entry / rel
@@ -271,7 +413,14 @@ def _venv_python(root: Path) -> str:
     return ""
 
 
+def project_venv_python(path: str | Path) -> str:
+    """Public helper for launch-time venv resolution (build->open)."""
+    return _venv_python(Path(path))
+
+
 # Ordered by confidence: explicit manifests beat Makefile beats docs prose.
+# Root manifests first; subdir manifests and code-defined CLIs fill the gaps
+# a root-only scan cannot see; docs prose last.
 _EXTRACTORS = (
     _from_package_json,
     _from_pyproject_toml,
@@ -283,8 +432,16 @@ _EXTRACTORS = (
     _from_dotnet,
     _from_go,
     _from_cmake,
-    _from_readme,
+    _from_subdir_manifests,
+    _from_python_cli,
+    _from_entry_uvicorn,
+    # v1.17.8.0: deterministic conventions (a tests/ dir + Python files) are
+    # stronger signals than doc prose — CG's README documents `npm run test`
+    # but no such script exists, while backend/tests is real. Conventions
+    # run before the readme scan so prose can never shadow them.
+    _from_subdir_pytest_convention,
     _from_pytest_convention,
+    _from_readme,
 )
 
 
@@ -308,10 +465,11 @@ def extract_build_commands(path: str | Path) -> dict[str, str]:
 
     # v1.17.7.7: a bare `pytest` needs the global PATH; a repo that owns a
     # venv gets its own interpreter instead (the developer's exact
-    # workflow). Applies to every pytest source (pyproject, README,
-    # convention) — one deterministic rule.
-    if commands.get("test") == "pytest":
+    # workflow). v1.17.8.0: also applies to cd-prefixed pytest
+    # (`cd backend && pytest` -> `cd backend && "<venv python>" -m pytest`).
+    if commands.get("test", "").endswith("pytest"):
         python = _venv_python(root)
         if python:
-            commands["test"] = f'"{python}" -m pytest'
+            base = commands["test"][: -len("pytest")]
+            commands["test"] = f'{base}"{python}" -m pytest'
     return {key: commands.get(key, "") for key in _COMMAND_KEYS}

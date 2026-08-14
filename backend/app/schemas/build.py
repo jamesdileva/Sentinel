@@ -24,6 +24,9 @@ class BuildLogRead(BaseModel):
     stdout: str | None = None
     stderr: str | None = None
     commands: dict | None = None
+    # v1.17.8.0 build->open: the startup command launched after the build
+    # (or instead of one), None when nothing was launched.
+    launch_command: str | None = None
 
 
 class JobStatus(BaseModel):
@@ -36,6 +39,8 @@ class JobStatus(BaseModel):
     exit_code: int | None = None
     started_at: datetime.datetime | None = None
     completed_at: datetime.datetime | None = None
+    # v1.17.8.0: the startup command launched when the job finished.
+    launch_command: str | None = None
 
 
 def build_status_from_log(log) -> JobStatus:
@@ -61,4 +66,5 @@ def build_status_from_log(log) -> JobStatus:
         exit_code=log.exit_code,
         started_at=log.started_at,
         completed_at=log.completed_at,
+        launch_command=log.launch_command,
     )

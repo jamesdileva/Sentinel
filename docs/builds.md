@@ -1,11 +1,14 @@
 # Project Builds — Recipe Reference (docs/builds.md)
 
 Deterministic build/test/start/install recipes for every project Sentinel
-indexes (v1.17.7.6). Commands are **discovered, never guessed**: the ordered
+indexes (v1.17.8.0). Commands are **discovered, never guessed**: the ordered
 extractors in `backend/app/utils/command_extractor.py` read manifests
 (package.json, pyproject.toml, requirements.txt, Makefile, Cargo.toml,
-gradle/maven wrappers, dotnet, go.mod, CMakeLists.txt) and only then known
-spellings in README/docs. The first confident hit per key wins.
+gradle/maven wrappers, dotnet, go.mod, CMakeLists.txt), then subdir
+manifests (`renderer/`, `frontend/`, `backend/`, … prefixed `cd <dir> &&`),
+then code-defined CLIs (argparse `gui`/`web` subcommands; `uvicorn main:app`
+entry docstrings) and only then known spellings in README/docs. The first
+confident hit per key wins.
 
 - A project whose build command is unknown records a **skipped** build
   (`success=None`), never a fake pass (v1.17.7.5).
@@ -16,19 +19,25 @@ spellings in README/docs. The first confident hit per key wins.
 - All commands run with `cwd` = the project root via `run_command` (bounded
   timeout, captured output; PATH inherited — msys2 `mingw32-make`/`cmake`
   at `C:\msys64\mingw64\bin` are on PATH on the desktop).
+- **build→open (v1.17.8.0)**: Run Build launches the `startup` command
+  detached after a green build — or when no build is needed ("Build not
+  needed — this project has no compile step."). The app keeps running (no
+  command timeout) and appends to `data/logs/apps/<name>.log`, launched
+  through the repo's own venv interpreter when it has one. A failed build
+  never opens the app; only the user's click triggers a launch (Rule 2).
 
 ## Recipe table (all 21 projects)
 
 | Project | Path | Language/Framework | install | build | test | startup |
 |---------|------|--------------------|---------|-------|------|---------|
-| AG | `Projects\AG` | python | — | — | — | — |
+| AG | `Projects\AG` | python | — | — | `"C:\Users\j\Projects\AG\.venv_sf3d\Scripts\python.exe" -m pytest` | `python -m rigging_engine.main gui` |
 | Airadio | `Projects\airadio` | javascript | `npm install` | `npm run build --workspace=apps/desktop` | — | `npm run dev --workspace=apps/desktop` |
 | Algo Trader | `Projects\ALGO-TRADER` | C++ (CMake; indexer says typescript via `web/`) | — | `cmake --build build` | — | — |
 | Card Game | `Projects\Card-Game` | javascript | — | — | — | — |
-| CG | `Projects\CG` | javascript | `npm install` | — | `npm run test` | — |
+| CG | `Projects\CG` | javascript/electron + python | `cd renderer && npm install` | `cd renderer && npm run build` | `cd backend && "C:\Users\j\Projects\CG\venv\Scripts\python.exe" -m pytest` | `cd renderer && npm run start` |
 | Cse455 (jamesdileva) | `Projects\jamesdileva\cse455` | gradle | — | `gradlew.bat build` | `gradlew.bat test` | — |
 | Cse455 (juduncan) | `Projects\juduncan\cse455` | gradle | — | `gradlew.bat build` | `gradlew.bat test` | — |
-| Demake Engine | `Projects\demake-engine` | python/fastapi | `pip install -r requirements.txt` | — | — | — |
+| Demake Engine | `Projects\demake-engine` | python/fastapi | `pip install -r requirements.txt` | — | — | `cd backend && uvicorn main:app --reload` |
 | Dinner Menu Generator | `Projects\dinner-menu-generator` | javascript/flask | `pip install -r requirements.txt` | `npm run build` | `pytest` | — |
 | Finsight | `Projects\FinSight` | javascript/electron | `npm install` | — | `echo "Error: no test specified" && exit 1` *(package.json default)* | `electron .` |
 | HFT-Order-Book | `Projects\HFT-Order-Book` | C++ (CMake) | — | `cmake --build build` | — | — |
@@ -38,7 +47,7 @@ spellings in README/docs. The first confident hit per key wins.
 | MLBattles | `Projects\MLBattles` | python | `pip install -r requirements.txt` | — | — | — |
 | MM | `Projects\jamesdileva\MM` | unknown | — | — | — | — |
 | Python Projects | `Projects\Python Projects` | python | — | — | — | — |
-| Sentinel | `Projects\sentinel` | python | `npm install` | `npm run build` | — | — |
+| Sentinel | `Projects\sentinel` | python | `cd frontend && npm install` | `cd frontend && npm run build` | `cd frontend && npm run test` | `cd frontend && npm run dev` |
 | TV-Scheduler | `Projects\TV-Scheduler` | javascript/electron | `npm install` | `npm run build --prefix frontend` | `npm run test --prefix backend && npm run test --prefix frontend` | `concurrently "npm run backend" "npm run frontend" "wait-on http://localhost:5173 && npm run electron"` |
 | utilitytool | `Projects\jamesdileva\utilitytool` | unknown | `npm install` | — | — | — |
 | WorkFlow-Toolkit | `Projects\WorkFlow-Toolkit` | javascript/electron | `npm install` | `npm --prefix frontend run build` | `npm --prefix frontend run test` | `concurrently "npm --prefix frontend run dev" "cd backend && python -m uvicorn app.main:app --reload"` |

@@ -12,6 +12,8 @@ export interface Project {
   last_scanned: string | null;
   created_at: string;
   updated_at: string;
+  /** Discovered install/startup/build/test/deploy commands (ProjectRead.stack). */
+  stack?: { commands: Record<string, string> } | null;
 }
 
 export interface ProjectFile {

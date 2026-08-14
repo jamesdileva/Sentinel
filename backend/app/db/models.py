@@ -151,6 +151,10 @@ class BuildLog(SQLModel, table=True):
     stdout: str | None = None
     stderr: str | None = None
     commands: dict | None = Field(default=None, sa_column=Column(JSON))
+    # v1.17.8.0 build->open: the startup command detached-launched after a
+    # successful build (or instead of a build that isn't needed). None when
+    # no app was launched.
+    launch_command: str | None = None
 
     project: Project = Relationship(back_populates="build_logs")
 

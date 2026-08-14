@@ -16,6 +16,8 @@ class FakeLog:
         self.id = id
         self.success = success
         self.exit_code = exit_code
+        self.launch_command = None
+        self.commands = {}
 
 
 class FakeProject:
@@ -159,6 +161,7 @@ def test_run_build_task_with_existing_log(tmp_db, monkeypatch):
         "project_id": "p-fake",
         "success": True,
         "exit_code": 0,
+        "launch_command": None,
     }
 
 

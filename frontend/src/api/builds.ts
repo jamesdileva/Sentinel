@@ -8,6 +8,8 @@ export interface BuildJob {
   exit_code: number | null;
   started_at: string | null;
   completed_at: string | null;
+  /** v1.17.8.0 build->open: startup command launched when the job finished. */
+  launch_command: string | null;
 }
 
 export interface BuildLog {
@@ -20,6 +22,8 @@ export interface BuildLog {
   stdout: string | null;
   stderr: string | null;
   commands: Record<string, string> | null;
+  /** v1.17.8.0 build->open: startup command launched after the build. */
+  launch_command: string | null;
 }
 
 export async function triggerBuild(projectId: string): Promise<BuildJob> {

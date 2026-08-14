@@ -368,6 +368,224 @@ def test_extract_build_commands_pytest_venv_skips_nested_python(tmp_path):
     assert extract_build_commands(root)["test"] == "pytest"
 
 
+# --- v1.17.8.0: subdir manifests, CLI entry points, startup discovery -------
+
+
+def test_extract_build_commands_subdir_npm(tmp_path):
+    """v1.17.8.0: an app one level down (CG's renderer/) is discovered from
+    its package.json and prefixed with `cd <dir> &&`."""
+    root = tmp_path / "cg-like"
+    root.mkdir()
+    renderer = root / "renderer"
+    renderer.mkdir()
+    (renderer / "package.json").write_text(
+        '{"scripts": {"build": "npm run build:electron && vite build", '
+        '"start": "concurrently \\"backend\\" \\"electron\\""}}',
+        encoding="utf-8",
+    )
+    from app.utils.command_extractor import extract_build_commands
+
+    commands = extract_build_commands(root)
+    assert commands["install"] == "cd renderer && npm install"
+    assert commands["build"] == "cd renderer && npm run build"
+    assert commands["startup"] == "cd renderer && npm run start"
+
+
+def test_extract_build_commands_subdir_npm_prefers_start_over_dev(tmp_path):
+    root = tmp_path / "app-dir"
+    root.mkdir()
+    frontend = root / "frontend"
+    frontend.mkdir()
+    (frontend / "package.json").write_text(
+        '{"scripts": {"dev": "vite", "build": "tsc -b && vite build"}}',
+        encoding="utf-8",
+    )
+    from app.utils.command_extractor import extract_build_commands
+
+    commands = extract_build_commands(root)
+    assert commands["startup"] == "cd frontend && npm run dev"
+    assert commands["build"] == "cd frontend && npm run build"
+
+
+def test_extract_build_commands_subdir_pip(tmp_path):
+    """backend/requirements.txt -> cd backend && pip install (CG, demake)."""
+    root = tmp_path / "backend-pip"
+    root.mkdir()
+    (root / "backend").mkdir()
+    (root / "backend" / "requirements.txt").write_text("fastapi\n", encoding="utf-8")
+    from app.utils.command_extractor import extract_build_commands
+
+    assert extract_build_commands(root)["install"] == (
+        "cd backend && pip install -r requirements.txt"
+    )
+
+
+def test_extract_build_commands_root_manifest_beats_subdir(tmp_path):
+    """A root package.json always wins over a subdir one (no cd needed)."""
+    root = tmp_path / "root-wins"
+    root.mkdir()
+    (root / "package.json").write_text(
+        '{"scripts": {"build": "tsc -b && vite build"}}', encoding="utf-8"
+    )
+    (root / "renderer").mkdir()
+    (root / "renderer" / "package.json").write_text(
+        '{"scripts": {"build": "vite build"}}', encoding="utf-8"
+    )
+    from app.utils.command_extractor import extract_build_commands
+
+    assert extract_build_commands(root)["build"] == "tsc -b && vite build"
+
+
+def test_extract_build_commands_python_cli_gui(tmp_path):
+    """v1.17.8.0: an argparse `gui` subcommand in a package entry module is
+    a code-defined launchable app (AG: `python -m rigging_engine.main gui`)."""
+    root = tmp_path / "gui-app"
+    root.mkdir()
+    pkg = root / "rigging_engine"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    (pkg / "main.py").write_text(
+        "import argparse\n"
+        'sub = parser.add_subparsers(dest="command")\n'
+        'sub.add_parser("gui", help="Launch the graphical application")\n',
+        encoding="utf-8",
+    )
+    from app.utils.command_extractor import extract_build_commands
+
+    assert extract_build_commands(root)["startup"] == (
+        "python -m rigging_engine.main gui"
+    )
+
+
+def test_extract_build_commands_python_cli_web_root_file(tmp_path):
+    """A root-level app.py with a `web` subcommand -> python app.py web."""
+    root = tmp_path / "web-app"
+    root.mkdir()
+    (root / "app.py").write_text(
+        "import argparse\n"
+        "sub = parser.add_subparsers()\n"
+        'sub.add_parser("web", help="Serve the web demo")\n',
+        encoding="utf-8",
+    )
+    from app.utils.command_extractor import extract_build_commands
+
+    assert extract_build_commands(root)["startup"] == "python app.py web"
+
+
+def test_extract_build_commands_python_cli_requires_argparse(tmp_path):
+    """Prose like `main gui` in a docstring must not mint a command."""
+    root = tmp_path / "no-cli"
+    root.mkdir()
+    pkg = root / "mylib"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    (pkg / "main.py").write_text(
+        "# run with: python -m mylib.main gui\n", encoding="utf-8"
+    )
+    from app.utils.command_extractor import extract_build_commands
+
+    assert extract_build_commands(root)["startup"] == ""
+
+
+def test_extract_build_commands_entry_uvicorn(tmp_path):
+    """v1.17.8.0: an entry module that documents `uvicorn main:app` is a
+    service (demake's backend/main.py: "Run with: uvicorn main:app
+    --reload")."""
+    root = tmp_path / "fastapi-app"
+    root.mkdir()
+    (root / "backend").mkdir()
+    (root / "backend" / "main.py").write_text(
+        '"""Entry point. Run with: uvicorn main:app --reload"""\n'
+        "from fastapi import FastAPI\n",
+        encoding="utf-8",
+    )
+    from app.utils.command_extractor import extract_build_commands
+
+    assert extract_build_commands(root)["startup"] == (
+        "cd backend && uvicorn main:app --reload"
+    )
+
+
+def test_extract_build_commands_startup_from_readme(tmp_path):
+    """v1.17.8.0: whitelisted startup spellings in docs (AG's USER_GUIDE
+    style) are discovered."""
+    root = tmp_path / "readme-startup"
+    root.mkdir()
+    (root / "README.md").write_text(
+        "# App\n\nLaunch the web UI:\n\n```bash\npython -m streamlit run "
+        "dashboard/app.py\n```\n",
+        encoding="utf-8",
+    )
+    from app.utils.command_extractor import extract_build_commands
+
+    assert extract_build_commands(root)["startup"] == "python -m streamlit run"
+
+
+def test_extract_build_commands_from_development_md(tmp_path):
+    """v1.17.8.0: DEVELOPMENT.md is a doc candidate (CG keeps its Quick
+    Start there)."""
+    root = tmp_path / "devdoc"
+    root.mkdir()
+    (root / "DEVELOPMENT.md").write_text(
+        "# Setup\n\n```bash\nnpm install\nnpm run build\n```\n", encoding="utf-8"
+    )
+    from app.utils.command_extractor import extract_build_commands
+
+    commands = extract_build_commands(root)
+    assert commands["build"] == "npm run build"
+    assert commands["install"] == "npm install"
+
+
+def test_extract_build_commands_subdir_pytest_convention(tmp_path):
+    """v1.17.8.0: backend/tests/ + backend-level .py files -> cd backend
+    && pytest (CG)."""
+    root = tmp_path / "backend-tests"
+    root.mkdir()
+    (root / "backend").mkdir()
+    (root / "backend" / "tests").mkdir()
+    (root / "backend" / "tests" / "test_api.py").write_text("def test_x(): pass\n")
+    (root / "backend" / "run.py").write_text("print('hi')\n")
+    from app.utils.command_extractor import extract_build_commands
+
+    assert extract_build_commands(root)["test"] == "cd backend && pytest"
+
+
+def test_extract_build_commands_venv_plain_name(tmp_path):
+    """v1.17.8.0: a plain `venv/` dir (not .venv*) is a repo venv — CG and
+    demake both use it — and qualifies the test command."""
+    root = tmp_path / "plain-venv"
+    root.mkdir()
+    (root / "tests").mkdir()
+    (root / "tests" / "test_thing.py").write_text("def test_x(): pass\n")
+    (root / "worker.py").write_text("print('hi')\n")
+    venv = root / "venv" / "Scripts"
+    venv.mkdir(parents=True)
+    (venv / "python.exe").write_text("dummy")
+    from app.utils.command_extractor import extract_build_commands
+
+    command = extract_build_commands(root)["test"]
+    assert command.endswith('python.exe" -m pytest')
+    assert "venv" in command
+
+
+def test_extract_build_commands_subdir_pytest_uses_venv(tmp_path):
+    """A cd-prefixed pytest also gets the repo venv (CG end-to-end)."""
+    root = tmp_path / "cg-venv"
+    root.mkdir()
+    (root / "backend").mkdir()
+    (root / "backend" / "tests").mkdir()
+    (root / "backend" / "tests" / "test_api.py").write_text("def test_x(): pass\n")
+    (root / "backend" / "run.py").write_text("print('hi')\n")
+    venv = root / "venv" / "Scripts"
+    venv.mkdir(parents=True)
+    (venv / "python.exe").write_text("dummy")
+    from app.utils.command_extractor import extract_build_commands
+
+    command = extract_build_commands(root)["test"]
+    assert command.startswith("cd backend && ")
+    assert command.endswith('python.exe" -m pytest')
+
+
 def test_index_project_creates_entries(tmp_db):
     svc = _service(tmp_db)
     project = svc.index_project(PY_PROJECT)

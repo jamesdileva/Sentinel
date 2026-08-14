@@ -36,6 +36,12 @@ def run_build_task(project_id: str, log_id: str) -> dict:
         if log.success is None:
             message = f"Build skipped for {project.name} — no build command"
             detail = "no command configured"
+        elif log.launch_command:
+            if (log.commands or {}).get("build"):
+                message = f"Build passed for {project.name} — app launched"
+            else:
+                message = f"No build needed for {project.name} — app launched"
+            detail = log.launch_command
         elif log.success:
             message = f"Build passed for {project.name}"
             detail = f"exit code {log.exit_code}"
@@ -53,6 +59,7 @@ def run_build_task(project_id: str, log_id: str) -> dict:
             "project_id": project.id,
             "success": log.success,
             "exit_code": log.exit_code,
+            "launch_command": log.launch_command,
         }
 
 
