@@ -37,7 +37,9 @@ _SECRET_PATTERNS: list[tuple[str, re.Pattern[str], Severity]] = [
     ),
     (
         "Generic Secret",
-        re.compile(r"\b(sk|ghp|AIza)[-_][A-Za-z0-9_\-]{16,}\b"),
+        re.compile(
+            r"\b(?:ghp|AIza|sk_(?:live|test))[-_][A-Za-z0-9_\-]{16,}\b"
+        ),
         Severity.HIGH,
     ),
 ]
@@ -76,10 +78,10 @@ def _is_test_file(rel: Path) -> bool:
 
 
 # Placeholder/example values look like secrets but are not (v1.17.1): the
-# scanner used to flag `.env.example`-style values and fake test tokens such
-# as `ghp_xxxxxxxxxxxxxxxxxxxx` in fixtures. An *alphabetical* token like
-# `ghp_abcdefghijklmnopqrst` deliberately stays flagged (it reads as a real
-# key) — this comment therefore uses the all-x placeholder form.
+# scanner used to flag `.env.example`-style values and fake test tokens in
+# fixtures. Placeholder markers (xxx/example/...) reject those; an
+# *alphabetical* token — one that reads like a real key — stays flagged by
+# design, so this comment deliberately avoids embedding any such literal.
 _PLACEHOLDER_MARKERS = (
     "xxx",
     "example",

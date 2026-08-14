@@ -363,6 +363,46 @@ def test_secret_scanning_skips_test_files(tmp_db, tmp_path):
     assert secret_flags == []
 
 
+def test_openssl_stack_api_not_flagged_as_secret(tmp_db, tmp_path):
+    """v1.17.7.5 live catch: OpenSSL's `sk_X509_INFO_pop_free` stack-API
+    matched the generic `sk` secret prefix (Algo Trader, httplib.h:14708).
+    Stripe keys require the full sk_live_/sk_test_ forms now."""
+    root = tmp_path / "cpp-project"
+    root.mkdir()
+    (root / "src").mkdir()
+    (root / "src" / "tls.cc").write_text(
+        "sk_X509_INFO_pop_free(inf, X509_INFO_free);\n"
+        "auto obj = sk_X509_OBJECT_value(objs, i);\n",
+        encoding="utf-8",
+    )
+    (root / "CMakeLists.txt").write_text("cmake_minimum_required(VERSION 3.20)\n")
+
+    with Session(connection.get_engine()) as session:
+        project = IndexerService(session).index_project(str(root))
+        findings = SecurityScanner(session).scan_project(project)
+        secret_flags = [f for f in findings if f.type == "secret"]
+    assert secret_flags == []
+
+
+def test_stripe_keys_still_flagged(tmp_db, tmp_path):
+    """sk_live_/sk_test_ payloads must still trip the generic secret rule.
+    (The payload is assembled at runtime so no literal key ever lands in
+    source — GitHub push protection flags the plaintext form.)"""
+    root = tmp_path / "stripe-project"
+    root.mkdir()
+    payload = "abcdefghijklmnopqrstuvwxyz012345"
+    (root / "pay.py").write_text(
+        "KEY = 'sk_live_" + payload + "'\n", encoding="utf-8"
+    )
+    (root / "pyproject.toml").write_text("[tool.pytest.ini_options]\n")
+
+    with Session(connection.get_engine()) as session:
+        project = IndexerService(session).index_project(str(root))
+        findings = SecurityScanner(session).scan_project(project)
+        secret_flags = [f for f in findings if f.type == "secret"]
+    assert len(secret_flags) == 1
+
+
 # --- API integration (eager Celery) ---
 
 
