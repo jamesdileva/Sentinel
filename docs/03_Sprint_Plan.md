@@ -117,9 +117,9 @@ Each sprint follows this template:
 **Manual Testing:**
 1. Run `cd backend && pip install -e .`
 2. Run `uvicorn app.main:app --reload`
-3. Open `http://127.0.0.1:8000/` → see `{"status": "ok"}`
-4. Open `http://127.0.0.1:8000/health` → see health details
-5. Open `http://127.0.0.1:8000/docs` → see FastAPI Swagger UI
+3. Open `http://127.0.0.1:8420/` → see `{"status": "ok"}`
+4. Open `http://127.0.0.1:8420/health` → see health details
+5. Open `http://127.0.0.1:8420/docs` → see FastAPI Swagger UI
 6. Run `sentinel --help` → see CLI commands listed
 
 **Definition of Done:** Server starts without errors, health check endpoints respond, Swagger UI accessible, CLI framework initialized.
@@ -300,7 +300,7 @@ Each sprint follows this template:
 **Manual Testing:**
 1. Run `docker compose up -d`
 2. Check services: `docker compose ps`
-3. Access `http://localhost:8000/health` → verify responds
+3. Access `http://localhost:8420/health` → verify responds
 4. Check logs: `docker compose logs backend`
 5. Verify SQLite database file is created on the mounted volume
 6. Stop: `docker compose down`
@@ -1079,7 +1079,7 @@ docs/pi-hole-idea.md).
 **Backend (shipped):**
 - `run.py` at the repo root is the single starting point: startup checks
   (Python, `.env`/data dirs, frontend built, SQLite writable, Ollama) then
-  uvicorn on `127.0.0.1:8000`; flags `--check`, `--port`, `--reload`.
+  uvicorn on `127.0.0.1:8420`; flags `--check`, `--port`, `--reload`.
   (`--service`/`--install`/`--uninstall` were removed in v1.17.7.2 with
   `scripts/install_service.py`.)
 - `scripts/build.py` reworked — verify (backend pytest+lint, frontend test)
@@ -1091,7 +1091,7 @@ docs/pi-hole-idea.md).
 **Acceptance Criteria (all met):**
 - Fresh machine: venv + requirements + `npm run build` +
   `scripts/build.py --dist` → `.\.venv\Scripts\python.exe run.py` serves API +
-  dashboard on :8000
+  dashboard on :8420
 - Autostart survives reboot via a Task-Scheduler task; double-runs exit fast
 - `pytest tests` (backend), frontend vitest, and `npm run build` green;
   no `docker`/compose/pihole references left in shipped code
@@ -1198,6 +1198,7 @@ Use this template for any new sprint added to the plan:
 
 | Date | Version | Change | Author |
 |------|---------|--------|--------|
+| 2026-08-14 | 1.17.8.1 | **Sentinel moves to port 8420.** The uvicorn default 8000 is what the indexed projects' dev servers (Cg, Demake Engine) bind, so build-to-open launches died on WinError 10013 while Sentinel held the port. `SENTINEL_PORT` default is now 8420 (config.py, run.py --port, .env.example, vite proxy, playwright e2e, packaging test) ? Cg and Demake dev servers now bind 8000 freely. Docs: README, AGENTS.md, desktop.md, 01 ?9/?10, 02 ?4.2/?13, 03 updated. Tests: packaging default-port assert. | AI agent |
 | 2026-08-14 | 1.17.8.0 | **Subdir-aware command discovery; build→open.** (1) **Discovery finds builds one level down** (command_extractor.py): known subdirs renderer/frontend/client/web/ui/dashboard → `cd <dir> && npm install`/`npm run build`/`npm run start|dev`/`npm run test` from their package.json; backend/server/api requirements.txt → `cd <dir> && pip install -r requirements.txt` (root manifests still win per family; commands run from the project root via the shell runner). Python entry modules with an argparse `gui`/`web` subcommand are launchable apps by *code*, not prose (AG: `python -m rigging_engine.main gui` — master_reference2.md's command, now deterministic); a FastAPI entry that documents `uvicorn main:app` gets it as startup (demake: `cd backend && uvicorn main:app --reload`); DEVELOPMENT.md/docs/DEVELOPMENT.md join the README candidates; docs now also yield startup commands (whitelisted spellings only); `_venv_python` accepts a plain `venv/` dir (CG, demake) and the `backend/tests/` pytest convention runs `cd backend && "<venv python>" -m pytest` (CG; deterministic conventions now run *before* the doc scan — CG's README documents a `npm run test` that doesn't exist, the real suite is backend pytest in `venv/`). Live discovery: AG = startup gui CLI + venv pytest (399 collected; 1 cv2 env-gap collection error, documented in AG's AGENTS.md); CG = build/startup/install/test all real; demake = uvicorn startup + root pip. (2) **build→open** (build_runner.py): Run Build becomes Build & Open for every project — a green build, or a project with no compile step ("Build not needed — this project has no compile step."), launches the `startup` command **detached** (DETACHED_PROCESS, no command timeout — the app keeps running) appending to `data/logs/apps/<name>.log`, through the repo's own venv interpreter when it has one (`python`-prefixed commands rewritten to the venv exe; backslash-safe lambda replace). A failed build never opens the app; neither-build-nor-startup stays the honest v1.17.7.5 skipped record. New `BuildLog.launch_command` (ALTER migration via connection.py) surfaced in BuildLogRead/JobStatus; Builds.tsx action label adapts to the discovered commands (Build & Open / Open app / Build / Run build), the log shows an "App launched: …" line, and the completion toast notes the launch. Launch is always user-initiated (Rule 2: beats never open apps). Docs: AGENTS.md rules honored — changelog rows in 01/02/03, builds.md recipe table refreshed (AG/CG/Demake/Sentinel rows + build→open note). Tests: +13 extractor (subdir npm/pip, root-wins, CLI gui/web, entry uvicorn, DEVELOPMENT.md, startup-from-docs, subdir pytest, plain venv, venv-qualified cd-pytest, prose-ignored), +5 runner (no-build launches, venv rewrite, no-launch-on-failure, launch-after-success, launch-failure honesty), +4 frontend (labels + log line + toast); suite green | AI agent |
 | 2026-08-14 | 1.17.7.7 | **Live UI updates for scans and builds; resolved findings are cleanable; AG finally testable.** (1) **Builds poll race fixed** (Builds.tsx): `finish()` cleared `pollingJobId` *before* the awaited history refresh, so the effect cleanup flipped `cancelled` and dropped both the refreshed list and the toast - the row stayed "running..." forever on a real network; the refresh + toast now run first, then the poll state clears (regression test with a slow history fetch). (2) **Security tab refreshes on completion** (Security.tsx): after queueing a scan/scan-all the tab polls `GET /projects/{id}` every 2 s until `last_scanned` moves past the pre-scan snapshot (stamped by the scanner on every run - the only deterministic completion signal, since a clean scan writes no finding row), then refetches findings + toasts. Scan buttons show "Scanning..." while the poll is live (10-min cap). (3) **Resolved findings cleanable**: every stale leftover is `resolved=True` forever (Ag 209, WT 183, Sentinel 7, others 1-2 - all false positives from the pre-v1.17.7.5 scanner) and spammed the observatory timeline (~400 events). New `DELETE /api/v1/security/findings?project_id=` removes *resolved* rows only (SecurityRepository.delete_resolved, open findings untouched - they are the live scan state and the idempotence keys); the tab defaults to open findings with a "Show resolved" toggle + "Clear resolved (N)" button; the timeline now filters `resolved == False`. (4) **AG gets a test command**: AG's root has no manifest (requirements live in stable-fast-3d//triposr/ subdirs; AGENTS.md is a session log with zero command literals), so discovery honestly found nothing. Two deterministic additions (command_extractor.py): `AGENTS.md`/`docs/AGENTS.md` join the README candidates but are scanned for fenced code blocks only (Sentinel's own AGENTS.md mentions "pytest in backend/" mid-sentence - a whole-file scan would mint a wrong command), and a pytest convention extractor (last in order): a root `tests/` dir + at least one root-level `.py` file yields `test: pytest`. Empty extractor results no longer claim keys (an earlier extractor that found nothing must not block a later confident one - the AGENTS.md scan returned `test: ""` and shadowed the convention). AG now discovers test: pytest; its build step stays honestly skipped (interpreted Python app - nothing compiles). Docs: 01/02/03 changelogs. Tests: +4 backend (DELETE API x3, repo delete_resolved, timeline excludes resolved, extractor: AGENTS.md fenced, AGENTS.md prose ignored, pytest convention x2) +5 frontend (Security poll/toggle/clear x5, Builds slow-refresh regression) | AI agent |
 | 2026-08-14 | 1.17.7.6 | **World tab removed from the sidebar.** The world simulator is opt-in since v1.17.7.3 (SENTINEL_WORLD_SIM_ENABLED=true); with it off, the World nav item loaded a page that 404s on every API call. 

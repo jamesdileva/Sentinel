@@ -30,11 +30,11 @@ py -3.11 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e "backend[dev]"
 cd frontend; npm install; npm run build; cd ..
 .\.venv\Scripts\python.exe scripts\build.py --dist   # verify + stage the dashboard
-.\.venv\Scripts\python.exe run.py                    # startup checks + serve on 127.0.0.1:8000
+.\.venv\Scripts\python.exe run.py                    # startup checks + serve on 127.0.0.1:8420
 ```
 
-- Dashboard + API: http://127.0.0.1:8000 (System page: `/system`)
-- Swagger UI: http://127.0.0.1:8000/docs
+- Dashboard + API: http://127.0.0.1:8420 (System page: `/system`)
+- Swagger UI: http://127.0.0.1:8420/docs
 - CLI: `python -m app.cli --help` (inside `backend`)
 
 ## Project Rules

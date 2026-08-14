@@ -68,9 +68,11 @@ These are the project's constitution. They must be upheld in every decision, cha
   `backend/app`).
 - **The desktop (this machine) is the single always-on server** (laptop retired
   since v1.17.7): runbook in docs/02 §13.4 and `docs/desktop.md`, dashboard at
-  `http://127.0.0.1:8000` (localhost only, Rule 1). Ollama runs natively on the
-  same machine (`http://127.0.0.1:11434`); Pi-hole remains an independent
-  network DNS — **never start/stop it from Sentinel** (no code, no env).
+  `http://127.0.0.1:8420` (localhost only, Rule 1; v1.17.8.1 moved off 8000 so
+  the dev servers of indexed projects — Cg, Demake Engine — can bind it).
+  Ollama runs natively on the same machine (`http://127.0.0.1:11434`); Pi-hole
+  remains an independent network DNS — **never start/stop it from Sentinel**
+  (no code, no env).
 - **GitHub is optional (v1.17.7)**: tokenless first-class — all projects live
   under `C:\Users\j\projects` (v1.17.7.3 moved them from home; the watch root
   is `SENTINEL_WATCH_DIRS=C:\Users\j\projects` in `.env`, with
@@ -99,4 +101,4 @@ These are the project's constitution. They must be upheld in every decision, cha
   setup, build/stage, manual start, known issues); troubleshooting table in
   docs/02 §13.4. The venv lives at `backend\.venv` on this machine (or the
   repo-root `.venv`). There is no autostart task since v1.17.7.2 — start the
-  server manually with `run.py` and keep port 8000 free of other services.
+  server manually with `run.py` and keep port 8420 free of other services.

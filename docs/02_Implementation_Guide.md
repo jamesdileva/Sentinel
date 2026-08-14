@@ -280,7 +280,7 @@ class ConfigEntry(SQLModel, table=True):
 
 ## 2. API Endpoints
 
-All endpoints live under `http://127.0.0.1:8000/api/v1/`. Relative paths below omit the `/api/v1` prefix; the frontend and CLI always use the full path.
+All endpoints live under `http://127.0.0.1:8420/api/v1/`. Relative paths below omit the `/api/v1` prefix; the frontend and CLI always use the full path.
 
 ### 2.1. Projects
 
@@ -836,7 +836,7 @@ class WorldSimulatorService:
 # Project Sentinel Configuration
 server:
   host: "0.0.0.0"
-  port: 8000
+  port: 8420
   workers: 4
 
 database:
@@ -923,7 +923,7 @@ Read from the repo-root `.env` (Sprint 15: no containers — the backend process
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `SENTINEL_HOST` | `127.0.0.1` | Bind address for uvicorn |
-| `SENTINEL_PORT` | `8000` | Listen port (dashboard + API, same origin) |
+| `SENTINEL_PORT` | `8420` | Listen port (dashboard + API, same origin; v1.17.8.1 — off 8000, which indexed projects' dev servers default to) |
 | `SENTINEL_DB_PATH` | `data/sqlite/sentinel.db` | SQLite database path (repo root) |
 | `SENTINEL_CHROMA_PATH` | `data/chroma` | ChromaDB persistence directory |
 | `SENTINEL_OLLAMA_HOST` | `http://localhost:11434` | Ollama server endpoint (native Ollama on the same machine) |
@@ -977,7 +977,7 @@ sentinel config set <key> <value>    # Update a config value
 ```bash
 # run.py (repo root) — the single entry point for the home server
 # (commands use the venv python explicitly — no activation required)
-.\.venv\Scripts\python.exe run.py                          # startup checks + start on 127.0.0.1:8000
+.\.venv\Scripts\python.exe run.py                          # startup checks + start on 127.0.0.1:8420
 .\.venv\Scripts\python.exe run.py --check                  # startup checks only (SQLite, Ollama, frontend)
 .\.venv\Scripts\python.exe run.py --port 8080              # different port
 .\.venv\Scripts\python.exe run.py --reload                 # dev auto-reload
@@ -1605,7 +1605,7 @@ The suite boots the real stack via Playwright `webServer`: the FastAPI backend
 (repo `backend/`, venv `backend/.venv`, real `data/sqlite/sentinel.db`, with
 `SENTINEL_AUTO_SCAN_ON_STARTUP=false` so tests see the persisted, deterministic
 DB contents instead of racing discovery indexing) plus the Vite dev server
-(`--host 127.0.0.1`, `/api` proxied to `:8000`). Ports 8000 and 5173 are reused
+(`--host 127.0.0.1`, `/api` proxied to `:8420`). Ports 8420 and 5173 are reused
 when already running.
 
 | Spec | Flow |
@@ -1632,8 +1632,9 @@ runs natively — one uvicorn process serves the API and the built dashboard fro
 the same origin (`backend/app/static`), so there is no nginx, no CORS, no
 containers, no Redis/Celery (the background scheduler is the in-process
 APScheduler). **v1.17.7: the always-on machine is the desktop itself** (dev +
-server in one, laptop retired); the dashboard is at `http://127.0.0.1:8000`
-(docs/01 §9).
+server in one, laptop retired); the dashboard is at `http://127.0.0.1:8420`
+(v1.17.8.1 — moved off 8000 so indexed projects' dev servers can bind the
+uvicorn default; docs/01 §9).
 
 Pi-hole also left the Sentinel stack in Sprint 15: it was never the project's
 purpose (docs/pi-hole-idea.md) and Sentinel no longer reads its stats — the
@@ -1663,13 +1664,13 @@ only needed if you want clone/pull auto-sync.
 
 ```powershell
 # venv python is used explicitly — PowerShell will block Activate.ps1 by default
-.\.venv\Scripts\python.exe run.py              # startup checks (SQLite, Ollama, frontend built) + uvicorn on 127.0.0.1:8000
+.\.venv\Scripts\python.exe run.py              # startup checks (SQLite, Ollama, frontend built) + uvicorn on 127.0.0.1:8420
 .\.venv\Scripts\python.exe run.py --check      # checks only, no server
 .\.venv\Scripts\python.exe run.py --port 8080  # or set SENTINEL_PORT in .env
 .\.venv\Scripts\python.exe run.py --reload     # dev-only file-watch reload
 ```
 
-The dashboard is `http://127.0.0.1:8000` (System page: `/system`). The API is
+The dashboard is `http://127.0.0.1:8420` (System page: `/system`). The API is
 same-origin (`/api/v1/*`) — the SPA fallback route in `app/main.py` serves
 `index.html` for any non-API path.
 
@@ -1688,7 +1689,7 @@ server manually with `run.py` when you want it up.
 ### 13.4. Home Server Deployment (Sprint 12, reworked in Sprint 15 and 1.17.7)
 
 The desktop is the always-on machine. After the one-time setup (§13.1) the
-dashboard is at **http://127.0.0.1:8000** on this machine only (localhost —
+dashboard is at **http://127.0.0.1:8420** on this machine only (localhost —
 nothing is exposed on the LAN; bind `SENTINEL_HOST=0.0.0.0` + a firewall rule
 only if phone/tablet access is ever wanted). `.\.venv\Scripts\python.exe run.py`
 performs the same startup checks the server itself performs at boot (database,
@@ -1747,7 +1748,7 @@ re-runs it manually).
 
 **System page (Sprint 12, Pi-hole removed in Sprint 15):**
 
-`http://127.0.0.1:8000/system` shows read-only status for Ollama
+`http://127.0.0.1:8420/system` shows read-only status for Ollama
 (availability, installed models, tokens/sec of recent generations) plus the
 backend startup checks — per Project Rule 2 nothing on the page toggles
 anything server-side.
@@ -1764,7 +1765,7 @@ instead of cloning if preferred, then follow §13.1 minus `git clone`.
 | `run.py` warns *frontend not built* | `backend/app/static/index.html` missing | `.\.venv\Scripts\python.exe scripts\build.py --dist` before serving |
 | "What happened this run?" (console scrolled past, errors vanished) | The run's log is at `data/logs/sentinel.log` — overwritten at every start, INFO level, includes uvicorn's own loggers (v1.17.6.3). Since v1.17.6.4 the httpx request flood (`POST /api/embed` per embed call) is silenced to WARNING and every line is written exactly once | Read it after a crash: it answers what ran, what errored, and what the shutdown cascade was |
 | Dashboard shows stale UI after `git pull` | The served build is the staged one, not `frontend/dist` | Re-run `scripts/build.py --dist`; restart the backend |
-| Port 8000 already in use | Another Sentinel instance is running (a second console left open, or an orphaned uvicorn child after a hard kill of `run.py`) | Since v1.17.6.3 `run.py` prints the owning PID (`netstat -ano`) and a `taskkill /F /PID <pid>` hint instead of a raw bind traceback — close the other console, kill that PID, or serve elsewhere (`--port 8100` / `SENTINEL_PORT`) |
+| Port 8420 already in use | Another Sentinel instance is running (a second console left open, or an orphaned uvicorn child after a hard kill of `run.py`) | Since v1.17.6.3 `run.py` prints the owning PID (`netstat -ano`) and a `taskkill /F /PID <pid>` hint instead of a raw bind traceback — close the other console, kill that PID, or serve elsewhere (`--port 8100` / `SENTINEL_PORT`) |
 | Projects indexed but missing the AI architecture summary (files embedded, no summary) | Summary embedding absent — wiped by a reset (v1.17.6.2/6.3 dedupe bug) or its generation timed out (v1.17.6.3, 120 s default) | Knowledge page **Re-index all projects** button (v1.17.6.4) or `rag-index --all` — incremental: embedded files are skipped, missing summaries regenerate, one bad project never aborts the pass |
 | `rag-index` / `sentinel` "not recognized" | The CLI is `python -m app.cli` from inside `backend`, never a bare command (`sentinel` is not on PATH) | `cd backend` then `..\backend\.venv\Scripts\python.exe -m app.cli rag-index --all` (v1.17.7: the venv may live at the repo root OR `backend\.venv` — both are resolved) |
 | Server dies after reboot | No autostart task since v1.17.7.2 — the server is started manually | `backend\.venv\Scripts\python.exe run.py` when you want it up (the old `install_service.py` task was removed because it popped console windows every 5 min) |
@@ -1897,6 +1898,7 @@ relationships aren't persisted, so they're intentionally absent.
 
 | Date | Version | Change | Author |
 |------|---------|--------|--------|
+| 2026-08-14 | 1.17.8.1 | **Sentinel moves to port 8420.** The uvicorn default 8000 is what the indexed projects' dev servers (Cg, Demake Engine) bind, so build-to-open launches died on WinError 10013 while Sentinel held the port. `SENTINEL_PORT` default is now 8420 (config.py, run.py --port, .env.example, vite proxy, playwright e2e, packaging test) ? Cg and Demake dev servers now bind 8000 freely. Docs: README, AGENTS.md, desktop.md, 01 ?9/?10, 02 ?4.2/?13, 03 updated. Tests: packaging default-port assert. | AI agent |
 | 2026-08-14 | 1.17.8.0 | **Subdir-aware command discovery; build→open.** (1) **Discovery finds builds one level down** (command_extractor.py): known subdirs renderer/frontend/client/web/ui/dashboard → `cd <dir> && npm install`/`npm run build`/`npm run start|dev`/`npm run test` from their package.json; backend/server/api requirements.txt → `cd <dir> && pip install -r requirements.txt` (root manifests still win per family; commands run from the project root via the shell runner). Python entry modules with an argparse `gui`/`web` subcommand are launchable apps by *code*, not prose (AG: `python -m rigging_engine.main gui` — master_reference2.md's command, now deterministic); a FastAPI entry that documents `uvicorn main:app` gets it as startup (demake: `cd backend && uvicorn main:app --reload`); DEVELOPMENT.md/docs/DEVELOPMENT.md join the README candidates; docs now also yield startup commands (whitelisted spellings only); `_venv_python` accepts a plain `venv/` dir (CG, demake) and the `backend/tests/` pytest convention runs `cd backend && "<venv python>" -m pytest` (CG; deterministic conventions now run *before* the doc scan — CG's README documents a `npm run test` that doesn't exist, the real suite is backend pytest in `venv/`). Live discovery: AG = startup gui CLI + venv pytest (399 collected; 1 cv2 env-gap collection error, documented in AG's AGENTS.md); CG = build/startup/install/test all real; demake = uvicorn startup + root pip. (2) **build→open** (build_runner.py): Run Build becomes Build & Open for every project — a green build, or a project with no compile step ("Build not needed — this project has no compile step."), launches the `startup` command **detached** (DETACHED_PROCESS, no command timeout — the app keeps running) appending to `data/logs/apps/<name>.log`, through the repo's own venv interpreter when it has one (`python`-prefixed commands rewritten to the venv exe; backslash-safe lambda replace). A failed build never opens the app; neither-build-nor-startup stays the honest v1.17.7.5 skipped record. New `BuildLog.launch_command` (ALTER migration via connection.py) surfaced in BuildLogRead/JobStatus; Builds.tsx action label adapts to the discovered commands (Build & Open / Open app / Build / Run build), the log shows an "App launched: …" line, and the completion toast notes the launch. Launch is always user-initiated (Rule 2: beats never open apps). Docs: AGENTS.md rules honored — changelog rows in 01/02/03, builds.md recipe table refreshed (AG/CG/Demake/Sentinel rows + build→open note). Tests: +13 extractor (subdir npm/pip, root-wins, CLI gui/web, entry uvicorn, DEVELOPMENT.md, startup-from-docs, subdir pytest, plain venv, venv-qualified cd-pytest, prose-ignored), +5 runner (no-build launches, venv rewrite, no-launch-on-failure, launch-after-success, launch-failure honesty), +4 frontend (labels + log line + toast); suite green | AI agent |
 | 2026-08-14 | 1.17.7.7 | **Live UI updates for scans and builds; resolved findings are cleanable; AG finally testable.** (1) **Builds poll race fixed** (Builds.tsx): `finish()` cleared `pollingJobId` *before* the awaited history refresh, so the effect cleanup flipped `cancelled` and dropped both the refreshed list and the toast - the row stayed "running..." forever on a real network; the refresh + toast now run first, then the poll state clears (regression test with a slow history fetch). (2) **Security tab refreshes on completion** (Security.tsx): after queueing a scan/scan-all the tab polls `GET /projects/{id}` every 2 s until `last_scanned` moves past the pre-scan snapshot (stamped by the scanner on every run - the only deterministic completion signal, since a clean scan writes no finding row), then refetches findings + toasts. Scan buttons show "Scanning..." while the poll is live (10-min cap). (3) **Resolved findings cleanable**: every stale leftover is `resolved=True` forever (Ag 209, WT 183, Sentinel 7, others 1-2 - all false positives from the pre-v1.17.7.5 scanner) and spammed the observatory timeline (~400 events). New `DELETE /api/v1/security/findings?project_id=` removes *resolved* rows only (SecurityRepository.delete_resolved, open findings untouched - they are the live scan state and the idempotence keys); the tab defaults to open findings with a "Show resolved" toggle + "Clear resolved (N)" button; the timeline now filters `resolved == False`. (4) **AG gets a test command**: AG's root has no manifest (requirements live in stable-fast-3d//triposr/ subdirs; AGENTS.md is a session log with zero command literals), so discovery honestly found nothing. Two deterministic additions (command_extractor.py): `AGENTS.md`/`docs/AGENTS.md` join the README candidates but are scanned for fenced code blocks only (Sentinel's own AGENTS.md mentions "pytest in backend/" mid-sentence - a whole-file scan would mint a wrong command), and a pytest convention extractor (last in order): a root `tests/` dir + at least one root-level `.py` file yields `test: pytest`. Empty extractor results no longer claim keys (an earlier extractor that found nothing must not block a later confident one - the AGENTS.md scan returned `test: ""` and shadowed the convention). AG now discovers test: pytest; its build step stays honestly skipped (interpreted Python app - nothing compiles). Docs: 01/02/03 changelogs. Tests: +4 backend (DELETE API x3, repo delete_resolved, timeline excludes resolved, extractor: AGENTS.md fenced, AGENTS.md prose ignored, pytest convention x2) +5 frontend (Security poll/toggle/clear x5, Builds slow-refresh regression) | AI agent |
 | 2026-08-14 | 1.17.7.6 | **World tab removed from the sidebar.** The world simulator is opt-in since v1.17.7.3 (SENTINEL_WORLD_SIM_ENABLED=true); with it off, the World nav item loaded a page that 404s on every API call. 

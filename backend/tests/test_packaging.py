@@ -77,7 +77,7 @@ def test_run_parser_flags():
     parser = run.build_parser()
     args = parser.parse_args(["--check"])
     assert args.check is True
-    assert args.port == 8000
+    assert args.port == 8420
     assert run.port_taken(59999) is False
 
 

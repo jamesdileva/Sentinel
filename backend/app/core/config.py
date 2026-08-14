@@ -30,7 +30,9 @@ class Settings(BaseSettings):
     version: str = __version__
 
     host: str = "127.0.0.1"
-    port: int = 8000
+    # v1.17.8.1: 8420, not 8000 — the dev servers of indexed projects (Cg,
+    # Demake Engine) default to uvicorn's 8000, so build→open can bind it.
+    port: int = 8420
 
     db_path: Path = BASE_DIR / "data" / "sqlite" / "sentinel.db"
     chroma_path: Path = BASE_DIR / "data" / "chroma"

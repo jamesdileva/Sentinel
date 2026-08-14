@@ -1,12 +1,12 @@
 import { defineConfig } from "@playwright/test";
 
 const FRONTEND_URL = "http://127.0.0.1:5173";
-const BACKEND_URL = "http://127.0.0.1:8000";
+const BACKEND_URL = "http://127.0.0.1:8420";
 const PYTHON = "..\\backend\\.venv\\Scripts\\python.exe";
 
 /**
  * End-to-end tests run the real stack: FastAPI backend (real
- * data/sqlite/sentinel.db) plus the Vite dev server proxying /api → :8000.
+ * data/sqlite/sentinel.db) plus the Vite dev server proxying /api → :8420.
  * Auto-scan is disabled at startup so tests see the persisted, deterministic
  * DB contents instead of racing the discovery indexing pass over the watch dirs.
  */
@@ -23,7 +23,7 @@ export default defineConfig({
   },
   webServer: [
     {
-      command: `${PYTHON} -m uvicorn app.main:app --host 127.0.0.1 --port 8000`,
+      command: `${PYTHON} -m uvicorn app.main:app --host 127.0.0.1 --port 8420`,
       cwd: "../backend",
       url: `${BACKEND_URL}/health`,
       reuseExistingServer: true,

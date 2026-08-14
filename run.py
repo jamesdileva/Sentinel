@@ -2,7 +2,7 @@
 """Project Sentinel — the single starting point for the home server (Sprint 15).
 
 Native install: no containers. The laptop (or any machine) clones the repo,
-creates a venv, then `python run.py` starts the backend on 127.0.0.1:8000,
+creates a venv, then `python run.py` starts the backend on 127.0.0.1:8420,
 which also serves the built frontend from backend/app/static.
 
 What run.py does (deterministic checks + start):
@@ -12,7 +12,7 @@ What run.py does (deterministic checks + start):
   4. Launches uvicorn (with --reload for development).
 
 Usage:
-    python run.py                 # checks + start on 127.0.0.1:8000
+    python run.py                 # checks + start on 127.0.0.1:8420
     python run.py --port 8080     # different port (also SENTINEL_PORT)
     python run.py --reload        # dev file-watch reload
     python run.py --check         # only run the startup checks
@@ -170,7 +170,7 @@ def start_server(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="run.py", description=__doc__)
     parser.add_argument(
-        "--port", type=int, default=8000, help="listen port (default 8000)"
+        "--port", type=int, default=8420, help="listen port (default 8420)"
     )
     parser.add_argument("--check", action="store_true", help="run startup checks only")
     parser.add_argument("--reload", action="store_true", help="dev auto-reload")

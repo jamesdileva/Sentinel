@@ -30,8 +30,10 @@ backend\.venv\Scripts\python.exe -m pip install -e "backend[dev]"   # or .\.venv
 never touch the frontend.
 
 **Start the server**: `backend\.venv\Scripts\python.exe run.py` → startup
-checks (SQLite, Ollama, frontend built) then uvicorn on `127.0.0.1:8000`
-(localhost only — nothing is exposed on the LAN). There is **no autostart
+checks (SQLite, Ollama, frontend built) then uvicorn on `127.0.0.1:8420`
+(localhost only — nothing is exposed on the LAN; v1.17.8.1 moved Sentinel off
+8000 so the dev servers of indexed projects — Cg, Demake Engine — can bind
+uvicorn's default 8000). There is **no autostart
 task** (v1.17.7.2 removed `scripts/install_service.py`): the old 5-minute
 Task-Scheduler rerun kept popping console windows every time it spawned the
 server, and the server is run manually now.
@@ -60,13 +62,13 @@ backend\.venv\Scripts\python.exe run.py                # start / restart the ser
 backend\.venv\Scripts\python.exe -m app.cli sync   # immediate repo sync if impatient (run from inside backend)
 ```
 
-- Dashboard: `http://127.0.0.1:8000` · System page: `/system`
+- Dashboard: `http://127.0.0.1:8420` · System page: `/system`
 - **The staged dashboard ships inside the release commit** (`backend/app/static`
   is versioned, v1.16.2) — `git pull` alone updates the dashboard; you never
   need Node or a rebuild on this machine. Only if you changed `frontend/`
   locally do you run `scripts/build.py --dist` (from the repo root).
 - If the Dashboard's "Live activity" panel is empty on load even though things
-  are running: check `http://127.0.0.1:8000/api/v1/system/activity?limit=10`
+  are running: check `http://127.0.0.1:8420/api/v1/system/activity?limit=10`
   in the browser (rows = fine; `events:[]` + a `activity persist failed`
   WARNING in the server log = the SQLite writer is failing) — the panel
   re-seeds history on mount (v1.17.2).
@@ -77,7 +79,8 @@ backend\.venv\Scripts\python.exe -m app.cli sync   # immediate repo sync if impa
   `sqlite/sentinel.db`, `chroma/`, and `world_sim/`. If you do relocate, re-run
   `sentinel index --all` once.
 - No Docker, no nginx, no reverse proxy — one uvicorn process serves API +
-  dashboard (http://127.0.0.1:8000). Keep that port for Sentinel.
+  dashboard (http://127.0.0.1:8420). Keep that port for Sentinel (indexed
+  projects' dev servers use 8000, which is why Sentinel moved off it).
 - Ollama runs natively on this machine (`http://127.0.0.1:11434`) — a localhost
   URL, never exposed (the laptop's `OLLAMA_HOST=0.0.0.0` setup is retired).
 - Pi-hole is gone and the router DNS is back to Automatic — Sentinel never
@@ -94,7 +97,7 @@ backend\.venv\Scripts\python.exe -m app.cli sync   # immediate repo sync if impa
   `sentinel` is never on PATH — always use the venv python by path.
 - `frontend` changed but dashboard is stale → forgot `scripts/build.py --dist`;
   the backend serves the *staged* build from `backend/app/static`.
-- Port 8000 already in use → another Sentinel is running (a second console
+- Port 8420 already in use → another Sentinel is running (a second console
   left open is the usual cause). Since v1.17.6.3 `run.py` names the owner:
   it prints the PID (from `netstat -ano`) with a
   `taskkill /F /PID <pid>` hint instead of a raw bind traceback. Close the
