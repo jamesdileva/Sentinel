@@ -152,7 +152,15 @@ _README_CANDIDATES = (
     "BUILDING.md",
     "docs/BUILDING.md",
     "docs/README.md",
+    # v1.17.7.7: AGENTS.md is a common repo-convention doc. Unlike READMEs it
+    # is prose-heavy and references commands mid-sentence, so only commands
+    # inside fenced code blocks are accepted from it (see _from_readme).
+    "AGENTS.md",
+    "docs/AGENTS.md",
 )
+
+# Fenced code block body (```bash ... ```), for AGENTS.md scanning.
+_FENCED_BLOCK = re.compile(r"^```.*?\n(.*?)^```", re.MULTILINE | re.DOTALL)
 
 # Longest/specific spellings first so `./gradlew build` wins over
 # `gradlew build` and `npm run build` over `npm build`.
@@ -214,12 +222,19 @@ def _find_known_command(text: str, whitelist: tuple[str, ...]) -> str:
 def _from_readme(root: Path) -> dict[str, str]:
     commands: dict[str, str] = {}
     text = ""
+    candidate = ""
     for candidate in _README_CANDIDATES:
         text = _read_text(root / candidate)
         if text:
             break
     if not text:
         return commands
+    if "agents.md" in candidate.lower():
+        # v1.17.7.7: AGENTS.md prose mentions commands mid-sentence
+        # (Sentinel's own file says "`pytest` in `backend/`") — a whitelist
+        # scan of the whole file would mint wrong commands. Only commands
+        # written as fenced code blocks are real instructions.
+        text = "\n".join(block for block in _FENCED_BLOCK.findall(text))
     if "build" not in commands:
         commands["build"] = _find_known_command(text, _README_BUILD_COMMANDS)
     if "test" not in commands:
@@ -227,6 +242,18 @@ def _from_readme(root: Path) -> dict[str, str]:
     if "install" not in commands:
         commands["install"] = _find_known_command(text, _README_INSTALL_COMMANDS)
     return commands
+
+
+def _from_pytest_convention(root: Path) -> dict[str, str]:
+    """v1.17.7.7: a repo with a root-level `tests/` directory and at least
+    one root-level Python file is a pytest project by convention — a
+    deterministic signal, not prose guessing (Rule 3). Manifest-driven
+    extractors run first and win; this only fills the `test` gap."""
+    if not (root / "tests").is_dir():
+        return {}
+    if not any(entry.is_file() and entry.suffix == ".py" for entry in root.iterdir()):
+        return {}
+    return {"test": "pytest"}
 
 
 # Ordered by confidence: explicit manifests beat Makefile beats docs prose.
@@ -242,6 +269,7 @@ _EXTRACTORS = (
     _from_go,
     _from_cmake,
     _from_readme,
+    _from_pytest_convention,
 )
 
 
@@ -254,7 +282,10 @@ def extract_build_commands(path: str | Path) -> dict[str, str]:
     commands: dict[str, str] = {}
     for extractor in _EXTRACTORS:
         for key, value in extractor(root).items():
-            commands.setdefault(key, value)
+            # Empty results never claim a key — an earlier extractor that
+            # found nothing must not block a later, confident one.
+            if value:
+                commands.setdefault(key, value)
 
     if "install" not in commands:
         if (root / "pyproject.toml").exists():

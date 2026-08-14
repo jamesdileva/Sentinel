@@ -213,4 +213,48 @@ describe("Builds", () => {
       await screen.findByText("succeeded", undefined, { timeout: 8000 }),
     ).toBeInTheDocument();
   });
+
+  it("keeps the refreshed history and toast when the completion refresh is slow", async () => {
+    // Initial load: a terminal row (so no resume-poll holds the button).
+    // The post-trigger refresh shows the running row; the final, slow
+    // refresh carries the terminal result.
+    mockGetBuildHistory
+      .mockResolvedValueOnce([makeLog()])
+      .mockResolvedValueOnce([makeLog({ success: null, completed_at: null })])
+      .mockImplementation(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        return [makeLog({ success: true, exit_code: 0 })];
+      });
+    mockGetBuildStatus
+      .mockResolvedValueOnce(makeRunningJob({ id: "j2" }))
+      .mockResolvedValue(
+        makeRunningJob({
+          id: "j2",
+          status: "succeeded",
+          success: true,
+          exit_code: 0,
+          completed_at: "2026-01-01T00:02:00Z",
+        }),
+      );
+    const user = userEvent.setup();
+    render(<Builds />);
+    await user.selectOptions(screen.getByRole("combobox"), "p1");
+    await user.click(await screen.findByRole("button", { name: "Run build" }));
+
+    // A slow final refresh must not lose the toast…
+    await waitFor(
+      () =>
+        expect(toastMock).toHaveBeenCalledWith(
+          expect.stringContaining("succeeded"),
+          "success",
+        ),
+      { timeout: 8000 },
+    );
+    // …or the refreshed row (regression: the row stayed "running…" forever).
+    await waitFor(
+      () => expect(screen.queryByText("running")).not.toBeInTheDocument(),
+      { timeout: 8000 },
+    );
+    expect(await screen.findByText("succeeded")).toBeInTheDocument();
+  });
 });

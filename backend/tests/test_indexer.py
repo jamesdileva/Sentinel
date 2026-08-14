@@ -273,6 +273,67 @@ def test_extract_build_commands_manifest_beats_readme(tmp_path):
     assert extract_build_commands(root)["build"] == "tsc -b && vite build"
 
 
+def test_extract_build_commands_from_agents_md_fenced(tmp_path):
+    """v1.17.7.7: AGENTS.md commands inside fenced code blocks are accepted
+    (the AGENTS.md candidate is scoped to code fences)."""
+    root = tmp_path / "agents-project"
+    root.mkdir()
+    (root / "AGENTS.md").write_text(
+        "# Convention\n\nInstructions live in fences:\n\n```bash\npytest\n```\n",
+        encoding="utf-8",
+    )
+    from app.utils.command_extractor import extract_build_commands
+
+    assert extract_build_commands(root)["test"] == "pytest"
+
+
+def test_extract_build_commands_from_agents_md_ignores_prose(tmp_path):
+    """v1.17.7.7: a mid-sentence mention like Sentinel's own AGENTS.md
+    ("`pytest` in `backend/`") must NOT mint a command — no fences, no
+    match. AG's AGENTS.md (a session log with zero command literals) is
+    the real-world case this guards."""
+    root = tmp_path / "agents-prose-project"
+    root.mkdir()
+    (root / "AGENTS.md").write_text(
+        "# Notes\nRun all existing tests before committing (`pytest` in "
+        "`backend/`). UV seams and normal maps are the weakest part.\n",
+        encoding="utf-8",
+    )
+    from app.utils.command_extractor import extract_build_commands
+
+    commands = extract_build_commands(root)
+    assert commands["test"] == ""
+
+
+def test_extract_build_commands_pytest_convention(tmp_path):
+    """v1.17.7.7: a repo with a root `tests/` dir and root-level Python
+    files gets test: pytest by deterministic convention (AG: no manifest,
+    only tests/ + sf3d_worker.py)."""
+    root = tmp_path / "py-convention"
+    root.mkdir()
+    (root / "tests").mkdir()
+    (root / "tests" / "test_thing.py").write_text("def test_x():\n    pass\n")
+    (root / "worker.py").write_text("print('hi')\n")
+    from app.utils.command_extractor import extract_build_commands
+
+    commands = extract_build_commands(root)
+    assert commands["test"] == "pytest"
+    assert commands["build"] == ""
+
+
+def test_extract_build_commands_pytest_convention_requires_python(tmp_path):
+    """v1.17.7.7: a tests/ dir alone is not a pytest signal — a C++ repo
+    with tests/ but no root-level .py files gets nothing."""
+    root = tmp_path / "cpp-convention"
+    root.mkdir()
+    (root / "tests").mkdir()
+    (root / "tests" / "test_main.cpp").write_text("int main() {}\n")
+    (root / "main.cpp").write_text("int main() {}\n")
+    from app.utils.command_extractor import extract_build_commands
+
+    assert extract_build_commands(root)["test"] == ""
+
+
 def test_index_project_creates_entries(tmp_db):
     svc = _service(tmp_db)
     project = svc.index_project(PY_PROJECT)

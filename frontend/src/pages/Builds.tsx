@@ -84,8 +84,6 @@ export default function Builds() {
     let cancelled = false;
     let elapsed = 0;
     const finish = async (message: string, tone: "success" | "error") => {
-      setPollingJobId(null);
-      setRunning(false);
       try {
         const rows = await getBuildHistory(projectId);
         if (!cancelled) setHistory(rows);
@@ -93,6 +91,10 @@ export default function Builds() {
         // keep the toast; the next page load will show fresh history
       }
       if (!cancelled) toast(message, tone);
+      // Clear the poll *after* the refresh so the effect cleanup (which sets
+      // `cancelled`) can never drop the history update or the toast.
+      setPollingJobId(null);
+      setRunning(false);
     };
     const tick = async () => {
       elapsed += POLL_MS;

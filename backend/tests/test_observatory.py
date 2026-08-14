@@ -105,6 +105,16 @@ def seed(engine) -> dict[str, Project]:
                 detected_at=days_ago(4),
             )
         )
+        session.add(
+            SecurityFinding(
+                project_id=alpha.id,
+                type="static_analysis",
+                severity=Severity.LOW,
+                title="resolved leftover",
+                detected_at=days_ago(4),
+                resolved=True,
+            )
+        )
         session.add_all(
             [
                 ProjectFile(
@@ -179,6 +189,16 @@ def test_timeline_window_and_order():
     assert all(e.project_name == "alpha" for e in events)
     ats = [e.at for e in events]
     assert ats == sorted(ats, reverse=True)
+
+
+def test_timeline_excludes_resolved_findings():
+    """v1.17.7.7: resolved findings are stale scan leftovers and must not
+    spam the timeline — only the open finding surfaces."""
+    engine = make_engine()
+    seed(engine)
+    messages = [e.message for e in make_service(engine).timeline(days=365)]
+    assert any("token in repo" in message for message in messages)
+    assert not any("resolved leftover" in message for message in messages)
 
 
 def test_timeline_days_narrowing():

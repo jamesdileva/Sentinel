@@ -160,7 +160,11 @@ class ObservatoryService:
             )
 
         finding_stmt = select(SecurityFinding).where(
-            SecurityFinding.detected_at >= cutoff
+            SecurityFinding.detected_at >= cutoff,
+            # v1.17.7.7: resolved findings are stale scan leftovers — exclude
+            # them so a history of fixed false positives does not spam the
+            # timeline (open findings only).
+            SecurityFinding.resolved == False,  # noqa: E712
         )
         for finding in self.session.exec(finding_stmt).all():
             project = by_id.get(finding.project_id)

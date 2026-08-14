@@ -133,6 +133,43 @@ def test_security_repository_filters(tmp_db):
         assert [f.title for f in repo.get_open(project.id)] == ["open"]
 
 
+def test_security_repository_delete_resolved(tmp_db):
+    """v1.17.7.7: delete_resolved removes only resolved rows and reports the
+    count."""
+    with _session() as session:
+        project = Project(name="sec2", path="/s2", language="python")
+        session.add(project)
+        session.flush()
+        session.add_all(
+            [
+                SecurityFinding(
+                    project_id=project.id,
+                    type="secret",
+                    severity=Severity.HIGH,
+                    title="open",
+                ),
+                SecurityFinding(
+                    project_id=project.id,
+                    type="secret",
+                    severity=Severity.LOW,
+                    title="resolved-a",
+                    resolved=True,
+                ),
+                SecurityFinding(
+                    project_id=project.id,
+                    type="secret",
+                    severity=Severity.LOW,
+                    title="resolved-b",
+                    resolved=True,
+                ),
+            ]
+        )
+        session.commit()
+        repo = SecurityRepository(session)
+        assert repo.delete_resolved(project.id) == 2
+        assert [f.title for f in repo.get_by_project(project.id)] == ["open"]
+
+
 # --- DependencyRepository ------------------------------------------------------
 
 

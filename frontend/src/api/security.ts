@@ -36,9 +36,21 @@ export async function triggerScanAll(): Promise<ScanJob> {
   return data;
 }
 
-export async function getFindings(projectId: string): Promise<SecurityFinding[]> {
+export async function getFindings(
+  projectId: string,
+): Promise<SecurityFinding[]> {
   const { data } = await api.get<SecurityFinding[]>("/v1/security/findings", {
     params: { project_id: projectId },
   });
+  return data;
+}
+
+export async function clearResolvedFindings(
+  projectId: string,
+): Promise<{ deleted: number }> {
+  const { data } = await api.delete<{ deleted: number }>(
+    "/v1/security/findings",
+    { params: { project_id: projectId } },
+  );
   return data;
 }

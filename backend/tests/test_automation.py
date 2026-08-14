@@ -539,3 +539,60 @@ def test_security_scan_all(eager, tmp_db):
         ).all()
         assert dirty, "scan-all should scan every project"
         assert len(dirty) > 0
+
+
+def test_security_clear_resolved_findings(eager, tmp_db):
+    """v1.17.7.7: DELETE /security/findings removes only *resolved* rows —
+    open findings survive (they are the current scan state)."""
+    project_id = _seed(tmp_db, SCAN_FIXTURE)
+    scan = client.post("/api/v1/security/scan", params={"project_id": project_id})
+    assert scan.status_code == 202
+
+    before = client.get("/api/v1/security/findings", params={"project_id": project_id})
+    assert before.status_code == 200
+    total = len(before.json())
+    assert total > 0
+
+    with Session(connection.get_engine()) as session:
+        row = session.exec(
+            select(SecurityFinding).where(SecurityFinding.project_id == project_id)
+        ).first()
+        row.resolved = True
+        session.add(row)
+        session.commit()
+
+    resp = client.delete("/api/v1/security/findings", params={"project_id": project_id})
+    assert resp.status_code == 200
+    assert resp.json() == {"deleted": 1}
+
+    after = client.get("/api/v1/security/findings", params={"project_id": project_id})
+    assert after.status_code == 200
+    rows = after.json()
+    assert len(rows) == total - 1
+    assert all(not row["resolved"] for row in rows)
+
+
+def test_security_clear_resolved_unknown_project(eager, tmp_db):
+    resp = client.delete("/api/v1/security/findings", params={"project_id": "missing"})
+    assert resp.status_code == 404
+
+
+def test_security_clear_resolved_is_resolved_only(eager, tmp_db):
+    """A second delete after resolution is a no-op — and open findings are
+    never deletable via this endpoint."""
+    project_id = _seed(tmp_db, SCAN_FIXTURE)
+    scan = client.post("/api/v1/security/scan", params={"project_id": project_id})
+    assert scan.status_code == 202
+    client.delete("/api/v1/security/findings", params={"project_id": project_id})
+    again = client.delete(
+        "/api/v1/security/findings", params={"project_id": project_id}
+    )
+    assert again.json() == {"deleted": 0}
+    with Session(connection.get_engine()) as session:
+        open_rows = session.exec(
+            select(SecurityFinding).where(
+                SecurityFinding.project_id == project_id,
+                SecurityFinding.resolved == False,  # noqa: E712
+            )
+        ).all()
+        assert open_rows, "open findings are the live scan state and survive"

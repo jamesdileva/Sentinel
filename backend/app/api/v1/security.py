@@ -46,3 +46,13 @@ def list_findings(
     """Security findings for a project (older first)."""
     _project_or_404(project_id, session)
     return SecurityRepository(session).get_by_project(project_id)
+
+
+@router.delete("/findings", status_code=200)
+def clear_resolved(project_id: str, session: Session = Depends(get_session)) -> dict:
+    """Delete a project's *resolved* findings (v1.17.7.7). Open findings are
+    never touched. Returns the number of rows deleted — the resolved rows are
+    the stale leftovers of previous scans that spam the timeline."""
+    _project_or_404(project_id, session)
+    deleted = SecurityRepository(session).delete_resolved(project_id)
+    return {"deleted": deleted}
