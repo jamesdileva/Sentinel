@@ -1,5 +1,7 @@
 """Sprint 7: build/test/security runner unit tests + API integration."""
 
+import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -184,9 +186,38 @@ def _project_at(session, commands: dict, root) -> Project:
     return project
 
 
+def test_build_runner_launch_lands_child_output_in_app_log(tmp_db, tmp_path):
+    """v1.17.8.2 regression: the launched app's own output must reach
+    data/logs/apps/<slug>.log. Real subprocess — DETACHED_PROCESS made
+    cmd.exe spawn external children with invalid stdio (output vanished);
+    CREATE_NEW_PROCESS_GROUP alone must capture the whole chain."""
+    root = tmp_path / "loggy-app"
+    root.mkdir()
+    startup = (
+        f'echo BUILTIN && "{sys.executable}" -c ' "\"print('CHILD_OUT', flush=True)\""
+    )
+    with Session(connection.get_engine()) as session:
+        project = _project_at(session, {"startup": startup}, root)
+        log = BuildRunner(session).run_build(project)
+        assert log.launch_command is not None
+
+    log_path = (
+        Path(connection.settings.db_path).parent.parent / "logs" / "apps" / "Demo.log"
+    )
+    content = ""
+    for _ in range(50):  # the child writes asynchronously
+        content = log_path.read_text(encoding="utf-8")
+        # the marker line echoes the command (which contains the literal
+        # CHILD_OUT), so a real capture must show the line TWICE.
+        if content.count("CHILD_OUT") >= 2 and "BUILTIN" in content:
+            break
+        time.sleep(0.1)
+    assert "BUILTIN" in content, content
+    assert content.count("CHILD_OUT") >= 2, content
+    assert "[sentinel] App launched" in content, content
+
+
 def test_build_runner_launches_app_when_no_build(tmp_db, tmp_path, fake_popen):
-    """v1.17.8.0: no compile step + a startup command -> "build not needed",
-    launch the app, record a success (the run did what it could do)."""
     root = tmp_path / "run-only-app"
     root.mkdir()
     (root / "app.py").write_text("print('hi')\n", encoding="utf-8")

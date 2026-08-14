@@ -155,9 +155,15 @@ class BuildRunner:
         apps_dir = Path(settings.db_path).parent.parent / "logs" / "apps"
         apps_dir.mkdir(parents=True, exist_ok=True)
         log_file = open(apps_dir / f"{_slug(project.name)}.log", "a", encoding="utf-8")
-        flags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(
-            subprocess, "CREATE_NEW_PROCESS_GROUP", 0
-        )
+        # v1.17.8.2: CREATE_NEW_PROCESS_GROUP only — DETACHED_PROCESS makes
+        # cmd.exe spawn external children (npm, python, node) with invalid
+        # stdout/stderr handles, so the whole app tree's output silently
+        # vanished from the log (probed: direct children were fine, every
+        # cmd-spawned child lost its output even on natural exit). With the
+        # group flag alone the child tree inherits the file handle and every
+        # line lands in <slug>.log; the app attaches to Sentinel's (hidden)
+        # console, which is harmless.
+        flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
         try:
             subprocess.Popen(
                 command,
