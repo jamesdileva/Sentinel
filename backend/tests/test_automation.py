@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 from sqlmodel import Session, select
 
 from app.db import connection
-from app.db.models import Project
+from app.db.models import Project, SecurityFinding
 from app.main import app
 from app.services.build_runner import BuildRunner
 from app.services.command_runner import CommandResult
@@ -409,3 +409,20 @@ def test_security_scan_and_findings(eager, tmp_db):
     assert findings.status_code == 200
     types = {f["type"] for f in findings.json()}
     assert {"vulnerability", "secret", "static_analysis"} <= types
+
+
+def test_security_scan_all(eager, tmp_db):
+    first = _seed(tmp_db, SCAN_FIXTURE)
+    second = _seed(tmp_db, PYTHON_FIXTURE)
+    resp = client.post("/api/v1/security/scan-all")
+    assert resp.status_code == 202
+
+    with Session(connection.get_engine()) as session:
+        for project_id in (first, second):
+            project = session.get(Project, project_id)
+            assert project.last_scanned is not None
+        dirty = session.exec(
+            select(SecurityFinding).where(SecurityFinding.project_id == first)
+        ).all()
+        assert dirty, "scan-all should scan every project"
+        assert len(dirty) > 0

@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import {
   getFindings,
   triggerScan,
+  triggerScanAll,
   type FindingSeverity,
   type SecurityFinding,
 } from "../api/security";
@@ -24,6 +25,7 @@ export default function Security() {
   const [projectId, setProjectId] = useState("");
   const [findings, setFindings] = useState<SecurityFinding[]>([]);
   const [scanning, setScanning] = useState(false);
+  const [scanningAll, setScanningAll] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -68,6 +70,26 @@ export default function Security() {
     }
   }
 
+  async function handleScanAll() {
+    if (scanningAll) return;
+    setScanningAll(true);
+    try {
+      const job = await triggerScanAll();
+      toast(
+        `Security scan of all projects queued (job ${job.job_id.slice(0, 8)}…)`,
+        "success",
+      );
+      if (projectId) {
+        const rows = await getFindings(projectId);
+        setFindings(rows);
+      }
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "Failed to queue scan.", "error");
+    } finally {
+      setScanningAll(false);
+    }
+  }
+
   return (
     <section aria-label="Security" className="flex flex-col gap-4">
       <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
@@ -109,6 +131,14 @@ export default function Security() {
           className="rounded-lg bg-slate-800 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-slate-700 disabled:opacity-50 dark:bg-slate-200 dark:text-slate-900 dark:hover:bg-white"
         >
           {scanning ? "Queuing…" : "Run scan"}
+        </button>
+        <button
+          type="button"
+          onClick={() => void handleScanAll()}
+          disabled={scanningAll}
+          className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+        >
+          {scanningAll ? "Queuing…" : "Run all"}
         </button>
       </div>
 

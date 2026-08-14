@@ -31,6 +31,11 @@ export async function triggerScan(projectId: string): Promise<ScanJob> {
   return data;
 }
 
+export async function triggerScanAll(): Promise<ScanJob> {
+  const { data } = await api.post<ScanJob>("/v1/security/scan-all");
+  return data;
+}
+
 export async function getFindings(projectId: string): Promise<SecurityFinding[]> {
   const { data } = await api.get<SecurityFinding[]>("/v1/security/findings", {
     params: { project_id: projectId },

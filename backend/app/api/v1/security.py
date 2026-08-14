@@ -32,6 +32,13 @@ def run_scan(project_id: str, session: Session = Depends(get_session)) -> ScanRe
     return ScanResponse(job_id=job_id, status="queued")
 
 
+@router.post("/scan-all", status_code=202, response_model=ScanResponse)
+def run_scan_all(session: Session = Depends(get_session)) -> ScanResponse:
+    """Enqueue a security scan for every indexed project."""
+    job_id = job_scheduler.submit("run_security_scan_all")
+    return ScanResponse(job_id=job_id, status="queued")
+
+
 @router.get("/findings", response_model=list[SecurityFindingRead])
 def list_findings(
     project_id: str, session: Session = Depends(get_session)

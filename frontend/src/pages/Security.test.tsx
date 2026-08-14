@@ -9,6 +9,7 @@ import type { SecurityFinding } from "../api/security";
 vi.mock("../api/security", () => ({
   getFindings: vi.fn(),
   triggerScan: vi.fn(),
+  triggerScanAll: vi.fn(),
 }));
 
 vi.mock("../contexts/UIContext", () => ({
@@ -19,12 +20,13 @@ vi.mock("../hooks/useProjects", () => ({
   useProjectList: vi.fn(),
 }));
 
-import { getFindings, triggerScan } from "../api/security";
+import { getFindings, triggerScan, triggerScanAll } from "../api/security";
 import { useUI } from "../contexts/UIContext";
 import { useProjectList } from "../hooks/useProjects";
 
 const mockGetFindings = vi.mocked(getFindings);
 const mockTriggerScan = vi.mocked(triggerScan);
+const mockTriggerScanAll = vi.mocked(triggerScanAll);
 const mockUseUI = vi.mocked(useUI);
 const mockUseProjectList = vi.mocked(useProjectList);
 
@@ -75,8 +77,10 @@ describe("Security", () => {
     } as never);
     mockGetFindings.mockReset();
     mockTriggerScan.mockReset();
+    mockTriggerScanAll.mockReset();
     mockGetFindings.mockResolvedValue([makeFinding()]);
     mockTriggerScan.mockResolvedValue({ job_id: "j-scan", status: "queued" });
+    mockTriggerScanAll.mockResolvedValue({ job_id: "j-scan-all", status: "queued" });
   });
 
   it("requires a project before scanning", async () => {
@@ -100,6 +104,16 @@ describe("Security", () => {
     await user.click(await screen.findByRole("button", { name: "Run scan" }));
     expect(mockTriggerScan).toHaveBeenCalledWith("p1");
     expect(mockGetFindings).toHaveBeenCalledWith("p1");
+  });
+
+  it("triggers a scan of all projects without a selection", async () => {
+    const user = userEvent.setup();
+    render(<Security />);
+    const button = screen.getByRole("button", { name: "Run all" });
+    expect(button).toBeEnabled();
+    await user.click(button);
+    expect(mockTriggerScanAll).toHaveBeenCalledOnce();
+    expect(mockTriggerScan).not.toHaveBeenCalled();
   });
 
   it("shows the empty state when no findings exist", async () => {
