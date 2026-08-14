@@ -9,7 +9,6 @@ import Portfolio from "../pages/Portfolio";
 import Projects from "../pages/Projects";
 import Security from "../pages/Security";
 import System from "../pages/System";
-import WorldSimulatorPage from "../pages/WorldSimulatorPage";
 
 export function AppRoutes() {
   return (
@@ -20,7 +19,6 @@ export function AppRoutes() {
         <Route path="builds" element={<Builds />} />
         <Route path="security" element={<Security />} />
         <Route path="knowledge" element={<KnowledgeExplorer />} />
-        <Route path="world" element={<WorldSimulatorPage />} />
         <Route path="portfolio" element={<Portfolio />} />
         <Route path="observatory" element={<Observatory />} />
         <Route path="system" element={<System />} />
