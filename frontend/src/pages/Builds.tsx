@@ -2,12 +2,16 @@ import { useEffect, useState } from "react";
 
 import {
   getBuildHistory,
+  getBuildStatus,
   triggerBuild,
   type BuildJob,
   type BuildLog,
 } from "../api/builds";
 import { useProjectList } from "../hooks/useProjects";
 import { useUI } from "../contexts/UIContext";
+
+const POLL_MS = 2000;
+const POLL_CAP_MS = 6 * 60 * 1000;
 
 function statusTone(job: BuildJob | BuildLog) {
   if (job.success === true) return "text-emerald-600 dark:text-emerald-400";
@@ -32,8 +36,11 @@ export default function Builds() {
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [pollingJobId, setPollingJobId] = useState<string | null>(null);
 
   useEffect(() => {
+    setPollingJobId(null);
+    setRunning(false);
     if (!projectId) {
       setHistory([]);
       return;
@@ -44,7 +51,17 @@ export default function Builds() {
       setError(null);
       try {
         const rows = await getBuildHistory(projectId);
-        if (!cancelled) setHistory(rows);
+        if (!cancelled) {
+          setHistory(rows);
+          // Resume live-polling a build that was already running when the
+          // page loaded (e.g. triggered from another tab) — unless a fresh
+          // trigger already owns the poll.
+          const newest = rows[0];
+          if (newest && newest.success === null && !newest.completed_at) {
+            setRunning(true);
+            setPollingJobId((current) => current ?? newest.id);
+          }
+        }
       } catch (err) {
         if (!cancelled) {
           setError(err instanceof Error ? err.message : "Cannot load builds.");
@@ -59,6 +76,55 @@ export default function Builds() {
     };
   }, [projectId]);
 
+  // Poll the active job every 2 s until it reaches a terminal state
+  // (queued → running → succeeded/failed/skipped), then refresh the list so
+  // the result shows up without a manual refresh or tab switch.
+  useEffect(() => {
+    if (!pollingJobId) return;
+    let cancelled = false;
+    let elapsed = 0;
+    const finish = async (message: string, tone: "success" | "error") => {
+      setPollingJobId(null);
+      setRunning(false);
+      try {
+        const rows = await getBuildHistory(projectId);
+        if (!cancelled) setHistory(rows);
+      } catch {
+        // keep the toast; the next page load will show fresh history
+      }
+      if (!cancelled) toast(message, tone);
+    };
+    const tick = async () => {
+      elapsed += POLL_MS;
+      try {
+        const job = await getBuildStatus(pollingJobId);
+        if (cancelled) return;
+        if (job.completed_at !== null) {
+          const failed = job.success === false;
+          await finish(`Build ${job.status}.`, failed ? "error" : "success");
+        } else if (elapsed >= POLL_CAP_MS) {
+          await finish(
+            "Build still running — refresh to see the result.",
+            "error",
+          );
+        }
+      } catch {
+        if (!cancelled) {
+          await finish(
+            "Build status lost — refresh to see the result.",
+            "error",
+          );
+        }
+      }
+    };
+    void tick();
+    const interval = window.setInterval(() => void tick(), POLL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [pollingJobId, projectId]);
+
   async function handleBuild() {
     if (!projectId || running) return;
     setRunning(true);
@@ -67,9 +133,12 @@ export default function Builds() {
       toast(`Build queued (job ${job.id.slice(0, 8)}…)`, "success");
       const rows = await getBuildHistory(projectId);
       setHistory(rows);
+      setPollingJobId(job.id);
     } catch (err) {
-      toast(err instanceof Error ? err.message : "Failed to queue build.", "error");
-    } finally {
+      toast(
+        err instanceof Error ? err.message : "Failed to queue build.",
+        "error",
+      );
       setRunning(false);
     }
   }
@@ -114,7 +183,7 @@ export default function Builds() {
           disabled={!projectId || running}
           className="rounded-lg bg-slate-800 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-slate-700 disabled:opacity-50 dark:bg-slate-200 dark:text-slate-900 dark:hover:bg-white"
         >
-          {running ? "Queuing…" : "Run build"}
+          {running ? "Building…" : "Run build"}
         </button>
       </div>
 
@@ -146,28 +215,34 @@ export default function Builds() {
                     className="flex w-full items-center gap-3 px-4 py-3 text-left"
                     aria-expanded={expandedId === job.id}
                   >
-                    <span className={`text-xs font-semibold ${statusTone(job)}`}>
+                    <span
+                      className={`text-xs font-semibold ${statusTone(job)}`}
+                    >
                       {statusLabel(job)}
                     </span>
                     <span className="flex-1 truncate text-xs text-slate-400 dark:text-slate-500">
-                      {job.completed_at ?? "running…"} · exit {job.exit_code ?? "—"}
+                      {job.completed_at ?? "running…"} · exit{" "}
+                      {job.exit_code ?? "—"}
                     </span>
                     <span className="shrink-0 text-xs text-slate-400 dark:text-slate-500">
-                      {job.commands ? Object.keys(job.commands).length : 0} command(s)
+                      {job.commands ? Object.keys(job.commands).length : 0}{" "}
+                      command(s)
                     </span>
                   </button>
                   {expandedId === job.id && (
                     <div className="border-t border-slate-100 px-4 py-3 dark:border-slate-800">
                       {job.commands && Object.keys(job.commands).length > 0 && (
                         <div className="mb-3 flex flex-wrap gap-2">
-                          {Object.entries(job.commands).map(([step, command]) => (
-                            <span
-                              key={step}
-                              className="rounded bg-slate-100 px-2 py-1 font-mono text-[10px] text-slate-600 dark:bg-slate-800 dark:text-slate-300"
-                            >
-                              {step}: {command}
-                            </span>
-                          ))}
+                          {Object.entries(job.commands).map(
+                            ([step, command]) => (
+                              <span
+                                key={step}
+                                className="rounded bg-slate-100 px-2 py-1 font-mono text-[10px] text-slate-600 dark:bg-slate-800 dark:text-slate-300"
+                              >
+                                {step}: {command}
+                              </span>
+                            ),
+                          )}
                         </div>
                       )}
                       <pre className="max-h-72 overflow-auto rounded-lg bg-slate-50 p-3 text-[11px] leading-relaxed text-slate-600 dark:bg-slate-950 dark:text-slate-300">
