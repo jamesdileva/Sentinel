@@ -1,5 +1,7 @@
 """Sprint 7: build/test/security runner unit tests + API integration."""
 
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import Session, select
@@ -217,6 +219,11 @@ def test_build_runner_launch_uses_repo_venv_python(tmp_db, tmp_path, fake_popen)
         assert ".venv_sf3d" in log.launch_command
         assert log.launch_command.startswith('"')
         assert "-m streamlit run dashboard/app.py" in log.launch_command
+
+    marker_path = (
+        Path(connection.settings.db_path).parent.parent / "logs" / "apps" / "Demo.log"
+    )
+    assert "[sentinel] App launched" in marker_path.read_text(encoding="utf-8")
 
 
 def test_build_runner_launch_rewrites_venv_console_scripts(

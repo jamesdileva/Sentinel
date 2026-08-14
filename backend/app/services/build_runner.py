@@ -168,6 +168,16 @@ class BuildRunner:
                 stderr=subprocess.STDOUT,
                 creationflags=flags,
             )
+            # v1.17.8.0: the child's own stdout/stderr may be block-buffered
+            # (and a crash or concurrent-kill drops the unflushed tail), so the
+            # parent stamps the launch into the log first — the marker always
+            # lands, the child's lines follow when its buffers flush.
+            log_file.write(
+                "[sentinel] App launched "
+                f"{datetime.datetime.now().isoformat(timespec='seconds')}: {command}\n"
+            )
+            log_file.flush()
+            log_file.close()
             return True, command
         except OSError as exc:
             log_file.close()
