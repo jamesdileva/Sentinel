@@ -37,9 +37,7 @@ _SECRET_PATTERNS: list[tuple[str, re.Pattern[str], Severity]] = [
     ),
     (
         "Generic Secret",
-        re.compile(
-            r"\b(?:ghp|AIza|sk_(?:live|test))[-_][A-Za-z0-9_\-]{16,}\b"
-        ),
+        re.compile(r"\b(?:ghp|AIza|sk_(?:live|test))[-_][A-Za-z0-9_\-]{16,}\b"),
         Severity.HIGH,
     ),
 ]

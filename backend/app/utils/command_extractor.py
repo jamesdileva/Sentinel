@@ -121,6 +121,22 @@ def _from_go(root: Path) -> dict[str, str]:
     return {}
 
 
+def _from_cmake(root: Path) -> dict[str, str]:
+    """CMake projects (v1.17.7.6): build via the canonical
+    `cmake --build build`, which uses the cached generator (e.g.
+    mingw32-make for algo-trader's `build/`) and re-runs configure
+    automatically when CMakeLists.txt changes."""
+    cmake_lists = root / "CMakeLists.txt"
+    if not cmake_lists.exists():
+        return {}
+    commands: dict[str, str] = {}
+    text = _read_text(cmake_lists)
+    if re.search(r"enable_testing\s*\(|add_test\s*\(", text):
+        commands["test"] = "ctest --test-dir build"
+    commands["build"] = "cmake --build build"
+    return commands
+
+
 # --- README/docs discovery ---------------------------------------------------
 #
 # Many repos document their build command only in prose. We scan the docs for
@@ -224,6 +240,7 @@ _EXTRACTORS = (
     _from_maven,
     _from_dotnet,
     _from_go,
+    _from_cmake,
     _from_readme,
 )
 

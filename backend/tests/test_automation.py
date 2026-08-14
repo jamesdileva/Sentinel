@@ -77,6 +77,25 @@ def test_build_runner_no_build_command(tmp_db):
         assert "No build command" in (log.stdout or "")
 
 
+def test_build_runner_stale_empty_stack_rediscovers(tmp_db, tmp_path):
+    """v1.17.7.6: a repo indexed before CMake discovery existed has a stored
+    stack with an empty build command — the runner must re-discover instead
+    of skipping, so `cmake --build build` runs for C++ projects."""
+    root = tmp_path / "cmake-project"
+    root.mkdir()
+    (root / "CMakeLists.txt").write_text(
+        "cmake_minimum_required(VERSION 3.15)\n", encoding="utf-8"
+    )
+    with Session(connection.get_engine()) as session:
+        project = _project_with_commands(session, {})
+        project.path = str(root)
+        session.add(project)
+        session.commit()
+        log = BuildRunner(session).run_build(project, executor=_succeed_executor)
+        assert log.success is True
+        assert log.commands.get("build") == "cmake --build build"
+
+
 def test_build_runner_success(tmp_db):
     with Session(connection.get_engine()) as session:
         project = _project_with_commands(session, {"build": "echo hello"})
@@ -391,9 +410,7 @@ def test_stripe_keys_still_flagged(tmp_db, tmp_path):
     root = tmp_path / "stripe-project"
     root.mkdir()
     payload = "abcdefghijklmnopqrstuvwxyz012345"
-    (root / "pay.py").write_text(
-        "KEY = 'sk_live_" + payload + "'\n", encoding="utf-8"
-    )
+    (root / "pay.py").write_text("KEY = 'sk_live_" + payload + "'\n", encoding="utf-8")
     (root / "pyproject.toml").write_text("[tool.pytest.ini_options]\n")
 
     with Session(connection.get_engine()) as session:

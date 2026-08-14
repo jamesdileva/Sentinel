@@ -28,7 +28,11 @@ class BuildRunner:
     ) -> BuildLog:
         """Execute the project build command, capture output, return the log."""
         commands = project.stack.get("commands") if project.stack else None
-        commands = commands or self.discover_commands(project.path)
+        if not (commands or {}).get("build"):
+            # v1.17.7.6: the index-time stack may predate the current
+            # extractor set (e.g. a C++/CMake repo indexed before CMake
+            # discovery existed) — re-discover rather than declare a skip.
+            commands = self.discover_commands(project.path)
         command = (commands or {}).get("build") or ""
 
         if log is None:

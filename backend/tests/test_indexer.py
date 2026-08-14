@@ -183,6 +183,27 @@ def test_extract_build_commands_react(tmp_db):
             {"build.gradle": "tasks {}\n"},
             {"build": "gradle build", "test": "gradle test"},
         ),
+        (
+            {"CMakeLists.txt": "cmake_minimum_required(VERSION 3.15)\n"},
+            {"build": "cmake --build build"},
+        ),
+        (
+            {
+                "CMakeLists.txt": (
+                    "cmake_minimum_required(VERSION 3.15)\n" "enable_testing()\n"
+                )
+            },
+            {"build": "cmake --build build", "test": "ctest --test-dir build"},
+        ),
+        (
+            {
+                "CMakeLists.txt": (
+                    "cmake_minimum_required(VERSION 3.15)\n"
+                    "add_test(NAME smoke COMMAND trader)\n"
+                )
+            },
+            {"build": "cmake --build build", "test": "ctest --test-dir build"},
+        ),
     ],
 )
 def test_extract_build_commands_new_manifests(tmp_path, files, expected):
