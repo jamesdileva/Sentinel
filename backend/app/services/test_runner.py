@@ -44,7 +44,9 @@ class TestRunner:
         command = self.discover_test_command(project.path)
         framework = (
             "pytest"
-            if command == "pytest"
+            # v1.17.7.7: the command may be venv-qualified
+            # (`"C:\\repo\\.venv\\Scripts\\python.exe" -m pytest`).
+            if "pytest" in command
             else ("jest" if "jest" in command else command or None)
         )
         started = time.monotonic()

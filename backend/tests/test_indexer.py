@@ -334,6 +334,40 @@ def test_extract_build_commands_pytest_convention_requires_python(tmp_path):
     assert extract_build_commands(root)["test"] == ""
 
 
+def test_extract_build_commands_pytest_uses_project_venv(tmp_path):
+    """v1.17.7.7: a repo that owns a .venv-style interpreter gets its own
+    python -m pytest instead of a bare `pytest` that may not exist on the
+    global PATH (AG: .venv_sf3d with pytest 9.1.1)."""
+    root = tmp_path / "venv-convention"
+    root.mkdir()
+    (root / "tests").mkdir()
+    (root / "tests" / "test_thing.py").write_text("def test_x():\n    pass\n")
+    (root / "worker.py").write_text("print('hi')\n")
+    venv = root / ".venv_sf3d" / "Scripts"
+    venv.mkdir(parents=True)
+    (venv / "python.exe").write_text("dummy")
+    from app.utils.command_extractor import extract_build_commands
+
+    command = extract_build_commands(root)["test"]
+    assert command.endswith('python.exe" -m pytest')
+    assert ".venv_sf3d" in command
+
+
+def test_extract_build_commands_pytest_venv_skips_nested_python(tmp_path):
+    """The venv must sit at the project root — a random Scripts/python.exe
+    deep in the tree is not the project's interpreter."""
+    root = tmp_path / "nested-python"
+    root.mkdir()
+    (root / "tests").mkdir()
+    (root / "worker.py").write_text("print('hi')\n")
+    deep = root / "tools" / "Scripts"
+    deep.mkdir(parents=True)
+    (deep / "python.exe").write_text("dummy")
+    from app.utils.command_extractor import extract_build_commands
+
+    assert extract_build_commands(root)["test"] == "pytest"
+
+
 def test_index_project_creates_entries(tmp_db):
     svc = _service(tmp_db)
     project = svc.index_project(PY_PROJECT)

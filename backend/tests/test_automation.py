@@ -172,6 +172,23 @@ def test_test_runner_creates_result(tmp_db):
         assert result.duration_seconds is not None
 
 
+def test_test_runner_framework_detects_venv_qualified_pytest(tmp_db):
+    """v1.17.7.7: a venv-qualified command
+    (`"C:\\repo\\.venv\\Scripts\\python.exe" -m pytest`) still reports
+    framework pytest."""
+    project_id = _seed(tmp_db)
+    with Session(connection.get_engine()) as session:
+        project = RunnerService.get_project(session, project_id)
+        result = RunnerService(session).run_tests(
+            project,
+            executor=lambda command, cwd=None: _fake_result(
+                stdout="2 passed, 0 failed\n"
+            ),
+        )
+        assert result.framework == "pytest"
+        assert result.passed == 2
+
+
 # --- SecurityScanner unit tests ---
 
 

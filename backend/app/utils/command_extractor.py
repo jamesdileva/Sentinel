@@ -256,6 +256,21 @@ def _from_pytest_convention(root: Path) -> dict[str, str]:
     return {"test": "pytest"}
 
 
+def _venv_python(root: Path) -> str:
+    """Locate the repo's own venv interpreter (`.venv` or `.venv*`-style
+    dirs). Running pytest through the repo's interpreter is the
+    deterministic equivalent of the developer's workflow on machines where
+    `pytest` is not on the global PATH (e.g. AG: `.venv_sf3d`)."""
+    for entry in root.iterdir():
+        if not (entry.is_dir() and entry.name.startswith(".venv")):
+            continue
+        for rel in ("Scripts/python.exe", "bin/python"):
+            candidate = entry / rel
+            if candidate.is_file():
+                return str(candidate)
+    return ""
+
+
 # Ordered by confidence: explicit manifests beat Makefile beats docs prose.
 _EXTRACTORS = (
     _from_package_json,
@@ -290,4 +305,13 @@ def extract_build_commands(path: str | Path) -> dict[str, str]:
     if "install" not in commands:
         if (root / "pyproject.toml").exists():
             commands["install"] = "pip install -e ."
+
+    # v1.17.7.7: a bare `pytest` needs the global PATH; a repo that owns a
+    # venv gets its own interpreter instead (the developer's exact
+    # workflow). Applies to every pytest source (pyproject, README,
+    # convention) — one deterministic rule.
+    if commands.get("test") == "pytest":
+        python = _venv_python(root)
+        if python:
+            commands["test"] = f'"{python}" -m pytest'
     return {key: commands.get(key, "") for key in _COMMAND_KEYS}
