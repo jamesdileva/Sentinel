@@ -139,9 +139,17 @@ class BuildRunner:
         if python:
             # lambda, not a backreference string: the venv path (C:\Users\...)
             # contains backslashes that re.sub would try to escape.
+            # v1.17.8.0: venv console-script binaries (pytest, uvicorn) live
+            # in the venv's Scripts dir, not on the global PATH — rewrite
+            # them to the venv interpreter's `-m` form, same as pytest.
             command = re.sub(
                 r"(^|\s)python(?=\s)",
                 lambda m: m.group(1) + f'"{python}"',
+                command,
+            )
+            command = re.sub(
+                r"(^|\s)uvicorn(?=\s)",
+                lambda m: m.group(1) + f'"{python}" -m uvicorn',
                 command,
             )
         apps_dir = Path(settings.db_path).parent.parent / "logs" / "apps"

@@ -219,6 +219,30 @@ def test_build_runner_launch_uses_repo_venv_python(tmp_db, tmp_path, fake_popen)
         assert "-m streamlit run dashboard/app.py" in log.launch_command
 
 
+def test_build_runner_launch_rewrites_venv_console_scripts(
+    tmp_db, tmp_path, fake_popen
+):
+    """v1.17.8.0: venv console-script binaries (uvicorn, like pytest) are
+    rewritten to the venv interpreter's `-m` form — demake's
+    `cd backend && uvicorn main:app --reload` must not depend on the global
+    PATH."""
+    root = tmp_path / "venv-uvicorn"
+    root.mkdir()
+    (root / "backend").mkdir()
+    venv = root / "venv" / "Scripts"
+    venv.mkdir(parents=True)
+    (venv / "python.exe").write_text("dummy")
+    with Session(connection.get_engine()) as session:
+        project = _project_at(
+            session, {"startup": "cd backend && uvicorn main:app --reload"}, root
+        )
+        log = BuildRunner(session).run_build(project)
+        assert log.launch_command is not None
+        assert log.launch_command.startswith('cd backend && "')
+        assert 'python.exe" -m uvicorn main:app --reload' in log.launch_command
+        assert "venv" in log.launch_command
+
+
 def test_build_runner_does_not_launch_on_failure(tmp_db, tmp_path, fake_popen):
     """A failed build never opens the app."""
     root = tmp_path / "broken-app"
