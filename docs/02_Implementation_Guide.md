@@ -476,13 +476,19 @@ Read-only project overviews, deterministic from stored data (§14.6).
 - Returns: `{"nodes": [{"id", "kind": "project|tech", "label", "detail"}], "links": [{"source", "target", "tech"}]}`
 - Only technologies used by 2+ projects (`Project.framework` + `Dependency.name`)
   become `tech` nodes; every project is a `project` node linked to each shared tech
+- v1.17.9: techs are grouped case-insensitively (label = most common casing);
+  same-named projects get their checkout dir as `detail` (e.g. the jamesdileva +
+  juduncan `cse455` checkouts)
 
 **GET `/observatory/timeline`** — Chronological activity
-- Query: `?days=365` (default 365; <1 resets to 365)
-- Returns: `{"events": [{"at", "kind": "project-created|commit|build|test|finding", "project_id", "project_name", "message"}]}`
+- Query: `?days=365` (default 365; <1 resets to 365), `&kind=commit,build`
+  (comma list of `project-created|commit|build|test|finding`), `&project_id=`,
+  `&offset=0&limit=500` (limit 1-1000)
+- Returns: `{"events": [{"at", "kind", "project_id", "project_name", "message"}], "has_more": bool}`
 - Sources: `Project.created_at`, `GitCommit.timestamp`, `BuildLog.started_at`,
   `TestResult.run_at`, `SecurityFinding.detected_at` — all within the window,
-  descending, capped at 500 events
+  descending. v1.17.9: pages via `offset`/`limit` (`has_more` signals another
+  page); a 5000-event safety bound replaces the old per-request 500 cap
 
 **GET `/observatory/architecture/{project_id}`** — Component tree
 - Returns a recursive node: `{"name", "path", "kind": "dir|file", "count", "children": [...]}`
@@ -1859,15 +1865,20 @@ at query time.
 **Galaxy** `galaxy()` — projects become `project` nodes; technologies (a
 project's `framework` plus its `Dependency.name` rows) used by **2+ projects**
 become `tech` nodes with a `used by N projects` detail. Every project links to
-each tech it shares, so the graph shows reuse across the portfolio.
+each tech it shares, so the graph shows reuse across the portfolio. v1.17.9:
+techs are grouped case-insensitively with the most common casing as the label,
+and same-named projects (e.g. the `jamesdileva` + `juduncan` `cse455`
+checkouts) carry their checkout dir as `detail`.
 
-**Timeline** `timeline(days=365)` — collects events from `Project.created_at`
-(`project-created`), `GitCommit.timestamp` (`commit`, `hash8 message`),
-`BuildLog.started_at` (`build`, Build success/failed), `TestResult.run_at`
-(`test`, N passed / M failed) and `SecurityFinding.detected_at` (`finding`,
-`severity: title`), filters to the trailing window, sorts descending, caps at
-`MAX_TIMELINE_EVENTS = 500`. Timestamps are stored naive UTC, so the cutoff is
-computed naive-UTC to match.
+**Timeline** `timeline(days=365, kinds=None, project_id=None, offset=0,
+limit=500)` — collects events from `Project.created_at` (`project-created`),
+`GitCommit.timestamp` (`commit`, `hash8 message`), `BuildLog.started_at`
+(`build`, Build success/failed), `TestResult.run_at` (`test`, N passed / M
+failed) and `SecurityFinding.detected_at` (`finding`, `severity: title`),
+filters to the trailing window plus optional kind/project filters, sorts
+descending, and pages via `offset`/`limit` with a `has_more` flag
+(`MAX_TIMELINE_EVENTS = 5000` is a safety bound, not a per-request cap).
+Timestamps are stored naive UTC, so the cutoff is computed naive-UTC to match.
 
 **Architecture** `architecture(project_id)` — builds a nested tree from indexed
 `ProjectFile.path` values (split on `/`, backslashes normalized). Nodes carry
@@ -1884,9 +1895,13 @@ under `api/v1/observatory.py`.
 
 **Frontend:** `/observatory` route (nav item "Observatory") —
 `pages/Observatory.tsx` hosting `components/ProjectGalaxy.tsx` (plain-SVG
-node-link graph), `components/ProjectTimeline.tsx` (colored per-kind dots +
-window selector), `components/ArchitectureMap.tsx` (project dropdown + indented
-tree); `api/observatory.ts` on the shared axios client.
+node-link graph; v1.17.9: click a project to focus its links/techs, zero-link
+projects render dimmed, tech list sorted by usage count, tooltip detail for
+duplicate names), `components/ProjectTimeline.tsx` (v1.17.9: day-grouped
+headers with per-day counts, kind chips, project filter, Load-more pagination),
+`components/ArchitectureMap.tsx` (v1.17.9: collapsible dirs, file-type colors,
+search box, stats header, collapse/expand-all); `api/observatory.ts` on the
+shared axios client.
 
 **Note on scope:** the architecture tree derives exclusively from indexed file
 paths — it shows where components live, not cross-file imports. "Used by"
@@ -1898,6 +1913,7 @@ relationships aren't persisted, so they're intentionally absent.
 
 | Date | Version | Change | Author |
 |------|---------|--------|--------|
+| 2026-08-14 | 1.17.9.0 | **Observatory v2 UI pass + galaxy data fix.** Backend ? dependency extraction (`indexer.extract_dependencies`) now discovers manifests below the project root (git-tracked, bounded depth 2, noise-pruned) so projects with backend//renderer// manifests stop reporting zero deps (Sentinel/Cg/Ag went 0 -> 15-25 each; fastapi now shared by 3, uvicorn 3, react 2+), and names are case-canonicalized (most common casing wins ? `Flask` + `flask` merge). Galaxy groups techs case-insensitively with the most common casing as label and disambiguates same-named projects (Cse455 x2 -> detail = checkout dir). Timeline gained `kind` (comma list), `project_id`, and `offset`/`limit` pagination with `has_more` (old hard 500 cap per-request became a 5000 safety bound). Frontend ? Galaxy: click a project to focus its links + techs and dim the rest, zero-link projects render as dim islands, tech labels moved inside the viewBox, tech list sorted by usage count, tooltip detail for duplicate names. Timeline: day-grouped headers with per-day counts (no more endless scroll), kind chips + project filter, Load-more pagination. Architecture Map: collapsible dirs, file-type colors, search box, stats header (files/dirs/top-level chips), collapse-all/expand-all. Tests: +10 backend (subdir manifests, noise pruning, case canonicalization, galaxy grouping + disambiguation, timeline kind/project filters, pagination, API params), +8 frontend (day groups, chips, load more, galaxy focus/dimming/sorting/detail, collapse/search/stats). | AI agent |
 | 2026-08-14 | 1.17.8.2 | **App-launch logging fixed ? the app tree's own output now actually lands in `data/logs/apps/<slug>.log`.** The launch used `DETACHED_PROCESS`, which on Windows makes cmd.exe spawn external children (npm, python, node) with invalid stdout/stderr handles ? so the launched apps' logs silently vanished and only the `[sentinel]` launch marker landed (probed flag combinations: direct children were fine, every cmd-spawned child lost output even on natural exit). `build_runner._launch_app` now uses `CREATE_NEW_PROCESS_GROUP` alone, which captures the whole chain; the app tree attaches to Sentinel's hidden console, which is harmless. Tests: +1 real-process integration test (startup command prints, asserts the child's line appears in the app log ? regression-guarded, fails under DETACHED_PROCESS). | AI agent |
 | 2026-08-14 | 1.17.8.1 | **Sentinel moves to port 8420.** The uvicorn default 8000 is what the indexed projects' dev servers (Cg, Demake Engine) bind, so build-to-open launches died on WinError 10013 while Sentinel held the port. `SENTINEL_PORT` default is now 8420 (config.py, run.py --port, .env.example, vite proxy, playwright e2e, packaging test) ? Cg and Demake dev servers now bind 8000 freely. Docs: README, AGENTS.md, desktop.md, 01 ?9/?10, 02 ?4.2/?13, 03 updated. Tests: packaging default-port assert. | AI agent |
 | 2026-08-14 | 1.17.8.0 | **Subdir-aware command discovery; build→open.** (1) **Discovery finds builds one level down** (command_extractor.py): known subdirs renderer/frontend/client/web/ui/dashboard → `cd <dir> && npm install`/`npm run build`/`npm run start|dev`/`npm run test` from their package.json; backend/server/api requirements.txt → `cd <dir> && pip install -r requirements.txt` (root manifests still win per family; commands run from the project root via the shell runner). Python entry modules with an argparse `gui`/`web` subcommand are launchable apps by *code*, not prose (AG: `python -m rigging_engine.main gui` — master_reference2.md's command, now deterministic); a FastAPI entry that documents `uvicorn main:app` gets it as startup (demake: `cd backend && uvicorn main:app --reload`); DEVELOPMENT.md/docs/DEVELOPMENT.md join the README candidates; docs now also yield startup commands (whitelisted spellings only); `_venv_python` accepts a plain `venv/` dir (CG, demake) and the `backend/tests/` pytest convention runs `cd backend && "<venv python>" -m pytest` (CG; deterministic conventions now run *before* the doc scan — CG's README documents a `npm run test` that doesn't exist, the real suite is backend pytest in `venv/`). Live discovery: AG = startup gui CLI + venv pytest (399 collected; 1 cv2 env-gap collection error, documented in AG's AGENTS.md); CG = build/startup/install/test all real; demake = uvicorn startup + root pip. (2) **build→open** (build_runner.py): Run Build becomes Build & Open for every project — a green build, or a project with no compile step ("Build not needed — this project has no compile step."), launches the `startup` command **detached** (DETACHED_PROCESS, no command timeout — the app keeps running) appending to `data/logs/apps/<name>.log`, through the repo's own venv interpreter when it has one (`python`-prefixed commands rewritten to the venv exe; backslash-safe lambda replace). A failed build never opens the app; neither-build-nor-startup stays the honest v1.17.7.5 skipped record. New `BuildLog.launch_command` (ALTER migration via connection.py) surfaced in BuildLogRead/JobStatus; Builds.tsx action label adapts to the discovered commands (Build & Open / Open app / Build / Run build), the log shows an "App launched: …" line, and the completion toast notes the launch. Launch is always user-initiated (Rule 2: beats never open apps). Docs: AGENTS.md rules honored — changelog rows in 01/02/03, builds.md recipe table refreshed (AG/CG/Demake/Sentinel rows + build→open note). Tests: +13 extractor (subdir npm/pip, root-wins, CLI gui/web, entry uvicorn, DEVELOPMENT.md, startup-from-docs, subdir pytest, plain venv, venv-qualified cd-pytest, prose-ignored), +5 runner (no-build launches, venv rewrite, no-launch-on-failure, launch-after-success, launch-failure honesty), +4 frontend (labels + log line + toast); suite green | AI agent |

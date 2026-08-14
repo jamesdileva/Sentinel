@@ -83,6 +83,7 @@ export interface TimelineEvent {
 
 export interface Timeline {
   events: TimelineEvent[];
+  has_more: boolean;
 }
 
 export interface ArchitectureNode {

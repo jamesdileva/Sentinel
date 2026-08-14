@@ -36,6 +36,7 @@ class TimelineEvent(BaseModel):
 
 class Timeline(BaseModel):
     events: list[TimelineEvent] = Field(default_factory=list)
+    has_more: bool = False
 
 
 class ArchitectureNode(BaseModel):

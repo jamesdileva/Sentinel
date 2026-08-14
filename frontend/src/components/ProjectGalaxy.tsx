@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { GalaxyGraph } from "../types";
+import type { GalaxyGraph, GalaxyNode } from "../types";
 import { getGalaxy } from "../api/observatory";
 
 const COLORS = [
@@ -14,8 +14,14 @@ const COLORS = [
 
 const nodeSize = (kind: string) => (kind === "project" ? 22 : 12);
 
+function usageCount(detail: string | null): number {
+  const match = detail?.match(/used by (\d+) projects/);
+  return match ? Number(match[1]) : 0;
+}
+
 export default function ProjectGalaxy({ height = 480 }: { height?: number }) {
   const [graph, setGraph] = useState<GalaxyGraph | null>(null);
+  const [selected, setSelected] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -52,6 +58,40 @@ export default function ProjectGalaxy({ height = 480 }: { height?: number }) {
     }
   }
 
+  // v1.17.9: click a project to highlight its links + techs and dim the
+  // rest; projects with no shared tech render as dim islands. Projects with
+  // a detail (duplicate names) get a tooltip suffix.
+  const projectsWithLinks = new Set(
+    graph.links.map((link) => link.source),
+  );
+  const linkedTechs = (projectId: string) =>
+    new Set(
+      graph.links
+        .filter(
+          (link) => link.source === projectId || link.target === projectId,
+        )
+        .map((link) => (link.source === projectId ? link.target : link.source)),
+    );
+
+  const nodeOpacity = (node: GalaxyNode) => {
+    if (node.kind === "project") {
+      if (!projectsWithLinks.has(node.id)) return 0.35;
+      if (selected) return node.id === selected ? 1 : 0.2;
+      return 1;
+    }
+    if (selected) return linkedTechs(selected).has(node.id) ? 1 : 0.2;
+    return 1;
+  };
+
+  const linkOpacity = (source: string, target: string) => {
+    if (selected && source !== selected && target !== selected) return 0.12;
+    return 1;
+  };
+
+  const techList = [...graph.nodes]
+    .filter((n) => n.kind === "tech")
+    .sort((a, b) => usageCount(b.detail) - usageCount(a.detail));
+
   return (
     <div>
       <svg viewBox={`0 0 ${width} ${height}`} className="w-full">
@@ -68,6 +108,7 @@ export default function ProjectGalaxy({ height = 480 }: { height?: number }) {
               y2={t.y}
               stroke="#a3a3a3"
               strokeWidth={1.5}
+              opacity={linkOpacity(link.source, link.target)}
             />
           );
         })}
@@ -76,12 +117,30 @@ export default function ProjectGalaxy({ height = 480 }: { height?: number }) {
           if (!pos) return null;
           const r = nodeSize(node.kind);
           const color = COLORS[node.id.length % COLORS.length];
+          const isProject = node.kind === "project";
+          const tooltip = isProject
+            ? node.detail
+              ? `${node.label} (${node.detail})`
+              : node.label
+            : `${node.label} — ${node.detail ?? ""}`;
+          const textX = isProject
+            ? pos.x + r + 6
+            : pos.x - r - 6;
           return (
-            <g key={node.id}>
-              <title>
-                {node.label}
-                {node.detail ? ` — ${node.detail}` : ""}
-              </title>
+            <g
+              key={node.id}
+              opacity={nodeOpacity(node)}
+              className={isProject ? "cursor-pointer" : undefined}
+              onClick={
+                isProject
+                  ? () =>
+                      setSelected((current) =>
+                        current === node.id ? null : node.id,
+                      )
+                  : undefined
+              }
+            >
+              <title>{tooltip}</title>
               <circle
                 cx={pos.x}
                 cy={pos.y}
@@ -91,8 +150,9 @@ export default function ProjectGalaxy({ height = 480 }: { height?: number }) {
                 strokeWidth={2}
               />
               <text
-                x={pos.x + r + 6}
+                x={textX}
                 y={pos.y + 4}
+                textAnchor={isProject ? "start" : "end"}
                 className="fill-slate-500 text-[12px]"
               >
                 {node.label}
@@ -113,15 +173,14 @@ export default function ProjectGalaxy({ height = 480 }: { height?: number }) {
         <li className="flex items-center gap-1.5">
           <span className="h-0.5 w-5 bg-neutral-400" /> Shares a technology
         </li>
+        <li className="text-neutral-500">Click a project to focus its links</li>
       </ul>
-      <ul className="text-xs text-neutral-400">
-        {graph.nodes
-          .filter((n) => n.kind === "tech")
-          .map((n) => (
-            <li key={n.id}>
-              <span className="text-amber-400">{n.label}</span> — {n.detail}
-            </li>
-          ))}
+      <ul data-testid="galaxy-tech-list" className="text-xs text-neutral-400">
+        {techList.map((n) => (
+          <li key={n.id}>
+            <span className="text-amber-400">{n.label}</span> — {n.detail}
+          </li>
+        ))}
       </ul>
     </div>
   );

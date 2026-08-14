@@ -10,6 +10,7 @@ import fnmatch
 import os
 import re
 import subprocess
+from collections import defaultdict
 from collections.abc import Callable
 from pathlib import Path
 
@@ -46,6 +47,29 @@ _REQUIREMENT_RE = re.compile(
 )
 _MAX_WALK_DEPTH = 6
 _DISCOVERY_DEPTH = 4
+# v1.17.9: dependency manifests are discovered below the project root too
+# (backend/, renderer/, ...) but never inside vendored or build dirs.
+_DEP_MANIFEST_NAMES = ("requirements.txt", "package.json", "pyproject.toml")
+_DEP_MANIFEST_DEPTH = 2
+_DEP_NOISE_DIRS = frozenset(
+    {
+        "node_modules",
+        ".venv",
+        "venv",
+        "env",
+        "dist",
+        "build",
+        "out",
+        "target",
+        "vendor",
+        "__pycache__",
+        ".git",
+        ".pytest_cache",
+        ".mypy_cache",
+        ".tox",
+        "site-packages",
+    }
+)
 # v1.17.7.1: files with these suffixes are never parsed or stored as project
 # files — ML model checkpoints, media assets, archives, vendored binaries and
 # database files. They are binary, useless for language parsing, and their
@@ -411,58 +435,125 @@ class IndexerService:
         return detect_framework(project_path)
 
     def extract_dependencies(self, project_path: str | Path) -> list[Dependency]:
-        """Parse dependency manifests into Dependency rows (unpersisted)."""
+        """Parse dependency manifests into Dependency rows (unpersisted).
+
+        v1.17.9: manifests are discovered below the root as well (bounded
+        depth, noise-pruned) so projects with backend/ or renderer/ manifests
+        stop reporting zero dependencies, and names are canonicalized by case
+        — 'Flask' and 'flask' from different manifests merge into one
+        dependency using the most common casing.
+        """
         path = Path(project_path)
         deps: list[tuple[str, str | None, str]] = []  # (name, version, type)
+        for manifest in self._manifest_files(path):
+            if manifest.name == "requirements.txt":
+                deps.extend(self._deps_from_requirements(manifest))
+            elif manifest.name == "package.json":
+                deps.extend(self._deps_from_package_json(manifest))
+            else:  # pyproject.toml
+                deps.extend(self._deps_from_pyproject(manifest))
 
-        requirements = path / "requirements.txt"
-        if requirements.exists():
-            for line in requirements.read_text(
-                encoding="utf-8", errors="replace"
-            ).splitlines():
-                line = line.strip()
-                if not line or line.startswith(("#", "-", "http", "git+")):
-                    continue
-                match = _REQUIREMENT_RE.match(line)
-                if match:
-                    deps.append((match.group(1), match.group(2), "production"))
-
-        package_json = path / "package.json"
-        if package_json.exists():
-            import json
-
-            try:
-                data = json.loads(
-                    package_json.read_text(encoding="utf-8", errors="replace")
-                )
-                for name, version in data.get("dependencies", {}).items():
-                    deps.append((name, version, "production"))
-                for name, version in data.get("devDependencies", {}).items():
-                    deps.append((name, version, "dev"))
-            except json.JSONDecodeError:
-                logger.warning("Invalid package.json at %s", package_json)
-
-        pyproject = path / "pyproject.toml"
-        if pyproject.exists():
-            text = pyproject.read_text(encoding="utf-8", errors="replace")
-            for match in re.finditer(
-                r'^\s*["\']([^"\']+)["\']\s*[,\]]?\s*$', text, re.MULTILINE
-            ):
-                raw = match.group(1)
-                name = re.split(r"==|>=|<=|~=|!=|!=|<|>|\[|;", raw)[0].strip()
-                if name and not name.startswith("python"):
-                    deps.append((name, None, "production"))
-
-        # Deduplicate by (name, type), preferring a known version.
+        # Case-canonical merge: group by lowercase name, keep the most common
+        # casing as the display name, prefer a known version.
+        casing: dict[tuple[str, str], dict[str, int]] = defaultdict(
+            lambda: defaultdict(int)
+        )
+        for name, _version, typ in deps:
+            casing[(name.lower(), typ)][name] += 1
         merged: dict[tuple[str, str], Dependency] = {}
-        for dep in (Dependency(name=n, version=v, type=t) for n, v, t in set(deps)):
-            key = (dep.name, dep.type)
+        for name, version, typ in set(deps):
+            key = (name.lower(), typ)
             existing = merged.get(key)
-            if existing is None or (
-                dep.version is not None and existing.version is None
-            ):
-                merged[key] = dep
+            if existing is None or (version is not None and existing.version is None):
+                merged[key] = Dependency(name=name, version=version, type=typ)
+        for key, dep in merged.items():
+            dep.name = max(casing[key].items(), key=lambda kv: (kv[1], kv[0]))[0]
         return sorted(merged.values(), key=lambda d: (d.name, d.type))
+
+    def _manifest_files(self, project_root: Path) -> list[Path]:
+        """Root + subdir dependency manifests at bounded depth.
+
+        Git checkouts use `git ls-files` (tracked source only, mirroring
+        `_index_files`); non-git checkouts fall back to a depth-limited walk
+        that prunes noise dirs.
+        """
+        found: list[Path] = []
+        tracked = self._git_tracked_files(project_root)
+        if tracked is not None:
+            for path in tracked:
+                if not path.is_file() or path.name not in _DEP_MANIFEST_NAMES:
+                    continue
+                depth = len(path.relative_to(project_root).parts) - 1
+                if depth <= _DEP_MANIFEST_DEPTH:
+                    found.append(path)
+        else:
+            stack: list[tuple[Path, int]] = [(project_root, 0)]
+            while stack:
+                base, depth = stack.pop()
+                if depth > _DEP_MANIFEST_DEPTH:
+                    continue
+                for name in _DEP_MANIFEST_NAMES:
+                    candidate = base / name
+                    if candidate.is_file():
+                        found.append(candidate)
+                if depth < _DEP_MANIFEST_DEPTH:
+                    try:
+                        with os.scandir(base) as entries:
+                            dirs = [
+                                entry
+                                for entry in entries
+                                if entry.is_dir(follow_symlinks=False)
+                                and entry.name.lower() not in _DEP_NOISE_DIRS
+                            ]
+                    except OSError:
+                        continue
+                    for entry in dirs:
+                        stack.append((Path(entry.path), depth + 1))
+        return sorted(found)
+
+    @staticmethod
+    def _deps_from_requirements(path: Path) -> list[tuple[str, str | None, str]]:
+        deps: list[tuple[str, str | None, str]] = []
+        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+            line = line.strip()
+            if not line or line.startswith(("#", "-", "http", "git+")):
+                continue
+            match = _REQUIREMENT_RE.match(line)
+            if match:
+                deps.append((match.group(1), match.group(2), "production"))
+        return deps
+
+    @staticmethod
+    def _deps_from_package_json(
+        path: Path,
+    ) -> list[tuple[str, str | None, str]]:
+        import json
+
+        deps: list[tuple[str, str | None, str]] = []
+        try:
+            data = json.loads(path.read_text(encoding="utf-8", errors="replace"))
+            for name, version in data.get("dependencies", {}).items():
+                deps.append((name, version, "production"))
+            for name, version in data.get("devDependencies", {}).items():
+                deps.append((name, version, "dev"))
+        except json.JSONDecodeError:
+            logger.warning("Invalid package.json at %s", path)
+        return deps
+
+    @staticmethod
+    def _deps_from_pyproject(
+        path: Path,
+    ) -> list[tuple[str, str | None, str]]:
+        deps: list[tuple[str, str | None, str]] = []
+        text = path.read_text(encoding="utf-8", errors="replace")
+        for match in re.finditer(
+            r'^\s*["\']([^"\']+)["\']\s*[,\]]?\s*$', text, re.MULTILINE
+        ):
+            raw = match.group(1)
+            name = re.split(r"==|>=|<=|~=|!=|!=|<|>|\[|;", raw)[0].strip()
+            if name and not name.startswith("python"):
+                deps.append((name, None, "production"))
+        return deps
 
     def extract_build_commands(self, project_path: str | Path) -> dict[str, str]:
         return extract_build_commands(project_path)

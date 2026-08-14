@@ -11,7 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.pool import StaticPool
-from sqlmodel import Session, SQLModel
+from sqlmodel import Session, SQLModel, select
 
 import app.api.v1.observatory as observatory_api
 from app.db.models import (
@@ -165,6 +165,41 @@ def test_galaxy_only_shared_techs():
     assert [n.label for n in techs] == ["react"]
     assert len(graph.links) == 2
     assert {link.tech for link in graph.links} == {"react"}
+    assert all(project.detail is None for project in projects)
+
+
+def test_galaxy_groups_techs_case_insensitively():
+    """v1.17.9: 'React' and 'react' from different projects merge into one
+    tech node labeled with the most common casing."""
+    engine = make_engine()
+    seed(engine)
+    with Session(engine, expire_on_commit=False) as session:
+        _, beta = session.exec(select(Project)).all()[:2]
+        session.add(Dependency(project_id=beta.id, name="React", version="19"))
+        session.commit()
+    graph = make_service(engine).galaxy()
+    techs = [n for n in graph.nodes if n.kind == "tech"]
+    assert [n.label for n in techs] == ["react"]
+    assert "used by 2 projects" in techs[0].detail
+
+
+def test_galaxy_disambiguates_duplicate_project_names():
+    """v1.17.9: same-named projects (jamesdileva + juduncan checkouts) get
+    their checkout dir as detail instead of identical-looking nodes."""
+    engine = make_engine()
+    seed(engine)
+    with Session(engine, expire_on_commit=False) as session:
+        _ = session.exec(select(Project).where(Project.name == "alpha")).one()
+        twin = Project(name="alpha", path="/repo/juduncan/alpha", language="python")
+        session.add(twin)
+        session.commit()
+    graph = make_service(engine).galaxy()
+    projects = [n for n in graph.nodes if n.kind == "project"]
+    assert [n.label for n in projects] == ["alpha", "alpha", "beta", "gamma"]
+    assert sorted(p.detail for p in projects if p.detail) == [
+        "juduncan",
+        "repo",
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -175,8 +210,10 @@ def test_galaxy_only_shared_techs():
 def test_timeline_window_and_order():
     engine = make_engine()
     seed(engine)
-    events = make_service(engine).timeline(days=365)
+    timeline = make_service(engine).timeline(days=365)
+    events = timeline.events
     assert len(events) == 5
+    assert not timeline.has_more
     assert events[0].kind == "commit"
     assert events[-1].kind == "project-created"
     assert {e.kind for e in events} == {
@@ -191,12 +228,56 @@ def test_timeline_window_and_order():
     assert ats == sorted(ats, reverse=True)
 
 
+def test_timeline_kind_filter():
+    engine = make_engine()
+    seed(engine)
+    service = make_service(engine)
+    assert [e.kind for e in service.timeline(days=365, kinds=["commit"]).events] == [
+        "commit"
+    ]
+    assert [e.kind for e in service.timeline(days=365, kinds=["finding"]).events] == [
+        "finding"
+    ]
+    assert service.timeline(days=365, kinds=["build", "test"]).events[0].kind == "build"
+
+
+def test_timeline_project_filter():
+    engine = make_engine()
+    seed(engine)
+    with Session(engine, expire_on_commit=False) as session:
+        beta = session.exec(select(Project).where(Project.name == "beta")).one()
+        beta.created_at = days_ago(1)
+        session.add(beta)
+        session.commit()
+    events = make_service(engine).timeline(days=365, project_id=beta.id).events
+    assert len(events) == 1
+    assert events[0].kind == "project-created"
+    assert events[0].project_name == "beta"
+
+
+def test_timeline_pagination():
+    engine = make_engine()
+    seed(engine)
+    service = make_service(engine)
+    page1 = service.timeline(days=365, offset=0, limit=2)
+    assert len(page1.events) == 2
+    assert page1.has_more
+    page2 = service.timeline(days=365, offset=2, limit=2)
+    assert len(page2.events) == 2
+    assert page2.has_more
+    page3 = service.timeline(days=365, offset=4, limit=2)
+    assert len(page3.events) == 1
+    assert not page3.has_more
+    ats = page1.events + page2.events + page3.events
+    assert [e.at for e in ats] == sorted([e.at for e in ats], reverse=True)
+
+
 def test_timeline_excludes_resolved_findings():
     """v1.17.7.7: resolved findings are stale scan leftovers and must not
     spam the timeline — only the open finding surfaces."""
     engine = make_engine()
     seed(engine)
-    messages = [e.message for e in make_service(engine).timeline(days=365)]
+    messages = [e.message for e in make_service(engine).timeline(days=365).events]
     assert any("token in repo" in message for message in messages)
     assert not any("resolved leftover" in message for message in messages)
 
@@ -205,15 +286,15 @@ def test_timeline_days_narrowing():
     engine = make_engine()
     seed(engine)
     service = make_service(engine)
-    assert len(service.timeline(days=2)) == 1
-    assert service.timeline(days=2)[0].kind == "commit"
-    assert service.timeline(days=0) == service.timeline(days=365)  # guard
+    assert len(service.timeline(days=2).events) == 1
+    assert service.timeline(days=2).events[0].kind == "commit"
+    assert service.timeline(days=0).events == service.timeline(days=365).events
 
 
 def test_timeline_old_activity_excluded():
     engine = make_engine()
     seed(engine)
-    events = make_service(engine).timeline(days=365)
+    events = make_service(engine).timeline(days=365).events
     messages = [e.message for e in events]
     assert not any("old work" in message for message in messages)
 
@@ -283,6 +364,20 @@ def test_api_timeline(api_client):
     body = response.json()
     assert len(body["events"]) == 1
     assert body["events"][0]["kind"] == "commit"
+    assert body["has_more"] is False
+
+
+def test_api_timeline_filters_and_pagination(api_client):
+    client, _ = api_client
+    response = client.get(
+        "/api/v1/observatory/timeline",
+        params={"kind": "build,test", "offset": 0, "limit": 1},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["events"]) == 1
+    assert body["events"][0]["kind"] == "build"
+    assert body["has_more"] is True
 
 
 def test_api_architecture(api_client):

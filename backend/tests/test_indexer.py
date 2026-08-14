@@ -139,6 +139,53 @@ def test_extract_dependencies_python_deduplicated(tmp_db):
     assert len(by_name) == len(deps)
 
 
+def test_extract_dependencies_finds_subdir_manifests(tmp_db, tmp_path):
+    """v1.17.9: manifests below the root (backend/, renderer/) are discovered
+    at bounded depth, so projects like Sentinel and Cg stop reporting zero
+    dependencies. Noise dirs are never descended into."""
+    repo = _checkout(
+        tmp_path,
+        "subdir-manifests",
+        url="https://github.com/o/subdir-manifests.git",
+        files={
+            "backend/requirements.txt": "fastapi==0.110.0\nuvicorn==0.29.0\n",
+            "renderer/package.json": (
+                '{"dependencies": {"react": "^18.0"},'
+                ' "devDependencies": {"vite": "^5.0"}}'
+            ),
+            "node_modules/evil/package.json": ('{"dependencies": {"evil": "1"}}'),
+            ".venv/x/requirements.txt": "not-real-pkg\n",
+        },
+    )
+    deps = _service(tmp_db).extract_dependencies(repo)
+    by_name = {d.name: d for d in deps}
+    assert by_name["fastapi"].version == "0.110.0"
+    assert by_name["uvicorn"].type == "production"
+    assert by_name["react"].type == "production"
+    assert by_name["vite"].type == "dev"
+    assert "evil" not in by_name
+    assert "not-real-pkg" not in by_name
+
+
+def test_extract_dependencies_canonicalizes_case(tmp_db, tmp_path):
+    """v1.17.9: 'Flask' in one manifest and 'flask' in another merge into a
+    single dependency using the most common casing."""
+    repo = _checkout(
+        tmp_path,
+        "case-mix",
+        url="https://github.com/o/case-mix.git",
+        files={
+            "requirements.txt": "Flask==2.3\nflask-cors==4.0\n",
+            "backend/requirements.txt": "flask==2.3\n",
+        },
+    )
+    deps = _service(tmp_db).extract_dependencies(repo)
+    by_name = {d.name: d for d in deps}
+    assert by_name["flask"].version == "2.3"  # 2 lowercase vs 1 mixed case
+    assert by_name["flask-cors"].version == "4.0"
+    assert len(by_name) == 2
+
+
 def test_extract_build_commands_python(tmp_db):
     svc = _service(tmp_db)
     commands = svc.extract_build_commands(PY_PROJECT)

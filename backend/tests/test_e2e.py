@@ -102,5 +102,5 @@ def test_full_pipeline(tmp_db, tmp_path, monkeypatch):
         labels = [n.label for n in obs.galaxy().nodes]
         assert project.name in labels
         assert obs.architecture(project_id).count >= 1
-        kinds = [e.kind for e in obs.timeline(days=365 * 3)]
+        kinds = [e.kind for e in obs.timeline(days=365 * 3).events]
         assert {"build", "test", "project-created"} <= set(kinds)
