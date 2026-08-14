@@ -61,6 +61,12 @@ and build into a gitignored `build/` directory. Sentinel's build command is
 - Configure once (already done — `build/` exists):
   `cmake -S . -B build -G "MinGW Makefiles"` (from the repo root; cmake
   defaults to the msys2 generator once the cache exists).
+- **Migration pitfall (desktop, v1.17.7.3)**: the pre-existing `build/`
+  caches were created when the repos lived in the home dir
+  (`c:/Users/j/algo-trader`), so `cmake --build build` fails with
+  "CMakeCache.txt directory is different than the directory where
+  CMakeCache.txt was created". Fix once: delete `build/` and re-run the
+  configure command above (regenerates Makefiles; `trader.exe` rebuilds).
 - Build: `cmake --build build` → produces `build\trader.exe` and
   `build\backtester.exe`.
 - `CMakeLists.txt` declares **two targets**:
