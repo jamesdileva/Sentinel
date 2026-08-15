@@ -14,6 +14,7 @@ from app.services.job_scheduler import JobScheduler, _build_registry
 EXPECTED_TASKS = {
     "run_build",
     "run_tests",
+    "run_tester",
     "run_security_scan",
     "run_security_scan_all",
     "run_index_knowledge",
@@ -36,6 +37,7 @@ def test_router_submitted_names_resolve_in_registry():
     router_names = {
         "run_build",
         "run_tests",
+        "run_tester",
         "run_security_scan",
         "run_index_knowledge",
         "run_index_knowledge_all",

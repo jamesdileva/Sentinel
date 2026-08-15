@@ -5,11 +5,25 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import Builds from "./Builds";
 import type { Project } from "../types";
 import type { BuildJob, BuildLog } from "../api/builds";
+import type { SessionRecord } from "../api/sessions";
 
 vi.mock("../api/builds", () => ({
   getBuildHistory: vi.fn(),
   getBuildStatus: vi.fn(),
   triggerBuild: vi.fn(),
+}));
+
+vi.mock("../api/testers", () => ({
+  getTester: vi.fn(),
+  runTester: vi.fn(),
+}));
+
+vi.mock("../api/sessions", () => ({
+  listSessions: vi.fn(),
+}));
+
+vi.mock("react-router", () => ({
+  useNavigate: vi.fn(),
 }));
 
 vi.mock("../contexts/UIContext", () => ({
@@ -21,12 +35,17 @@ vi.mock("../hooks/useProjects", () => ({
 }));
 
 import { getBuildHistory, getBuildStatus, triggerBuild } from "../api/builds";
+import { getTester, runTester } from "../api/testers";
+import { listSessions } from "../api/sessions";
 import { useUI } from "../contexts/UIContext";
 import { useProjectList } from "../hooks/useProjects";
 
 const mockGetBuildHistory = vi.mocked(getBuildHistory);
 const mockGetBuildStatus = vi.mocked(getBuildStatus);
 const mockTriggerBuild = vi.mocked(triggerBuild);
+const mockGetTester = vi.mocked(getTester);
+const mockRunTester = vi.mocked(runTester);
+const mockListSessions = vi.mocked(listSessions);
 const mockUseUI = vi.mocked(useUI);
 const mockUseProjectList = vi.mocked(useProjectList);
 
@@ -77,6 +96,26 @@ function makeRunningJob(overrides: Partial<BuildJob> = {}): BuildJob {
   };
 }
 
+function makeTesterSession(
+  overrides: Partial<SessionRecord> = {},
+): SessionRecord {
+  return {
+    id: "s1",
+    project_id: "p1",
+    project_name: "alpha",
+    title: "Tester: Fake tester",
+    expected_output: "runs a fake app",
+    actual_outcome: "checkpoint ok",
+    status: "passed",
+    started_at: new Date(Date.now() + 1000).toISOString(),
+    ended_at: new Date(Date.now() + 5000).toISOString(),
+    log_slice: null,
+    checkpoints: [],
+    screenshots: [],
+    ...overrides,
+  };
+}
+
 describe("Builds", () => {
   let toastMock: ReturnType<typeof vi.fn>;
   beforeEach(() => {
@@ -91,6 +130,9 @@ describe("Builds", () => {
     mockGetBuildHistory.mockReset();
     mockGetBuildStatus.mockReset();
     mockTriggerBuild.mockReset();
+    mockGetTester.mockReset();
+    mockRunTester.mockReset();
+    mockListSessions.mockReset();
     mockGetBuildHistory.mockResolvedValue([makeLog()]);
     mockGetBuildStatus.mockResolvedValue(makeRunningJob());
     mockTriggerBuild.mockResolvedValue({
@@ -103,6 +145,16 @@ describe("Builds", () => {
       completed_at: null,
       launch_command: null,
     });
+    mockGetTester.mockResolvedValue({
+      name: "Fake tester",
+      description: "runs a fake app",
+      kind: "custom",
+    });
+    mockRunTester.mockResolvedValue({
+      job_id: "t1",
+      status: "queued",
+    });
+    mockListSessions.mockResolvedValue([]);
   });
 
   it("requires a project before building", async () => {
@@ -345,5 +397,73 @@ describe("Builds", () => {
         ),
       { timeout: 8000 },
     );
+  });
+
+  it("shows the Run tester button when the project has a tester", async () => {
+    const user = userEvent.setup();
+    render(<Builds />);
+    await user.selectOptions(screen.getByRole("combobox"), "p1");
+    expect(
+      await screen.findByRole("button", { name: /Run tester/ }),
+    ).toBeEnabled();
+    expect(mockGetTester).toHaveBeenCalledWith("p1");
+  });
+
+  it("disables the tester button when the project has no tester", async () => {
+    mockGetTester.mockRejectedValue(new Error("No tester"));
+    const user = userEvent.setup();
+    render(<Builds />);
+    await user.selectOptions(screen.getByRole("combobox"), "p1");
+    expect(
+      await screen.findByRole("button", { name: "No tester" }),
+    ).toBeDisabled();
+  });
+
+  it("runs the tester and shows the session result", async () => {
+    mockListSessions.mockResolvedValue([makeTesterSession()]);
+    const user = userEvent.setup();
+    render(<Builds />);
+    await user.selectOptions(screen.getByRole("combobox"), "p1");
+    await user.click(
+      await screen.findByRole("button", { name: /Run tester/ }),
+    );
+    expect(mockRunTester).toHaveBeenCalledWith("p1");
+    await waitFor(
+      () =>
+        expect(toastMock).toHaveBeenCalledWith(
+          expect.stringContaining("Tester passed"),
+          "success",
+        ),
+      { timeout: 8000 },
+    );
+    expect(
+      await screen.findByText(/Tester passed/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText("checkpoint ok")).toBeInTheDocument();
+  });
+
+  it("shows a failed tester result in the red tone", async () => {
+    mockListSessions.mockResolvedValue([
+      makeTesterSession({
+        status: "failed",
+        actual_outcome: "expected: got: boom",
+      }),
+    ]);
+    const user = userEvent.setup();
+    render(<Builds />);
+    await user.selectOptions(screen.getByRole("combobox"), "p1");
+    await user.click(
+      await screen.findByRole("button", { name: /Run tester/ }),
+    );
+    await waitFor(
+      () =>
+        expect(toastMock).toHaveBeenCalledWith(
+          expect.stringContaining("Tester failed"),
+          "error",
+        ),
+      { timeout: 8000 },
+    );
+    expect(await screen.findByText(/Tester failed/i)).toBeInTheDocument();
+    expect(screen.getByText("expected: got: boom")).toBeInTheDocument();
   });
 });

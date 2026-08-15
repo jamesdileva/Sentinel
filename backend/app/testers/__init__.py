@@ -1,0 +1,60 @@
+"""Scripted testers — per-app deterministic verification scripts
+(later.md Tier 2, docs/tier2_plan.md).
+
+Each module exposes `TESTER = Tester(...)`; the registry maps project slug
+(`_slug(project.name)`) to its tester. `DEFAULT_SMOKE` is the fallback for
+launchable apps without a custom tester. Testers run only when the user
+clicks "Run tester" (Rule 2) and never call AI (Rule 3).
+
+App-specific facts live here (ports, routes, env gaps) — see the plan doc.
+"""
+
+from dataclasses import dataclass
+from typing import Callable
+
+from app.testers._helpers import TesterContext
+
+__all__ = ["DEFAULT_SMOKE", "TESTERS", "Tester", "TesterContext"]
+
+
+@dataclass(frozen=True)
+class Tester:
+    """A named runnable tester for one project (or the default smoke)."""
+
+    name: str
+    description: str
+    run: Callable[[TesterContext], None]
+    project_slug: str | None = None  # None = default smoke (any launchable app)
+    kind: str = "custom"
+
+
+# Submodules import `Tester` back from this package, so they load only after
+# the class above exists (circular-safe, noqa: E402).
+from app.testers import (  # noqa: E402
+    ag,
+    card_game,
+    cg,
+    default_smoke,
+    demake_engine,
+    dinner_menu_generator,
+    tv_scheduler,
+    workflow_toolkit,
+)
+
+
+def _build_registry() -> dict[str, Tester]:
+    testers = [
+        ag.TESTER,
+        card_game.TESTER,
+        cg.TESTER,
+        demake_engine.TESTER,
+        dinner_menu_generator.TESTER,
+        tv_scheduler.TESTER,
+        workflow_toolkit.TESTER,
+    ]
+    registry = {t.project_slug: t for t in testers if t.project_slug}
+    return registry
+
+
+TESTERS: dict[str, Tester] = _build_registry()
+DEFAULT_SMOKE: Tester = default_smoke.TESTER

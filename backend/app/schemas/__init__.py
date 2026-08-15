@@ -55,6 +55,7 @@ from app.schemas.session import (
     SessionUpdate,
 )
 from app.schemas.test import TestResultRead, TestRunResponse
+from app.schemas.tester import TesterDescriptor, TesterRunRequest
 from app.schemas.world_sim import (
     WorldAccelerateRequest,
     WorldDisasterRequest,
@@ -112,6 +113,8 @@ __all__ = [
     "SessionUpdate",
     "TestResultRead",
     "TestRunResponse",
+    "TesterDescriptor",
+    "TesterRunRequest",
     "Timeline",
     "TimelineEvent",
     "WorldAccelerateRequest",

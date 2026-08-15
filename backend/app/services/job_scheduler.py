@@ -35,11 +35,18 @@ _BEAT_IDS = ("repo-sync", "scan-all", "world-sim-tick")
 
 def _build_registry() -> dict[str, Callable]:
     """Maps task names (previously Celery task ids) to plain callables."""
-    from app.tasks import build_tasks, rag_tasks, sync_tasks, world_sim_tasks
+    from app.tasks import (
+        build_tasks,
+        rag_tasks,
+        sync_tasks,
+        tester_tasks,
+        world_sim_tasks,
+    )
 
     return {
         "run_build": build_tasks.run_build_task,
         "run_tests": build_tasks.run_tests_task,
+        "run_tester": tester_tasks.run_tester_task,
         "run_security_scan": build_tasks.run_security_scan_task,
         "run_security_scan_all": build_tasks.run_security_scan_all,
         "run_index_knowledge": rag_tasks.run_index_knowledge,

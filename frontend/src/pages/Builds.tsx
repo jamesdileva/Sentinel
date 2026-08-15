@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router";
 
 import {
   getBuildHistory,
@@ -7,11 +8,13 @@ import {
   type BuildJob,
   type BuildLog,
 } from "../api/builds";
+import { listSessions, type SessionRecord } from "../api/sessions";
+import { getTester, runTester, type TesterDescriptor } from "../api/testers";
 import { useProjectList } from "../hooks/useProjects";
 import { useUI } from "../contexts/UIContext";
 
 const POLL_MS = 2000;
-const POLL_CAP_MS = 6 * 60 * 1000;
+const POLL_CAP_MS = 10 * 60 * 1000;
 
 function statusTone(job: BuildJob | BuildLog) {
   if (job.success === true) return "text-emerald-600 dark:text-emerald-400";
@@ -26,9 +29,12 @@ function statusLabel(job: BuildJob | BuildLog) {
   return "running";
 }
 
+const TESTER_TITLE_PREFIX = "Tester: ";
+
 export default function Builds() {
   const { projects, loading: projectsLoading } = useProjectList();
   const { toast } = useUI();
+  const navigate = useNavigate();
 
   const [projectId, setProjectId] = useState("");
   const [history, setHistory] = useState<BuildLog[]>([]);
@@ -37,6 +43,13 @@ export default function Builds() {
   const [error, setError] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [pollingJobId, setPollingJobId] = useState<string | null>(null);
+
+  const [tester, setTester] = useState<TesterDescriptor | null>(null);
+  const [testerLoading, setTesterLoading] = useState(false);
+  const [testerRunning, setTesterRunning] = useState(false);
+  const [testerResult, setTesterResult] = useState<SessionRecord | null>(null);
+  const [testerPolling, setTesterPolling] = useState(false);
+  const testerStartedAt = useRef(0);
 
   const selectedProject = projects.find((project) => project.id === projectId);
   const commands = selectedProject?.stack?.commands ?? {};
@@ -55,6 +68,9 @@ export default function Builds() {
   useEffect(() => {
     setPollingJobId(null);
     setRunning(false);
+    setTester(null);
+    setTesterResult(null);
+    setTesterPolling(false);
     if (!projectId) {
       setHistory([]);
       return;
@@ -84,7 +100,19 @@ export default function Builds() {
         if (!cancelled) setLoadingHistory(false);
       }
     };
+    const loadTester = async () => {
+      setTesterLoading(true);
+      try {
+        const descriptor = await getTester(projectId);
+        if (!cancelled) setTester(descriptor);
+      } catch {
+        if (!cancelled) setTester(null);
+      } finally {
+        if (!cancelled) setTesterLoading(false);
+      }
+    };
     void load();
+    void loadTester();
     return () => {
       cancelled = true;
     };
@@ -145,6 +173,63 @@ export default function Builds() {
     };
   }, [pollingJobId, projectId]);
 
+  // A tester run lands as an auto-created session ("Tester: <name>"); poll
+  // the sessions list until the session that started after our click reaches
+  // a terminal status.
+  useEffect(() => {
+    if (!testerPolling) return;
+    let cancelled = false;
+    let elapsed = 0;
+    const finish = (session: SessionRecord) => {
+      setTesterPolling(false);
+      setTesterRunning(false);
+      setTesterResult(session);
+      toast(
+        `Tester ${session.status}: ${session.actual_outcome ?? "done"}`,
+        session.status === "passed" ? "success" : "error",
+      );
+    };
+    const tick = async () => {
+      elapsed += POLL_MS;
+      try {
+        const sessions = await listSessions(projectId);
+        if (cancelled) return;
+        const mine = sessions
+          .filter(
+            (s) =>
+              s.title.startsWith(TESTER_TITLE_PREFIX) &&
+              new Date(s.started_at).getTime() >= testerStartedAt.current,
+          )
+          .sort(
+            (a, b) =>
+              new Date(b.started_at).getTime() - new Date(a.started_at).getTime(),
+          )[0];
+        if (mine && mine.status !== "running") {
+          finish(mine);
+        } else if (elapsed >= POLL_CAP_MS) {
+          setTesterPolling(false);
+          setTesterRunning(false);
+          toast(
+            "Tester still running — refresh the Sessions page to see it.",
+            "error",
+          );
+        }
+      } catch {
+        if (!cancelled) {
+          setTesterPolling(false);
+          setTesterRunning(false);
+          toast("Tester status lost — refresh to see the result.", "error");
+        }
+      }
+    };
+    void tick();
+    const interval = window.setInterval(() => void tick(), POLL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [testerPolling, projectId]);
+
   async function handleBuild() {
     if (!projectId || running) return;
     setRunning(true);
@@ -163,16 +248,36 @@ export default function Builds() {
     }
   }
 
+  async function handleTester() {
+    if (!projectId || testerRunning) return;
+    setTesterRunning(true);
+    setTesterResult(null);
+    testerStartedAt.current = Date.now();
+    try {
+      const job = await runTester(projectId);
+      toast(`Tester queued (job ${job.job_id.slice(0, 8)}…)`, "success");
+      setTesterPolling(true);
+    } catch (err) {
+      toast(
+        err instanceof Error ? err.message : "Failed to queue tester.",
+        "error",
+      );
+      setTesterRunning(false);
+    }
+  }
+
   return (
     <section aria-label="Builds" className="flex flex-col gap-4">
       <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
         <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-          Builds
+          Builds & Testers
         </h2>
         <p className="text-xs text-slate-400 dark:text-slate-500">
           Deterministic builds: the known commands for each project, run in a
           clean job (git history + CI logs, never AI). A green build — or a
           project with no compile step — launches the app (build → open).
+          Scripted testers (per-app, deterministic steps) run the app and
+          record a session with screenshots.
         </p>
         {error && (
           <div className="mt-3 rounded-lg border border-red-300 bg-red-50 px-4 py-2 text-sm text-red-800 dark:border-red-800 dark:bg-red-950 dark:text-red-200">
@@ -206,7 +311,54 @@ export default function Builds() {
         >
           {actionLabel}
         </button>
+        <button
+          type="button"
+          onClick={() => void handleTester()}
+          disabled={
+            !projectId || testerRunning || testerLoading || tester === null
+          }
+          title={
+            tester
+              ? `${tester.name} — ${tester.description ?? ""}`
+              : "No scripted tester for this project"
+          }
+          className="rounded-lg border border-indigo-300 bg-indigo-50 px-4 py-2 text-sm font-medium text-indigo-700 transition-colors hover:bg-indigo-100 disabled:opacity-50 dark:border-indigo-800 dark:bg-indigo-950 dark:text-indigo-300 dark:hover:bg-indigo-900"
+        >
+          {testerRunning
+            ? "Tester running…"
+            : tester
+              ? `Run tester — ${tester.name}`
+              : "No tester"}
+        </button>
       </div>
+
+      {testerResult && (
+        <div
+          className={`rounded-xl border p-4 ${
+            testerResult.status === "passed"
+              ? "border-emerald-300 bg-emerald-50 dark:border-emerald-900 dark:bg-emerald-950"
+              : testerResult.status === "failed"
+                ? "border-red-300 bg-red-50 dark:border-red-900 dark:bg-red-950"
+                : "border-amber-300 bg-amber-50 dark:border-amber-900 dark:bg-amber-950"
+          }`}
+        >
+          <div className="flex items-center gap-3">
+            <span className="text-xs font-semibold uppercase tracking-wider">
+              Tester {testerResult.status}
+            </span>
+            <span className="flex-1 truncate text-xs text-slate-500 dark:text-slate-400">
+              {testerResult.actual_outcome}
+            </span>
+            <button
+              type="button"
+              onClick={() => navigate("/sessions")}
+              className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-700 dark:bg-slate-200 dark:text-slate-900 dark:hover:bg-white"
+            >
+              View session
+            </button>
+          </div>
+        </div>
+      )}
 
       {projectId && (
         <div>

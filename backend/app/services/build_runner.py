@@ -8,6 +8,7 @@ launch anything (Rule 2).
 """
 
 import datetime
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -126,12 +127,15 @@ class BuildRunner:
             log.stdout = f"{log.stdout or ''}\nApp launch failed: {detail}"
 
     @staticmethod
-    def _launch_app(project: Project, startup_command: str) -> tuple[bool, str]:
+    def _launch_app(
+        project: Project, startup_command: str, env: dict[str, str] | None = None
+    ) -> tuple[bool, str]:
         """Detached launch of the app through the repo's own venv python.
 
         Returns (launched, detail) where detail is the resolved command or
         the failure reason. The child outlives the request (no timeout) and
-        appends to data/logs/apps/<slug>.log.
+        appends to data/logs/apps/<slug>.log. `env` (v1.17.11: tester
+        launches) overlays the inherited environment — never replaces it.
         """
         root = Path(project.path)
         python = project_venv_python(root)
@@ -173,6 +177,7 @@ class BuildRunner:
                 stdout=log_file,
                 stderr=subprocess.STDOUT,
                 creationflags=flags,
+                env={**os.environ, **(env or {})},
             )
             # v1.17.8.0: the child's own stdout/stderr may be block-buffered
             # (and a crash or concurrent-kill drops the unflushed tail), so the

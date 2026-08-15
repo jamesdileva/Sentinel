@@ -161,6 +161,7 @@ class _FakePopen:
         stdout=None,
         stderr=None,
         creationflags=0,
+        env=None,
     ):
         if _FakePopen.error:
             raise _FakePopen.error

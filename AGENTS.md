@@ -46,6 +46,7 @@ These are the project's constitution. They must be upheld in every decision, cha
 
 - Pydantic response schemas live in `backend/app/schemas/` (not `models/`)
 - Language parsers live in `backend/app/parsers/`
+- Scripted testers live in `backend/app/testers/` (one module per app, registered by project slug in the `TESTERS` dict; see `docs/tier2_plan.md`)
 - All tests live in `backend/tests/`
 - API routes are versioned: `/api/v1/...`
 - Status/read endpoints use GET; state-changing actions use POST
