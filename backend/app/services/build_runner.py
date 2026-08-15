@@ -151,11 +151,17 @@ class BuildRunner:
                 lambda m: m.group(1) + f'"{python}"',
                 command,
             )
-            command = re.sub(
-                r"(^|\s)uvicorn(?=\s)",
-                lambda m: m.group(1) + f'"{python}" -m uvicorn',
-                command,
-            )
+            # v1.17.11.0: a command that already names the venv interpreter
+            # with `-m uvicorn` (tester launches) must not be rewritten a
+            # second time — the old unconditional regex produced
+            # `"<venv>\python.exe" -m "<venv>\python.exe" -m uvicorn …`,
+            # which died with ModuleNotFoundError before binding the port.
+            if f'"{python}" -m uvicorn' not in command:
+                command = re.sub(
+                    r"(^|\s)uvicorn(?=\s)",
+                    lambda m: m.group(1) + f'"{python}" -m uvicorn',
+                    command,
+                )
         apps_dir = Path(settings.db_path).parent.parent / "logs" / "apps"
         apps_dir.mkdir(parents=True, exist_ok=True)
         log_file = open(apps_dir / f"{_slug(project.name)}.log", "a", encoding="utf-8")

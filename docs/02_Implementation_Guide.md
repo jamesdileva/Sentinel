@@ -1,11 +1,11 @@
-# Project Sentinel — Implementation Guide
+﻿# Project Sentinel â€” Implementation Guide
 
 > **Version:** 1.1
-> **Status:** Draft — Sprint 0 (Pre-MVP)
+> **Status:** Draft â€” Sprint 0 (Pre-MVP)
 > **Audience:** Developers, AI coding agents
 > **Related:** See `docs/01_Master_Architecture.md` for architecture overview
 
-This document is the **technical reference** for implementing Project Sentinel. It provides concrete specifications — database schemas, API contracts, service interfaces, configuration formats, RAG setup, and automation job definitions — that map directly to code. Every sprint in `docs/03_Sprint_Plan.md` references sections from this guide.
+This document is the **technical reference** for implementing Project Sentinel. It provides concrete specifications â€” database schemas, API contracts, service interfaces, configuration formats, RAG setup, and automation job definitions â€” that map directly to code. Every sprint in `docs/03_Sprint_Plan.md` references sections from this guide.
 
 ---
 
@@ -284,66 +284,66 @@ All endpoints live under `http://127.0.0.1:8420/api/v1/`. Relative paths below o
 
 ### 2.1. Projects
 
-**GET `/projects/`** — List all indexed projects
+**GET `/projects/`** â€” List all indexed projects
 - Query: `?skip=0&limit=50&status=active`
 - Returns: `{"projects": [...], "total": 12}`
 
-**GET `/projects/{id}`** — Get project details
+**GET `/projects/{id}`** â€” Get project details
 - Returns full Project object with stats
 
-**GET `/projects/{id}/files`** — List files in a project
+**GET `/projects/{id}/files`** â€” List files in a project
 - Query: `?language=python&search=main`
 - Returns: list of ProjectFile objects
 
-**GET `/projects/{id}/health`** — Get project health summary
+**GET `/projects/{id}/health`** â€” Get project health summary
 - Returns: `{"health_score": 92, "build": "pass", "tests": "pass", "security": "pass", "docs_pct": 88}`
 
-**POST `/projects/scan`** — Trigger manual re-scan of a project
+**POST `/projects/scan`** â€” Trigger manual re-scan of a project
 - Body: `{"project_id": "<uuid>"}`
 - Returns: `{"job_id": "SCAN-001", "status": "queued"}`
 
 ### 2.2. Indexing
 
-**POST `/indexing/rescan`** — Trigger full re-index of all projects
+**POST `/indexing/rescan`** â€” Trigger full re-index of all projects
 - Returns: `{"job_id": "IDX-001", "status": "started"}`
 
-**GET `/indexing/status/{job_id}`** — Check indexing progress
+**GET `/indexing/status/{job_id}`** â€” Check indexing progress
 - Returns: `{"status": "processing", "progress": 0.45, "current_file": "main.py"}`
 
-**GET `/indexing/status`** — Overall indexing system status
+**GET `/indexing/status`** â€” Overall indexing system status
 - Returns: `{"last_full_scan": "...", "projects_pending": 3, "projects_done": 10}`
 
 ### 2.3. RAG / Intelligence
 
-**POST `/rag/query`** — Ask a question about your projects
+**POST `/rag/query`** â€” Ask a question about your projects
 - Body: `{"question": "Explain the architecture of Workflow Toolkit", "project_id": "optional"}`
 - Returns: `{"answer": "...", "sources": [...], "confidence": 0.92}`
 
-**POST `/rag/search`** — Semantic search across project knowledge
+**POST `/rag/search`** â€” Semantic search across project knowledge
 - Body: `{"query": "how does authentication work", "project_id": "optional", "top_k": 5}`
 - Returns: `{"results": [{"content": "...", "source": "file_summary", "distance": 0.12}, ...]}
 
-**POST `/rag/index`** — Queue knowledge indexing for a project (202)
+**POST `/rag/index`** â€” Queue knowledge indexing for a project (202)
 - Body: `{"project_id": "...", "with_summary": false}`
 - Dispatches Celery task `run_index_knowledge`, returning `{"status": "queued", "job_id": "<task_id>"}`
 - Default increments embed raw file content/git commits/test/security/build logs; `with_summary: true` additionally generates an Ollama architecture summary persisted to `KnowledgeSummary`
 
-**GET `/rag/index/status`** — Index progress (Sprint 15)
+**GET `/rag/index/status`** â€” Index progress (Sprint 15)
 - Query: `?project_id=optional` (narrow the report to one project)
-- Returns: `{"project_id": null, "projects": {"<project_id>": {"files": N, "embedded": M}}, "files_total": N, "files_embedded": M}` — embedded = files with an `embedding_id` set; drives the "X of Y files embedded" line in the Knowledge page
+- Returns: `{"project_id": null, "projects": {"<project_id>": {"files": N, "embedded": M}}, "files_total": N, "files_embedded": M}` â€” embedded = files with an `embedding_id` set; drives the "X of Y files embedded" line in the Knowledge page
 
-****GET `/projects/{id}/summaries`** — Get AI-generated project summaries
+****GET `/projects/{id}/summaries`** â€” Get AI-generated project summaries
 - Query: `?type=architecture`
 - Returns: list of KnowledgeSummary objects
 
-**GET/POST `/rag/chat/{project_id}` — Persisted per-project chat room (v1.17)**
+**GET/POST `/rag/chat/{project_id}` â€” Persisted per-project chat room (v1.17)**
 - `GET` returns chat history newest-last (`?limit=`, cap 500); `POST` saves one
   exchange (`role: user|assistant`, `text`, `sources[]`, `model`, `confidence`,
-  `error` when the answer failed) — the Knowledge chat survives tab switches
+  `error` when the answer failed) â€” the Knowledge chat survives tab switches
   and restarts
 - Module: `app/db/models.py::ChatMessage`, handler `app/api/v1/rag.py`
 
-**GET `/system/activity` — Recent activity events (v1.17)**
+**GET `/system/activity` â€” Recent activity events (v1.17)**
 - Query: `?limit=` (cap 500); returns `{"events": [...]}` newest-first, each
   `{id, kind, message, detail, data, created_at}`
 - Kinds: `sync`, `index`, `knowledge`, `build`, `test`, `security`, `ollama`,
@@ -352,8 +352,8 @@ All endpoints live under `http://127.0.0.1:8420/api/v1/`. Relative paths below o
   event: {...}}` frames + 30 s heartbeat). Module:
   `app/services/activity_bus.py`
 
-**POST `/system/sync` — Manual repo sync (v1.17.1)**
-- Body: `{"full": bool}` — `full: true` clears the cached repo list and
+**POST `/system/sync` â€” Manual repo sync (v1.17.1)**
+- Body: `{"full": bool}` â€” `full: true` clears the cached repo list and
   re-fetches from GitHub (new repos appear immediately); the default
   `full: false` re-checks the previously known repos by `git pull --ff-only`
 - Returns: the same `SyncRun` shape as `GET /system/sync`
@@ -364,115 +364,115 @@ All endpoints live under `http://127.0.0.1:8420/api/v1/`. Relative paths below o
 
 ### 2.4. Automation
 
-**GET `/automation/jobs`** — List scheduled and running jobs
+**GET `/automation/jobs`** â€” List scheduled and running jobs
 - Returns: list of job status objects
 
-**POST `/automation/trigger`** — Trigger a manual automation run
+**POST `/automation/trigger`** â€” Trigger a manual automation run
 - Body: `{"project_id": "...", "steps": ["build", "test", "scan"]}`
 - Returns: `{"job_id": "RUN-001", "status": "queued"}`
 
-**GET `/automation/jobs/{job_id}`** — Get job status and logs
+**GET `/automation/jobs/{job_id}`** â€” Get job status and logs
 - Returns: full job detail with step results
 
 ### 2.5. Security
 
-**GET `/security/findings`** — List all security findings
+**GET `/security/findings`** â€” List all security findings
 - Query: `?project_id=...&severity=high&resolved=false`
 - Returns: list of SecurityFinding objects
 
-**GET `/security/findings/{id}`** — Get finding details
+**GET `/security/findings/{id}`** â€” Get finding details
 - Returns: full SecurityFinding with AI explanation
 
-**POST `/security/scan`** — Trigger a security scan for a project
+**POST `/security/scan`** â€” Trigger a security scan for a project
 - Body: `{"project_id": "..."}`
 - Returns: `{"job_id": "SCAN-001", "status": "queued"}`
 
-**POST `/security/scan-all`** — Trigger a security scan for every indexed
+**POST `/security/scan-all`** â€” Trigger a security scan for every indexed
 project (v1.17.7.4; manual twin of the daily `scan-all` beat)
 - Returns: `{"job_id": "SCAN-ALL-001", "status": "queued"}`
 
 ### 2.6. Git Intelligence
 
-**GET `/projects/{id}/commits`** — List commits for a project
+**GET `/projects/{id}/commits`** â€” List commits for a project
 - Query: `?limit=50&author=John`
 - Returns: paginated list of GitCommit objects
 
 **Note:** the original feature-timeline endpoint here was never built; the
-shipped activity timeline lives under §2.11 (Observatory), driven by stored
+shipped activity timeline lives under Â§2.11 (Observatory), driven by stored
 commit/build/test/finding timestamps rather than parsed commit messages.
 
-**GET `/git/features`** — Search features across all projects
+**GET `/git/features`** â€” Search features across all projects
 - Query: `?query=import&project_id=optional`
 - Returns: features matched to commits and explanations
 
 ### 2.7. Portfolio (Sprint 10)
 
-Deterministic health scoring (30/30/25/15, missing = 0); see §14.5 for the
+Deterministic health scoring (30/30/25/15, missing = 0); see Â§14.5 for the
 formula and semantics.
 
-**GET `/portfolio/scores`** — Health scores for all projects
+**GET `/portfolio/scores`** â€” Health scores for all projects
 - Recomputed on read from stored build/test/security/file rows, then persisted
   to the `PortfolioScore` table
 - Returns: list of `PortfolioScoreRead` (`build_status`, `test_status`,
   `security_status`, `documentation_pct`, `screenshots_available`,
   `portfolio_score`, `updated_at`)
 
-**GET `/portfolio/best-candidates`** — Ranked job-ready projects
+**GET `/portfolio/best-candidates`** â€” Ranked job-ready projects
 - Query: `?min_score=70` (default 70)
 - Returns: `[{"project_id", "project_name", "score", "missing": [...]}]` sorted
   by score descending; `missing` lists components with no data yet
 
-**GET `/portfolio/feature-matrix`** — Grid of projects × features
+**GET `/portfolio/feature-matrix`** â€” Grid of projects Ã— features
 - Returns: `{"projects": [...], "features": ["build", "test", "docs", "security", "screenshots"], "matrix": [[...]]}`
-- Cells: `✓` good · `⚠` failing/findings/partial · `✗` pending; screenshots is
-  always `✗` until a screenshot feature exists
+- Cells: `âœ“` good Â· `âš ` failing/findings/partial Â· `âœ—` pending; screenshots is
+  always `âœ—` until a screenshot feature exists
 
 ### 2.8. Local Services
 
-**GET `/services`** — List running local services
+**GET `/services`** â€” List running local services
 - Returns: `{"services": [{"name": "ollama", "status": "running", "port": 11434}, ...]}`
 
-**GET `/health`** — Overall system health
+**GET `/health`** â€” Overall system health
 - Returns: `{"status": "healthy", "services": {...}, "projects_count": 10, "last_index": "..."}`
 
 ### 2.9. World Simulator (Sprint 9)
 
-Deterministic "ant farm" module with its own DB; see §11 for full details.
+Deterministic "ant farm" module with its own DB; see Â§11 for full details.
 
-**GET `/world-sim/state`** — Current world state
+**GET `/world-sim/state`** â€” Current world state
 - Returns: day, seed, time scale, settlements, roads, recent events, stats
 
-**GET `/world-sim/history`** — Event log (ascending)
+**GET `/world-sim/history`** â€” Event log (ascending)
 - Query: `?limit=100&before=<day>`
 
-**GET `/world-sim/settlements/{id}`** — Settlement detail (incl. roads)
+**GET `/world-sim/settlements/{id}`** â€” Settlement detail (incl. roads)
 
-**POST `/world-sim/tick`** — Advance the world now
+**POST `/world-sim/tick`** â€” Advance the world now
 - Body: `{"days": 3}`; returns `{"days_advanced": 3, "day_number": N}`
 
-**POST `/world-sim/reset`** — Wipe and restart
+**POST `/world-sim/reset`** â€” Wipe and restart
 - Body: `{"seed": 7}` (optional); returns `{"status": "reset", "seed": 7}`
 
-**POST `/world-sim/accelerate`** — Set days per tick (1–10)
+**POST `/world-sim/accelerate`** â€” Set days per tick (1â€“10)
 - Body: `{"time_scale": 5}`
 
-**POST `/world-sim/disaster`** — Force a disaster (god tool)
+**POST `/world-sim/disaster`** â€” Force a disaster (god tool)
 - Body: `{"settlement_id": "...", "disaster_type": "flood|drought|plague"}`
 
 ### 2.10. Configuration
 
-**GET `/config`** — Get current configuration
+**GET `/config`** â€” Get current configuration
 - Returns: full config object
 
-**PUT `/config`** — Update configuration
+**PUT `/config`** â€” Update configuration
 - Body: partial config object
 - Returns: updated config
 
 ### 2.11. Observatory (Sprint 10.5)
 
-Read-only project overviews, deterministic from stored data (§14.6).
+Read-only project overviews, deterministic from stored data (Â§14.6).
 
-**GET `/observatory/galaxy`** — Shared-technology graph
+**GET `/observatory/galaxy`** â€” Shared-technology graph
 - Returns: `{"nodes": [{"id", "kind": "project|tech", "label", "detail", "framework"}], "links": [{"source", "target", "tech"}]}`
 - Only technologies used by 2+ projects (`Project.framework` + `Dependency.name`)
   become `tech` nodes; every project is a `project` node linked to each shared tech
@@ -481,20 +481,20 @@ Read-only project overviews, deterministic from stored data (§14.6).
   juduncan `cse455` checkouts)
 - v1.17.9.1: `project` nodes carry `framework` (the project's own framework) for
   the focus panel; `tech` nodes leave it null
-- v1.17.9.2: payload unchanged — the frontend gained two views over it (Metro
-  transit map + Families dendrogram/matrix, see §14.6)
+- v1.17.9.2: payload unchanged â€” the frontend gained two views over it (Metro
+  transit map + Families dendrogram/matrix, see Â§14.6)
 
-**GET `/observatory/timeline`** — Chronological activity
+**GET `/observatory/timeline`** â€” Chronological activity
 - Query: `?days=365` (default 365; <1 resets to 365), `&kind=commit,build`
   (comma list of `project-created|commit|build|test|finding`), `&project_id=`,
   `&offset=0&limit=500` (limit 1-1000)
 - Returns: `{"events": [{"at", "kind", "project_id", "project_name", "message"}], "has_more": bool}`
 - Sources: `Project.created_at`, `GitCommit.timestamp`, `BuildLog.started_at`,
-  `TestResult.run_at`, `SecurityFinding.detected_at` — all within the window,
+  `TestResult.run_at`, `SecurityFinding.detected_at` â€” all within the window,
   descending. v1.17.9: pages via `offset`/`limit` (`has_more` signals another
   page); a 5000-event safety bound replaces the old per-request 500 cap
 
-**GET `/observatory/architecture/{project_id}`** — Component tree
+**GET `/observatory/architecture/{project_id}`** â€” Component tree
 - Returns a recursive node: `{"name", "path", "kind": "dir|file", "count", "children": [...]}`
 - Dirs first, then files; `count` = number of files beneath a directory (root = total files)
 - 404 if the project is unknown
@@ -504,44 +504,44 @@ Read-only project overviews, deterministic from stored data (§14.6).
 ### 2.12. Sessions (v1.17.10)
 
 App-testing session recorder + screenshot capture (later.md Tier 1 + Tier 4;
-see §14.7). All session state is written by the user's own actions — Sentinel
+see Â§14.7). All session state is written by the user's own actions â€” Sentinel
 only records (Rule 2: it never presses buttons in the app; Rule 3: log slices
 and captures are deterministic, AI never interprets).
 
-**POST `/sessions`** — start a session
+**POST `/sessions`** â€” start a session
 - Body: `{"project_id", "title", "expected_output"?}`
 - Writes `[sentinel] Session started <iso> <session_id>: <title>` into the
-  app's own log (`data/logs/apps/<slug>.log` — the same file the launched app
+  app's own log (`data/logs/apps/<slug>.log` â€” the same file the launched app
   appends its output to)
 - Returns: `SessionRead` (id, project_name, status `running`, checkpoints, screenshots)
 
-**POST `/sessions/{id}/checkpoints`** — `{"label"}` → appends
+**POST `/sessions/{id}/checkpoints`** â€” `{"label"}` â†’ appends
 `[sentinel] checkpoint: <iso> <session_id>: <label>`; row in `sessioncheckpoint`
 
-**POST `/sessions/{id}/end`** — `{"actual_outcome"?, "status": passed|failed|investigate}`
+**POST `/sessions/{id}/end`** â€” `{"actual_outcome"?, "status": passed|failed|investigate}`
 - Appends `[sentinel] Session ended <iso> <session_id>: <status>`, captures the
   deterministic log slice between this session's own start/end markers
   (interleaved sessions slice to their own end marker or EOF), and auto-captures
-  a screenshot (Tier 4 — every session ends with a record even without a manual
+  a screenshot (Tier 4 â€” every session ends with a record even without a manual
   Capture press)
 
-**POST `/sessions/{id}/screenshots`** — `{"checkpoint_id"?}` full-screen grab
-(PIL `ImageGrab`) → `data/screenshots/<slug>/<iso>.png` + 90×60 thumb; row in
+**POST `/sessions/{id}/screenshots`** â€” `{"checkpoint_id"?}` full-screen grab
+(PIL `ImageGrab`) â†’ `data/screenshots/<slug>/<iso>.png` + 90Ã—60 thumb; row in
 `sessionscreenshot`
 
-**POST `/sessions/{id}/screenshots/{shot_id}/export`** — copies PNG + thumb
+**POST `/sessions/{id}/screenshots/{shot_id}/export`** â€” copies PNG + thumb
 into `SENTINEL_PORTFOLIO_DIR` (`images/sessions/`, default
 `C:\Users\j\projects\jamesdileva\jamesdileva.github.io`) and returns
-`{"copied": [...], "snippet": "<card HTML>"}` — the user pastes the snippet
+`{"copied": [...], "snippet": "<card HTML>"}` â€” the user pastes the snippet
 into the portfolio's index.html and pushes manually; Sentinel never pushes
 
-**GET `/sessions?project_id=&status=`** — list (newest first); **GET
-`/sessions/{id}`** — detail with nested checkpoints + screenshots;
-**PATCH `/sessions/{id}`** — edit title/expected_output/actual_outcome/status;
-**DELETE `/sessions/{id}`** — removes rows + screenshot files
+**GET `/sessions?project_id=&status=`** â€” list (newest first); **GET
+`/sessions/{id}`** â€” detail with nested checkpoints + screenshots;
+**PATCH `/sessions/{id}`** â€” edit title/expected_output/actual_outcome/status;
+**DELETE `/sessions/{id}`** â€” removes rows + screenshot files
 
-**GET `/sessions/{id}/screenshots/{filename}`** — media route (filename
-restricted to `[A-Za-z0-9._-]+`, resolved within the session's screenshot dir —
+**GET `/sessions/{id}/screenshots/{filename}`** â€” media route (filename
+restricted to `[A-Za-z0-9._-]+`, resolved within the session's screenshot dir â€”
 path traversal blocked)
 
 ---
@@ -708,21 +708,21 @@ class SecurityScanner:
 
     def _iter_scan_files(self, project: Project) -> list[Path]:
         """v1.17.7.5: the indexed `ProjectFile` rows (absolute_path), falling
-        back to the indexer's gated walk — untracked junk (.venv_sf3d,
+        back to the indexer's gated walk â€” untracked junk (.venv_sf3d,
         runtime/Lib, release/win-unpacked) is never scanned."""
 
     def scan_secrets(self, files: list[Path], project_root: Path) -> list[SecurityFinding]:
         """Regex secret patterns (API keys, tokens, .env content) over the file set."""
 
     def scan_static_analysis(self, files: list[Path], project_root: Path) -> list[SecurityFinding]:
-        """v1.17.7.5: AST-based — eval/exec/compile flagged only as real
+        """v1.17.7.5: AST-based â€” eval/exec/compile flagged only as real
         Call/Name nodes, never string literals or comments (the old regex
         matched its own pattern titles)."""
 ```
 
 **Tools used:**
-- `ast` (stdlib) — static analysis for Python (v1.17.7.5: regex patterns replaced)
-- Built-in regex patterns — secret detection (TruffleHog/Semgrep not vendored)
+- `ast` (stdlib) â€” static analysis for Python (v1.17.7.5: regex patterns replaced)
+- Built-in regex patterns â€” secret detection (TruffleHog/Semgrep not vendored)
 
 ---
 
@@ -806,7 +806,7 @@ class AutomationEngine:
     """Orchestrates the full automated maintenance pipeline per project."""
 
     def run_full_pipeline(self, project: Project, trigger: str = "scheduled") -> AutomationRun:
-        """Execute: git_update → install → build → test → scan → docgen → screenshot → health_update."""
+        """Execute: git_update â†’ install â†’ build â†’ test â†’ scan â†’ docgen â†’ screenshot â†’ health_update."""
 
     def run_custom_pipeline(self, project: Project, steps: list[str]) -> AutomationRun:
         """Execute only specified steps."""
@@ -816,14 +816,14 @@ class AutomationEngine:
 ```
 
 **Pipeline steps (Celery tasks):**
-- `git_update` — pull latest changes
-- `install_deps` — install project dependencies
-- `build` — compile/bundle project
-- `test` — run test suite
-- `scan` — run security scan
-- `generate_docs` — generate/update documentation
-- `generate_screenshots` — capture UI screenshots
-- `update_health` — recompute health score and portfolio score
+- `git_update` â€” pull latest changes
+- `install_deps` â€” install project dependencies
+- `build` â€” compile/bundle project
+- `test` â€” run test suite
+- `scan` â€” run security scan
+- `generate_docs` â€” generate/update documentation
+- `generate_screenshots` â€” capture UI screenshots
+- `update_health` â€” recompute health score and portfolio score
 
 ---
 
@@ -845,7 +845,7 @@ class PortfolioService:
         """Rank projects by portfolio score, identify missing items."""
 
     def generate_feature_matrix(self) -> FeatureMatrix:
-        """Generate grid of all projects × features (build/test/docs/security/screenshots)."""
+        """Generate grid of all projects Ã— features (build/test/docs/security/screenshots)."""
 ```
 
 ---
@@ -972,28 +972,28 @@ docker:
 
 ### 4.2. Environment Variables
 
-Read from the repo-root `.env` (Sprint 15: no containers — the backend process
+Read from the repo-root `.env` (Sprint 15: no containers â€” the backend process
 `Settings` in `app/core/config.py` loads them directly):
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `SENTINEL_HOST` | `127.0.0.1` | Bind address for uvicorn |
-| `SENTINEL_PORT` | `8420` | Listen port (dashboard + API, same origin; v1.17.8.1 — off 8000, which indexed projects' dev servers default to) |
+| `SENTINEL_PORT` | `8420` | Listen port (dashboard + API, same origin; v1.17.8.1 â€” off 8000, which indexed projects' dev servers default to) |
 | `SENTINEL_DB_PATH` | `data/sqlite/sentinel.db` | SQLite database path (repo root) |
 | `SENTINEL_CHROMA_PATH` | `data/chroma` | ChromaDB persistence directory |
 | `SENTINEL_OLLAMA_HOST` | `http://localhost:11434` | Ollama server endpoint (native Ollama on the same machine) |
 | `SENTINEL_OLLAMA_MODEL` | `llama3.1:8b` | LLM model for project AI |
 | `SENTINEL_OLLAMA_NUM_CTX` | `32768` | v1.17.6.6: `num_ctx` sent to Ollama for generations (default 2048 would truncate long summary/query inputs) |
 | `SENTINEL_EMBEDDING_MODEL` | `nomic-embed-text` | Embedding model |
-| `SENTINEL_WATCH_DIRS` | `<home>` (current user) | Project directories — a single directory, a comma-separated list, or a JSON array (v1.17.7.3: the documented comma format used to crash pydantic-settings' JSON-only parser; now accepted). v1.17.7: the discovery walk prunes noise dirs. v1.17.7.3 (this machine): `C:\Users\j\projects` — all projects were moved there from the home dir |
+| `SENTINEL_WATCH_DIRS` | `<home>` (current user) | Project directories â€” a single directory, a comma-separated list, or a JSON array (v1.17.7.3: the documented comma format used to crash pydantic-settings' JSON-only parser; now accepted). v1.17.7: the discovery walk prunes noise dirs. v1.17.7.3 (this machine): `C:\Users\j\projects` â€” all projects were moved there from the home dir |
 | `SENTINEL_AUTO_INDEX_KNOWLEDGE` | `true` | v1.17: after the startup scan, queue RAG indexing for projects with unembedded files (Ollama-gated) |
 | `SENTINEL_API_KEY` | (empty) | Optional API key for authentication |
 | `SENTINEL_SCHEDULE_INTERVAL` | `60` | Minutes between automation runs |
 | `SENTINEL_GITHUB_TOKEN` | (empty) | **Optional** read-only PAT for `repo-sync` (clone/pull from GitHub). Since v1.17.7 the tokenless setup is first-class: local checkouts with a GitHub origin are indexed directly from the watch dirs, and the daily security scan runs on its own beat regardless |
-| `SENTINEL_GITHUB_EXCLUDE` | (empty) | v1.17.9.1: **Optional** comma-separated repo list (`owner/repo`, case-insensitive) skipped by `repo-sync` — e.g. a repo you cannot delete (collaborator on another account) that must never be re-cloned. Works with or without a token |
-| `SENTINEL_SYNC_INTERVAL_MINUTES` | `1440` | Minutes between repo auto-syncs (v1.17.1: every 24 h — startup always syncs once, then daily unless the header "Sync now" button is pressed). Only relevant with a token |
-| `SENTINEL_SCAN_INTERVAL_MINUTES` | `1440` | v1.17.7: minutes between the security scan-all beat (runs on its own schedule, independent of the GitHub sync — tokenless installs still scan daily) |
-| `SENTINEL_MAX_FILE_KB` | `5120` | v1.17.7.1: files larger than this (default 5 MB) are skipped by project indexing — multi-GB model/binaries (ONNX weights, `.pt` checkpoints, `.dll` bundles) are also blocked by the binary-extension denylist |
+| `SENTINEL_GITHUB_EXCLUDE` | (empty) | v1.17.9.1: **Optional** comma-separated repo list (`owner/repo`, case-insensitive) skipped by `repo-sync` â€” e.g. a repo you cannot delete (collaborator on another account) that must never be re-cloned. Works with or without a token |
+| `SENTINEL_SYNC_INTERVAL_MINUTES` | `1440` | Minutes between repo auto-syncs (v1.17.1: every 24 h â€” startup always syncs once, then daily unless the header "Sync now" button is pressed). Only relevant with a token |
+| `SENTINEL_SCAN_INTERVAL_MINUTES` | `1440` | v1.17.7: minutes between the security scan-all beat (runs on its own schedule, independent of the GitHub sync â€” tokenless installs still scan daily) |
+| `SENTINEL_MAX_FILE_KB` | `5120` | v1.17.7.1: files larger than this (default 5 MB) are skipped by project indexing â€” multi-GB model/binaries (ONNX weights, `.pt` checkpoints, `.dll` bundles) are also blocked by the binary-extension denylist |
 
 ---
 
@@ -1031,14 +1031,14 @@ sentinel config set <key> <value>    # Update a config value
 ### 5.2. Development Helpers
 
 ```bash
-# run.py (repo root) — the single entry point for the home server
-# (commands use the venv python explicitly — no activation required)
+# run.py (repo root) â€” the single entry point for the home server
+# (commands use the venv python explicitly â€” no activation required)
 .\.venv\Scripts\python.exe run.py                          # startup checks + start on 127.0.0.1:8420
 .\.venv\Scripts\python.exe run.py --check                  # startup checks only (SQLite, Ollama, frontend)
 .\.venv\Scripts\python.exe run.py --port 8080              # different port
 .\.venv\Scripts\python.exe run.py --reload                 # dev auto-reload
 
-# scripts/build.py — verify + stage the dashboard, no Docker
+# scripts/build.py â€” verify + stage the dashboard, no Docker
 .\.venv\Scripts\python.exe scripts\build.py                # verify (pytest, lint, npm test) + npm build
 .\.venv\Scripts\python.exe scripts\build.py --dist         # also stage frontend into backend/app/static
 .\.venv\Scripts\python.exe scripts\build.py --skip-tests   # stage only, no verification
@@ -1059,13 +1059,13 @@ sentinel config set <key> <value>    # Update a config value
 ChromaDB Persistence: /data/chroma
 
 Collections:
-├── project_summaries   # AI-generated project architecture/purpose summaries
-├── file_summaries      # Per-file AI summaries
-├── git_commits         # Commit messages and diffs
-├── test_logs           # Test output and failure analysis
-├── security_reports    # Security scan results and explanations
-├── build_logs          # Build output and failure analysis
-└── world_sim_entities  # World Simulator entity embeddings (optional)
+â”œâ”€â”€ project_summaries   # AI-generated project architecture/purpose summaries
+â”œâ”€â”€ file_summaries      # Per-file AI summaries
+â”œâ”€â”€ git_commits         # Commit messages and diffs
+â”œâ”€â”€ test_logs           # Test output and failure analysis
+â”œâ”€â”€ security_reports    # Security scan results and explanations
+â”œâ”€â”€ build_logs          # Build output and failure analysis
+â””â”€â”€ world_sim_entities  # World Simulator entity embeddings (optional)
 ```
 
 ### 6.2. Embedding Model
@@ -1079,26 +1079,26 @@ Collections:
 
 ```
 Step 1: Ingestion
-  Project files → File summaries (via Ollama) → Embeddings → ChromaDB (file_summaries)
-  Git commits → Commit messages → Embeddings → ChromaDB (git_commits)
-  Test results → Test output → Embeddings → ChromaDB (test_logs)
-  Security findings → Scan results → Embeddings → ChromaDB (security_reports)
+  Project files â†’ File summaries (via Ollama) â†’ Embeddings â†’ ChromaDB (file_summaries)
+  Git commits â†’ Commit messages â†’ Embeddings â†’ ChromaDB (git_commits)
+  Test results â†’ Test output â†’ Embeddings â†’ ChromaDB (test_logs)
+  Security findings â†’ Scan results â†’ Embeddings â†’ ChromaDB (security_reports)
 
 Step 2: Query Processing
-  User question → Embedding (nomic-embed-text) → ChromaDB similarity search → Top-K context chunks
+  User question â†’ Embedding (nomic-embed-text) â†’ ChromaDB similarity search â†’ Top-K context chunks
 
 Step 3: Answer Generation
-  Retrieved context + question → Ollama (llama3.1:8b) → Grounded answer
+  Retrieved context + question â†’ Ollama (llama3.1:8b) â†’ Grounded answer
 
 Step 4: Post-processing
-  Answer + source metadata → Frontend display with source links
+  Answer + source metadata â†’ Frontend display with source links
 ```
 
 **Chunking (v1.17.6.6):** Markdown/`docs/` files are chunked at 2000 chars
-with a 200-char overlap (max 32 chunks per file, ids `{file}#{i}`) — most
-"How do I…" answers live in READMEs and guides. Code files stay single 4k
+with a 200-char overlap (max 32 chunks per file, ids `{file}#{i}`) â€” most
+"How do Iâ€¦" answers live in READMEs and guides. Code files stay single 4k
 chunks so structure is never torn apart. Summary generation and all-project
-queries read the docs collections first (see §6.4 and `_search_all_projects`),
+queries read the docs collections first (see Â§6.4 and `_search_all_projects`),
 and all Ollama generations use `num_ctx=32768` (Ollama's default 2048 would
 truncate long inputs).
 
@@ -1172,10 +1172,10 @@ CELERY_BEAT_SCHEDULE = {
 ```
 
 > **Current implementation (v1.17.6.6):** the scheduler is APScheduler-based
-> (`services/job_scheduler.py`), not Celery — the block above is the original
+> (`services/job_scheduler.py`), not Celery â€” the block above is the original
 > design. `_BEAT_IDS` is `("repo-sync", "world-sim-tick")`: there is **no
-> standalone security-scan beat** — the daily repo-sync runs the security scan
-> at the end of its own pass (sync → knowledge index → security scan, whenever
+> standalone security-scan beat** â€” the daily repo-sync runs the security scan
+> at the end of its own pass (sync â†’ knowledge index â†’ security scan, whenever
 > the sync is configured), so findings always reflect freshly pulled code.
 
 ### 7.2. Automation Pipeline Tasks (Celery)
@@ -1227,8 +1227,8 @@ class AutomationEngine:
         """
         Executes the full pipeline as a Celery chain:
 
-        git_update → install_deps → build → test → scan → generate_docs
-        → generate_screenshots → update_health
+        git_update â†’ install_deps â†’ build â†’ test â†’ scan â†’ generate_docs
+        â†’ generate_screenshots â†’ update_health
         """
         chain = (
             git_update.s(project_id) |
@@ -1260,7 +1260,7 @@ class AutomationRun(SQLModel, table=True):
 
 class AutomationStep(SQLModel, table=True):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
-    run_id: str  # FK → AutomationRun
+    run_id: str  # FK â†’ AutomationRun
     name: str  # "git_update", "build", "test", etc.
     status: str  # "pending", "running", "success", "failed"
     started_at: datetime.datetime | None
@@ -1304,7 +1304,7 @@ class BaseParser(ABC):
 
 | Parser | File | Parses |
 |--------|------|--------|
-| PythonParser | `parsers/python_parser.py` | Python (.py) — uses AST |
+| PythonParser | `parsers/python_parser.py` | Python (.py) â€” uses AST |
 | JavaScriptParser | `parsers/javascript_parser.py` | JavaScript (.js) |
 | TypeScriptParser | `parsers/typescript_parser.py` | TypeScript (.ts, .tsx) |
 | ReactParser | `parsers/react_parser.py` | React components (.jsx, .tsx) |
@@ -1460,8 +1460,8 @@ Test definitions stored in `project/.sentinel/tests/<feature_name>.json`:
 
 The World Simulator ("the Living World") is a deterministic, persistent
 ant-farm style simulation (Sprint 9). It is fully isolated from the project
-intelligence pipelines: its own SQLite database, its own engine, and — per
-Project Rules 2/3 — **no generative AI in the simulation loop**. AI is at most
+intelligence pipelines: its own SQLite database, its own engine, and â€” per
+Project Rules 2/3 â€” **no generative AI in the simulation loop**. AI is at most
 optional flavor on event text and never affects sim state.
 
 The module runs inside the existing stack (no new container): the Celery beat
@@ -1470,15 +1470,15 @@ bounded catch-up after downtime, and god-tool endpoints allow manual control.
 
 ```
 backend/app/services/world_sim/
-├── rules_engine.py      pure deterministic rules (terrain, food, growth,
-│                        construction, expansion, disasters)
-├── event_generator.py   simulate_day(): one deterministic day of events
-├── skill_system.py      survival experience → skill levels (1–5)
-├── names.py             seeded settlement-name generation
-└── world_simulator.py   WorldSimulatorService: persistence, catch-up, god tools
+â”œâ”€â”€ rules_engine.py      pure deterministic rules (terrain, food, growth,
+â”‚                        construction, expansion, disasters)
+â”œâ”€â”€ event_generator.py   simulate_day(): one deterministic day of events
+â”œâ”€â”€ skill_system.py      survival experience â†’ skill levels (1â€“5)
+â”œâ”€â”€ names.py             seeded settlement-name generation
+â””â”€â”€ world_simulator.py   WorldSimulatorService: persistence, catch-up, god tools
 frontend/
-├── pages/WorldSimulatorPage.tsx   day stats, god tools, event feed
-└── components/WorldGridMap.tsx    2D canvas terrain + settlements + roads
+â”œâ”€â”€ pages/WorldSimulatorPage.tsx   day stats, god tools, event feed
+â””â”€â”€ components/WorldGridMap.tsx    2D canvas terrain + settlements + roads
 ```
 
 Design invariants:
@@ -1523,35 +1523,35 @@ Pure functions over `SettlementState`, tuned by constants (change with tests):
 |---|---|---|
 | `EXPAND_POPULATION` | 600 | settlements below this never found children |
 | `EXPAND_LEVEL` / `EXPAND_CHANCE` | 3 / 0.25 | level and daily roll required to expand |
-| `LEVEL_COST_BASE` | 100 | construction needed = 100 × current level |
+| `LEVEL_COST_BASE` | 100 | construction needed = 100 Ã— current level |
 | `FARM_CAPACITY` | plains 200 / forest 150 / hills 150 / mts 80 / water 0 | max farmers per type of land (recruitment cap, v1.14) |
-| `MAX_FOOD_DAYS` | 20 | food stores capped at `population × 20` — bounds the +6% trade growth (v1.14) |
+| `MAX_FOOD_DAYS` | 20 | food stores capped at `population Ã— 20` â€” bounds the +6% trade growth (v1.14) |
 | `MAX_ACTIVE_SETTLEMENTS` | 60 | world stops expanding new settlements at this cap (v1.14) |
 | `TRADE_BONUS_FRACTION` | 0.06 | food +6% per day per connected road |
 | `DISCOVERY_CHANCE` / `SOCIAL_CHANCE` | 0.04 / 0.03 | per-day event probabilities |
 | `RAID_CHANCE` / `RAID_DISTANCE` | 0.02 / 3 | raids between road-connected close settlements |
-| `DISASTER_BASE_CHANCE` | flood .015 / drought .010 / plague .008 | × terrain modifier |
+| `DISASTER_BASE_CHANCE` | flood .015 / drought .010 / plague .008 | Ã— terrain modifier |
 
 Terrain (`terrain_at(x, y, seed)`): mountains/water/hills/forest/plains with
-fertility 0.4–1.1; daily food = `farmers × 6 × fertility × skill_bonus`.
+fertility 0.4â€“1.1; daily food = `farmers Ã— 6 Ã— fertility Ã— skill_bonus`.
 
 ### 11.4. Daily Simulation (`event_generator.simulate_day`)
 
-Steps per day: (1) food production/growth/famine → (2) construction & level
-ups → (2.5) **recruitment** (v1.14: food-secure settlements scale roles with
-population — farmers `pop//6` (capped by `FARM_CAPACITY`), builders `pop//12`,
+Steps per day: (1) food production/growth/famine â†’ (2) construction & level
+ups â†’ (2.5) **recruitment** (v1.14: food-secure settlements scale roles with
+population â€” farmers `pop//6` (capped by `FARM_CAPACITY`), builders `pop//12`,
 merchants `pop//30`, explorers `pop//60`; starving settlements recruit nobody)
-→ (3) expansion (new settlement + road, blocked at
-`MAX_ACTIVE_SETTLEMENTS`) → (4) road trade → (5) raids (road-connected pairs
-only, v1.14) → (6) discoveries → (7) social events → (8) disasters (with
-survival experience) → (9) collapse check. Returns a `DayOutcome` (events, new
+â†’ (3) expansion (new settlement + road, blocked at
+`MAX_ACTIVE_SETTLEMENTS`) â†’ (4) road trade â†’ (5) raids (road-connected pairs
+only, v1.14) â†’ (6) discoveries â†’ (7) social events â†’ (8) disasters (with
+survival experience) â†’ (9) collapse check. Returns a `DayOutcome` (events, new
 settlements, new roads) for the service to persist.
 
 ### 11.5. Skill System (`skill_system.py`)
 
-Surviving a disaster grants `20 + 5 × (severity − 1)` experience. Experience
-maps to a skill level by tier table (0/50/150/300/500 → levels 1–5): +5% food
-production and +10% rebuild speed per level beyond the first — settlements
+Surviving a disaster grants `20 + 5 Ã— (severity âˆ’ 1)` experience. Experience
+maps to a skill level by tier table (0/50/150/300/500 â†’ levels 1â€“5): +5% food
+production and +10% rebuild speed per level beyond the first â€” settlements
 "build back stronger". Both bonuses clamp at level 10 (+45% / +90%) so very
 long runs stay bounded (v1.14). Deterministic and unit-tested.
 
@@ -1569,13 +1569,13 @@ long runs stay bounded (v1.14). Deterministic and unit-tested.
 
 ### 11.7. API Endpoints (`/api/v1/world-sim`, enabled by `world_sim_enabled`)
 
-- `GET /world-sim/state` — day, seed, time scale, settlements, roads, recent events, stats
-- `GET /world-sim/history?limit=100&before=N` — event log (ascending)
-- `GET /world-sim/settlements/{id}` — detail including roads
-- `POST /world-sim/tick {days}` — advance now (god tool)
-- `POST /world-sim/reset {seed}` — wipe the world, optionally new seed
-- `POST /world-sim/accelerate {time_scale}` — days per tick (1–10)
-- `POST /world-sim/disaster {settlement_id, disaster_type}` — flood/drought/plague
+- `GET /world-sim/state` â€” day, seed, time scale, settlements, roads, recent events, stats
+- `GET /world-sim/history?limit=100&before=N` â€” event log (ascending)
+- `GET /world-sim/settlements/{id}` â€” detail including roads
+- `POST /world-sim/tick {days}` â€” advance now (god tool)
+- `POST /world-sim/reset {seed}` â€” wipe the world, optionally new seed
+- `POST /world-sim/accelerate {time_scale}` â€” days per tick (1â€“10)
+- `POST /world-sim/disaster {settlement_id, disaster_type}` â€” flood/drought/plague
 
 ### 11.8. Configuration
 
@@ -1614,13 +1614,13 @@ long runs stay bounded (v1.14). Deterministic and unit-tested.
 | `test_indexer.py` | Repo discovery, indexing, language/framework detection | `services/indexer.py` |
 | `test_quality.py` | Quality gates: formatting, lint, coverage | repo-wide |
 | `test_packaging.py` | Release archive contents/exclusions, run.py probes, script parsers | `scripts/build.py`, `scripts/release.py`, `run.py` |
-| `test_cli.py` | CLI commands (index, ask, rag-index, …) | `app/cli.py` |
+| `test_cli.py` | CLI commands (index, ask, rag-index, â€¦) | `app/cli.py` |
 | `test_tasks.py` | Celery task registry, job envelope wiring | `tasks/*.py` |
 | `test_exceptions.py` | Error handlers and `ApiError` mapping | `core/exceptions.py`, `api/errors.py` |
 | `test_health.py` | Health endpoint, DB reachability | `api/v1/health.py` |
-| `test_e2e.py` | Full pipeline: index → scan → build → test → docgen → export | All components |
+| `test_e2e.py` | Full pipeline: index â†’ scan â†’ build â†’ test â†’ docgen â†’ export | All components |
 
-> Sprint 11 result: 211 tests passing, 95.6% coverage (gate ≥ 80%), flake8/black/isort clean.
+> Sprint 11 result: 211 tests passing, 95.6% coverage (gate â‰¥ 80%), flake8/black/isort clean.
 
 ### 12.2. Frontend Tests (Vitest)
 
@@ -1675,7 +1675,7 @@ Manual run:
 1. Start services: `cd backend && .\.venv\Scripts\python.exe -m uvicorn app.main:app` (+ `cd frontend && npm run dev -- --host 127.0.0.1`), or let Playwright spawn them.
 2. Run the suite: `cd frontend && npm run test:e2e`.
 
-Acceptance criteria (Sprint 11, docs/03 §753): backend coverage ≥ 80%, every API
+Acceptance criteria (Sprint 11, docs/03 Â§753): backend coverage â‰¥ 80%, every API
 endpoint integration-tested (200/404/400), frontend unit tests for all
 components, E2E covering key user workflows.
 
@@ -1684,16 +1684,16 @@ components, E2E covering key user workflows.
 ## 13. Deployment (Native Install)
 
 **Sprint 15 changed the deployment model: Docker Compose is gone.** The project
-runs natively — one uvicorn process serves the API and the built dashboard from
+runs natively â€” one uvicorn process serves the API and the built dashboard from
 the same origin (`backend/app/static`), so there is no nginx, no CORS, no
 containers, no Redis/Celery (the background scheduler is the in-process
 APScheduler). **v1.17.7: the always-on machine is the desktop itself** (dev +
 server in one, laptop retired); the dashboard is at `http://127.0.0.1:8420`
-(v1.17.8.1 — moved off 8000 so indexed projects' dev servers can bind the
-uvicorn default; docs/01 §9).
+(v1.17.8.1 â€” moved off 8000 so indexed projects' dev servers can bind the
+uvicorn default; docs/01 Â§9).
 
 Pi-hole also left the Sentinel stack in Sprint 15: it was never the project's
-purpose (docs/pi-hole-idea.md) and Sentinel no longer reads its stats — the
+purpose (docs/pi-hole-idea.md) and Sentinel no longer reads its stats â€” the
 System page shows Ollama + startup checks only.
 
 ### 13.1. Install (one-time)
@@ -1705,21 +1705,21 @@ py -3.11 -m venv .venv                                   # backend venv (repo ro
 .venv\Scripts\python.exe -m pip install -e "backend[dev]"   # runtime + dev deps (sqlmodel, pytest, lint)
 cd frontend
 npm install
-npm run build                          # → frontend/dist
+npm run build                          # â†’ frontend/dist
 cd ..
 .venv\Scripts\python.exe scripts\build.py --dist   # verify (backend+frontend tests, lint) and stage
 ```
 
-`.env` (gitignored) is optional; defaults are safe (§4.2). On a single desktop
+`.env` (gitignored) is optional; defaults are safe (Â§4.2). On a single desktop
 **no variables are required**: Ollama runs natively on the same machine
 (`http://127.0.0.1:11434`), the watch dirs default to the current user's home
-(`C:\Users\j` — all local projects are found there), and the GitHub token is
+(`C:\Users\j` â€” all local projects are found there), and the GitHub token is
 only needed if you want clone/pull auto-sync.
 
 ### 13.2. Running
 
 ```powershell
-# venv python is used explicitly — PowerShell will block Activate.ps1 by default
+# venv python is used explicitly â€” PowerShell will block Activate.ps1 by default
 .\.venv\Scripts\python.exe run.py              # startup checks (SQLite, Ollama, frontend built) + uvicorn on 127.0.0.1:8420
 .\.venv\Scripts\python.exe run.py --check      # checks only, no server
 .\.venv\Scripts\python.exe run.py --port 8080  # or set SENTINEL_PORT in .env
@@ -1727,11 +1727,11 @@ only needed if you want clone/pull auto-sync.
 ```
 
 The dashboard is `http://127.0.0.1:8420` (System page: `/system`). The API is
-same-origin (`/api/v1/*`) — the SPA fallback route in `app/main.py` serves
+same-origin (`/api/v1/*`) â€” the SPA fallback route in `app/main.py` serves
 `index.html` for any non-API path.
 
 > **Note:** the dashboard ships **prebuilt** in the repo (`backend/app/static`,
-> committed). A fresh `git pull` is all the machine needs — `npm install`,
+> committed). A fresh `git pull` is all the machine needs â€” `npm install`,
 > `npm run build`, and even `scripts\build.py` are only required when you have
 > changed the frontend code yourself.
 
@@ -1744,8 +1744,8 @@ server manually with `run.py` when you want it up.
 
 ### 13.4. Home Server Deployment (Sprint 12, reworked in Sprint 15 and 1.17.7)
 
-The desktop is the always-on machine. After the one-time setup (§13.1) the
-dashboard is at **http://127.0.0.1:8420** on this machine only (localhost —
+The desktop is the always-on machine. After the one-time setup (Â§13.1) the
+dashboard is at **http://127.0.0.1:8420** on this machine only (localhost â€”
 nothing is exposed on the LAN; bind `SENTINEL_HOST=0.0.0.0` + a firewall rule
 only if phone/tablet access is ever wanted). `.\.venv\Scripts\python.exe run.py`
 performs the same startup checks the server itself performs at boot (database,
@@ -1759,15 +1759,15 @@ cd Sentinel
 py -3.11 -m venv .venv                                   # venv lives at backend\.venv on this machine
 backend\.venv\Scripts\python.exe -m pip install -e "backend[dev]"
 backend\.venv\Scripts\python.exe scripts\build.py --dist
-# .env (gitignored) — from .env.example; a tokenless install needs NOTHING:
-#   (optional) SENTINEL_GITHUB_TOKEN=<read-only PAT>   → enables clone/pull auto-sync
-#   (optional) SENTINEL_GITHUB_EXCLUDE=owner/repo     → repos sync must skip (v1.17.9.1)
+# .env (gitignored) â€” from .env.example; a tokenless install needs NOTHING:
+#   (optional) SENTINEL_GITHUB_TOKEN=<read-only PAT>   â†’ enables clone/pull auto-sync
+#   (optional) SENTINEL_GITHUB_EXCLUDE=owner/repo     â†’ repos sync must skip (v1.17.9.1)
 backend\.venv\Scripts\python.exe run.py                # start the server (no autostart task since v1.17.7.2)
 ```
 
-**Projects — tokenless by default (v1.17.7):**
+**Projects â€” tokenless by default (v1.17.7):**
 
-The machine keeps watch on `SENTINEL_WATCH_DIRS` — `C:\Users\j\projects` since
+The machine keeps watch on `SENTINEL_WATCH_DIRS` â€” `C:\Users\j\projects` since
 v1.17.7.3 (all project checkouts moved there from the home dir; see
 `scripts/migrate_projects_root.py`; the default when unset is still the
 current user's home). The startup scan discovers every `.git` checkout and
@@ -1777,11 +1777,11 @@ whose origin matches (e.g. `C:\Users\j\projects\jamesdileva\cse455`).
 Worktrees, stray copies, nested sub-repos and `.codex`-style junk are never
 projects (v1.17.5); since v1.17.7 the
 discovery walk prunes noise directories (`AppData`, `OneDrive`, `node_modules`,
-`.venv`, …), so the home dir with all its non-project folders is cheap to scan.
+`.venv`, â€¦), so the home dir with all its non-project folders is cheap to scan.
 
 With **no token**, GitHub is not contacted at all: the `repo-sync` beat is not
 registered, startup reports a one-line INFO, and the header "Sync now" button
-answers with a clear message. The **security scan-all still runs daily** — it
+answers with a clear message. The **security scan-all still runs daily** â€” it
 has its own beat (`SENTINEL_SCAN_INTERVAL_MINUTES`, default 1440; v1.17.7,
 previously it rode the repo-sync pass and tokenless installs never scanned).
 
@@ -1794,7 +1794,7 @@ untouched repos skip the scan entirely. Every pass is persisted to `SyncRun`
 and `GET /system/sync` shows the last outcome.
 
 Repos that live only locally (no GitHub `origin`) are not projects under Rule 5
-(known entities) — the origin-URL check in `is_sync_owned` (v1.17.5) filters
+(known entities) â€” the origin-URL check in `is_sync_owned` (v1.17.5) filters
 them out, so they are never indexed and the project-row GC never touches them
 unless a stale row exists.
 
@@ -1807,30 +1807,30 @@ re-runs it manually).
 
 `http://127.0.0.1:8420/system` shows read-only status for Ollama
 (availability, installed models, tokens/sec of recent generations) plus the
-backend startup checks — per Project Rule 2 nothing on the page toggles
+backend startup checks â€” per Project Rule 2 nothing on the page toggles
 anything server-side.
 
 **Release artifacts:** `.\.venv\Scripts\python.exe scripts\release.py` produces
 `dist/sentinel-<version>.zip` + `.sha256` (run.py, scripts, `.env.example`,
-docs, `backend/app` + `pyproject.toml`) — copy that archive to another machine
-instead of cloning if preferred, then follow §13.1 minus `git clone`.
+docs, `backend/app` + `pyproject.toml`) â€” copy that archive to another machine
+instead of cloning if preferred, then follow Â§13.1 minus `git clone`.
 
 **Troubleshooting:**
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
 | `run.py` warns *frontend not built* | `backend/app/static/index.html` missing | `.\.venv\Scripts\python.exe scripts\build.py --dist` before serving |
-| "What happened this run?" (console scrolled past, errors vanished) | The run's log is at `data/logs/sentinel.log` — overwritten at every start, INFO level, includes uvicorn's own loggers (v1.17.6.3). Since v1.17.6.4 the httpx request flood (`POST /api/embed` per embed call) is silenced to WARNING and every line is written exactly once | Read it after a crash: it answers what ran, what errored, and what the shutdown cascade was |
+| "What happened this run?" (console scrolled past, errors vanished) | The run's log is at `data/logs/sentinel.log` â€” overwritten at every start, INFO level, includes uvicorn's own loggers (v1.17.6.3). Since v1.17.6.4 the httpx request flood (`POST /api/embed` per embed call) is silenced to WARNING and every line is written exactly once | Read it after a crash: it answers what ran, what errored, and what the shutdown cascade was |
 | Dashboard shows stale UI after `git pull` | The served build is the staged one, not `frontend/dist` | Re-run `scripts/build.py --dist`; restart the backend |
-| Port 8420 already in use | Another Sentinel instance is running (a second console left open, or an orphaned uvicorn child after a hard kill of `run.py`) | Since v1.17.6.3 `run.py` prints the owning PID (`netstat -ano`) and a `taskkill /F /PID <pid>` hint instead of a raw bind traceback — close the other console, kill that PID, or serve elsewhere (`--port 8100` / `SENTINEL_PORT`) |
-| Projects indexed but missing the AI architecture summary (files embedded, no summary) | Summary embedding absent — wiped by a reset (v1.17.6.2/6.3 dedupe bug) or its generation timed out (v1.17.6.3, 120 s default) | Knowledge page **Re-index all projects** button (v1.17.6.4) or `rag-index --all` — incremental: embedded files are skipped, missing summaries regenerate, one bad project never aborts the pass |
-| `rag-index` / `sentinel` "not recognized" | The CLI is `python -m app.cli` from inside `backend`, never a bare command (`sentinel` is not on PATH) | `cd backend` then `..\backend\.venv\Scripts\python.exe -m app.cli rag-index --all` (v1.17.7: the venv may live at the repo root OR `backend\.venv` — both are resolved) |
-| Server dies after reboot | No autostart task since v1.17.7.2 — the server is started manually | `backend\.venv\Scripts\python.exe run.py` when you want it up (the old `install_service.py` task was removed because it popped console windows every 5 min) |
-| `sentinel sync` → *SENTINEL_GITHUB_TOKEN is not configured* | Token missing in `.env` | Optional since v1.17.7 — tokenless installs index local projects directly and scan on their own beat. Set the PAT only if you want clone/pull auto-sync |
+| Port 8420 already in use | Another Sentinel instance is running (a second console left open, or an orphaned uvicorn child after a hard kill of `run.py`) | Since v1.17.6.3 `run.py` prints the owning PID (`netstat -ano`) and a `taskkill /F /PID <pid>` hint instead of a raw bind traceback â€” close the other console, kill that PID, or serve elsewhere (`--port 8100` / `SENTINEL_PORT`) |
+| Projects indexed but missing the AI architecture summary (files embedded, no summary) | Summary embedding absent â€” wiped by a reset (v1.17.6.2/6.3 dedupe bug) or its generation timed out (v1.17.6.3, 120 s default) | Knowledge page **Re-index all projects** button (v1.17.6.4) or `rag-index --all` â€” incremental: embedded files are skipped, missing summaries regenerate, one bad project never aborts the pass |
+| `rag-index` / `sentinel` "not recognized" | The CLI is `python -m app.cli` from inside `backend`, never a bare command (`sentinel` is not on PATH) | `cd backend` then `..\backend\.venv\Scripts\python.exe -m app.cli rag-index --all` (v1.17.7: the venv may live at the repo root OR `backend\.venv` â€” both are resolved) |
+| Server dies after reboot | No autostart task since v1.17.7.2 â€” the server is started manually | `backend\.venv\Scripts\python.exe run.py` when you want it up (the old `install_service.py` task was removed because it popped console windows every 5 min) |
+| `sentinel sync` â†’ *SENTINEL_GITHUB_TOKEN is not configured* | Token missing in `.env` | Optional since v1.17.7 â€” tokenless installs index local projects directly and scan on their own beat. Set the PAT only if you want clone/pull auto-sync |
 | New repos never appear after a push | Sync interval not elapsed | `..\.venv\Scripts\python.exe -m app.cli sync` (from inside `backend`) for an immediate pass |
-| RAG chat returns *knowledge index is damaged on disk* (503) | A killed write corrupted the HNSW index (v1.17.6) | Rebuild: Knowledge page banner → "Rebuild knowledge index" (since v1.17.6.2 the probe detects this damage reliably), or `..\.venv\Scripts\python.exe -m app.cli rag-index --reset` from inside `backend`; then restart `run.py` — the startup auto-index re-embeds everything, including the AI architecture summary (once per project, v1.17.6.2). Bare `sentinel` is never on PATH — always call the venv python by path |
+| RAG chat returns *knowledge index is damaged on disk* (503) | A killed write corrupted the HNSW index (v1.17.6) | Rebuild: Knowledge page banner â†’ "Rebuild knowledge index" (since v1.17.6.2 the probe detects this damage reliably), or `..\.venv\Scripts\python.exe -m app.cli rag-index --reset` from inside `backend`; then restart `run.py` â€” the startup auto-index re-embeds everything, including the AI architecture summary (once per project, v1.17.6.2). Bare `sentinel` is never on PATH â€” always call the venv python by path |
 
-(Pi-hole and Docker troubleshooting from the Sprint 8–13 era is archived in the
+(Pi-hole and Docker troubleshooting from the Sprint 8â€“13 era is archived in the
 document changelogs; Pi-hole is no longer part of Sentinel.)
 ## 14. Data Access Patterns
 
@@ -1840,7 +1840,7 @@ document changelogs; Pi-hole is no longer part of Sentinel.)
 | Observatory | Project metadata, file summaries, commit history | REST API (`/api/v1/projects/{id}/files`, `/api/v1/projects/{id}/commits`) |
 | RAG Assistant | File summaries, commit messages, test logs | ChromaDB vector search + Ollama |
 | Knowledge Explorer | File content, code structure, dependencies | REST API + ChromaDB hybrid search |
-| Build/Test/Scan | Project commands, dependency manifests | Celery workers → direct filesystem |
+| Build/Test/Scan | Project commands, dependency manifests | Celery workers â†’ direct filesystem |
 | Documentation Generator | File summaries, commit history, metadata | REST API + Ollama |
 | Security Scanner | Dependency manifests, source code | Direct filesystem + security tools |
 | World Simulator | World state, entity embeddings | Separate SQLite + ChromaDB collection |
@@ -1852,68 +1852,68 @@ document changelogs; Pi-hole is no longer part of Sentinel.)
 
 `PortfolioService` (`backend/app/services/portfolio_service.py`) aggregates each
 project's build, test, security and documentation state into a deterministic
-0-100 health score — no AI, no extra jobs. Scores are recomputed on read and
-upserted into the `PortfolioScore` table (docs/02 §1), so the API, matrix and
+0-100 health score â€” no AI, no extra jobs. Scores are recomputed on read and
+upserted into the `PortfolioScore` table (docs/02 Â§1), so the API, matrix and
 candidates always agree.
 
 **Score formula (weights sum to 100, Sprint 15 static/proven split):**
 
 | Component | Weight | Rule |
 |-----------|--------|------|
-| build | 30 | `21 static` if a build command was detected in `stack.commands.build` (granted from repo detection alone) + `9` when the latest `BuildLog` actually passed. The static 21 survives a failed run — a command does not change because a build failed. No command → 0/pending |
-| tests | 30 | `24 static` if conventional test files exist (`tests/`, `__tests__/`, `test_*.py`, `*_test.py`, `*.test.ts(x)`, `*.spec.ts(x)`) + `6` when the latest `TestResult` is green; failed/errored run keeps the static 24. No test files and no run → 0/pending |
-| security | 25 | all findings resolved → 25 ("clean"); unresolved deduct per severity (critical 10 / high 6 / medium 3 / low 1 / info 0, floor 0); no findings at all → 0 (never scanned — **pending**, distinct from clean since v1.17.6.6) |
-| docs | 15 | README/Markdown/`docs/` files ÷ total indexed files × 15 |
+| build | 30 | `21 static` if a build command was detected in `stack.commands.build` (granted from repo detection alone) + `9` when the latest `BuildLog` actually passed. The static 21 survives a failed run â€” a command does not change because a build failed. No command â†’ 0/pending |
+| tests | 30 | `24 static` if conventional test files exist (`tests/`, `__tests__/`, `test_*.py`, `*_test.py`, `*.test.ts(x)`, `*.spec.ts(x)`) + `6` when the latest `TestResult` is green; failed/errored run keeps the static 24. No test files and no run â†’ 0/pending |
+| security | 25 | all findings resolved â†’ 25 ("clean"); unresolved deduct per severity (critical 10 / high 6 / medium 3 / low 1 / info 0, floor 0); no findings at all â†’ 0 (never scanned â€” **pending**, distinct from clean since v1.17.6.6) |
+| docs | 15 | README/Markdown/`docs/` files Ã· total indexed files Ã— 15 |
 
-A component with no data yet scores **0** — projects are never assumed healthy.
+A component with no data yet scores **0** â€” projects are never assumed healthy.
 `documentation_pct` is the same ratio as a 0-100 integer. `screenshots_available`
 is always `False` (no screenshot feature yet; the Feature Matrix screenshots
-column stays `✗`).
+column stays `âœ—`).
 
-**Never-scanned ≠ clean (v1.17.6.6):** the scanner stamps `Project.last_scanned`
+**Never-scanned â‰  clean (v1.17.6.6):** the scanner stamps `Project.last_scanned`
 on every pass, so a project with zero findings is **pending** until it has been
-scanned at least once and **clean** only afterwards — the security cell shows
-`⚠ pending` vs `✓ clean` accordingly. Because the scan now runs chained to the
-daily repo-sync (§7.1), every project gets its first scan within one sync cycle
+scanned at least once and **clean** only afterwards â€” the security cell shows
+`âš  pending` vs `âœ“ clean` accordingly. Because the scan now runs chained to the
+daily repo-sync (Â§7.1), every project gets its first scan within one sync cycle
 (manually: `POST /security/scan?project_id=`, CLI `sentinel scan`).
 
-**Feature Matrix cells** (`✓`/`⚠`/`✗`): build/test — passing/failing/pending
-(a detected-but-unproven component is `⚠` "configured"); docs — **≥50%** /
-1-49% / 0% (the 50% green threshold is a Sprint 15 decision); security —
+**Feature Matrix cells** (`âœ“`/`âš `/`âœ—`): build/test â€” passing/failing/pending
+(a detected-but-unproven component is `âš ` "configured"); docs â€” **â‰¥50%** /
+1-49% / 0% (the 50% green threshold is a Sprint 15 decision); security â€”
 clean/findings/pending.
 
-**Caching (Sprint 15):** every read goes through `_fresh_row(project)` — if the
+**Caching (Sprint 15):** every read goes through `_fresh_row(project)` â€” if the
 stored `PortfolioScore.updated_at` is at least as new as the newest *source*
 row the score depends on (build/test/security/file timestamps +
 `last_indexed` + `last_scanned` since v1.17.6.6),
 the cached row is served as-is; otherwise the score is recomputed and persisted.
 Repeated tab loads are therefore instant, and the numbers refresh exactly when
 underlying data changes (e.g. after a repo sync pulls new commits). A stat dash:
-`summary()` — project count, buildable projects (have a build command),
-open unresolved findings, average portfolio health — served by
+`summary()` â€” project count, buildable projects (have a build command),
+open unresolved findings, average portfolio health â€” served by
 `GET /portfolio/summary` (Sprint 15, used by the Dashboard page).
 
 **Endpoints:** `GET /portfolio/scores`, `GET /portfolio/best-candidates?min_score=70`,
-`GET /portfolio/feature-matrix`, `GET /portfolio/summary` (see §2.7).
+`GET /portfolio/feature-matrix`, `GET /portfolio/summary` (see Â§2.7).
 
-**Frontend:** `/portfolio` route (nav item "Portfolio") — `pages/Portfolio.tsx`
+**Frontend:** `/portfolio` route (nav item "Portfolio") â€” `pages/Portfolio.tsx`
 (health-score grid, best candidates, feature matrix), `components/HealthCard.tsx`,
 `components/FeatureMatrix.tsx`, `api/portfolio.ts`. Names are joined from
 `GET /projects/`. The Dashboard page shows the summary numbers; the header shows
-the last repo-sync pill (see §13.4).
+the last repo-sync pill (see Â§13.4).
 
 **Deferred to Sprint 10.5 (Observatory):** the `ProjectGalaxy` / `ProjectTimeline` /
-`ArchitectureMap` components — now shipped, see §14.6.
+`ArchitectureMap` components â€” now shipped, see Â§14.6.
 
 ---
 
 ## 14.6. Observatory (Sprint 10.5)
 
 `ObservatoryService` (`backend/app/services/observatory_service.py`) provides three
-read-only, deterministic overviews over already-indexed data — no AI, no parsing
+read-only, deterministic overviews over already-indexed data â€” no AI, no parsing
 at query time.
 
-**Galaxy** `galaxy()` — projects become `project` nodes; technologies (a
+**Galaxy** `galaxy()` â€” projects become `project` nodes; technologies (a
 project's `framework` plus its `Dependency.name` rows) used by **2+ projects**
 become `tech` nodes with a `used by N projects` detail. Every project links to
 each tech it shares, so the graph shows reuse across the portfolio. v1.17.9:
@@ -1923,7 +1923,7 @@ checkouts) carry their checkout dir as `detail`. v1.17.9.1: project nodes
 carry `framework` (their own `Project.framework`) for the frontend focus panel.
 
 **Timeline** `timeline(days=365, kinds=None, project_id=None, offset=0,
-limit=500)` — collects events from `Project.created_at` (`project-created`),
+limit=500)` â€” collects events from `Project.created_at` (`project-created`),
 `GitCommit.timestamp` (`commit`, `hash8 message`), `BuildLog.started_at`
 (`build`, Build success/failed), `TestResult.run_at` (`test`, N passed / M
 failed) and `SecurityFinding.detected_at` (`finding`, `severity: title`),
@@ -1932,20 +1932,20 @@ descending, and pages via `offset`/`limit` with a `has_more` flag
 (`MAX_TIMELINE_EVENTS = 5000` is a safety bound, not a per-request cap).
 Timestamps are stored naive UTC, so the cutoff is computed naive-UTC to match.
 
-**Architecture** `architecture(project_id)` — builds a nested tree from indexed
+**Architecture** `architecture(project_id)` â€” builds a nested tree from indexed
 `ProjectFile.path` values (split on `/`, backslashes normalized). Nodes carry
 `count` = number of files beneath (each file increments every ancestor + itself),
 so root count == total indexed files, leaves == 1. Sorted dirs-first then files.
 
-**Schemas:** `backend/app/schemas/observatory.py` — `GalaxyGraph`/`GalaxyNode`/
+**Schemas:** `backend/app/schemas/observatory.py` â€” `GalaxyGraph`/`GalaxyNode`/
 `GalaxyLink`, `Timeline`/`TimelineEvent`, recursive `ArchitectureNode`
 (`model_rebuild()` resolves forward refs).
 
 **Endpoints:** `GET /observatory/galaxy`, `GET /observatory/timeline?days=`,
-`GET /observatory/architecture/{id}` (see §2.11). Registered in `main.py`
+`GET /observatory/architecture/{id}` (see Â§2.11). Registered in `main.py`
 under `api/v1/observatory.py`.
 
-**Frontend:** `/observatory` route (nav item "Observatory") —
+**Frontend:** `/observatory` route (nav item "Observatory") â€”
 `pages/Observatory.tsx` hosting the galaxy (v1.17.9.2: segmented
 "Metro | Families" toggle) plus `components/ProjectTimeline.tsx` (v1.17.9:
 day-grouped headers with per-day counts, kind chips, project filter, Load-more
@@ -1954,24 +1954,24 @@ file-type colors, search box, stats header, collapse/expand-all);
 `api/observatory.ts` on the shared axios client.
 
 Galaxy views (both deterministic, same `galaxy()` payload, no backend change):
-- `MetroView.tsx` — shared techs as colored transit lines (top-N slider, default
+- `MetroView.tsx` â€” shared techs as colored transit lines (top-N slider, default
   15 of 51), projects as stations; stations get x-slots in order of their
   highest-usage line, so interchanges align and stations can never collide.
   Click a station/line to focus or reverse-focus, hover highlights, stations
   draggable with Reset; projects with no visible-line tech become clickable
   "unserved" chips.
-- `ClusterView.tsx` — Jaccard similarity over shared techs, UPGMA clustering
+- `ClusterView.tsx` â€” Jaccard similarity over shared techs, UPGMA clustering
   with lexicographic tie-breaks (deterministic), dendrogram "family tree" +
   usage matrix; hover highlights row/column, tech labels reverse-focus.
   v1.17.9.3: projects with zero shared techs get an empty tech set before
   clustering (previously a missing map entry crashed the view).
-- `FocusPanel.tsx` — shared side panel (name, checkout dir, framework, shared
+- `FocusPanel.tsx` â€” shared side panel (name, checkout dir, framework, shared
   techs / users), rendered in a fixed-width grid column that never reflows
-  (v1.17.9.2: the old flex row rescalled the SVG when the panel mounted — the
+  (v1.17.9.2: the old flex row rescalled the SVG when the panel mounted â€” the
   flicker fix). The previous `ProjectGalaxy.tsx` was removed.
 
 **Note on scope:** the architecture tree derives exclusively from indexed file
-paths — it shows where components live, not cross-file imports. "Used by"
+paths â€” it shows where components live, not cross-file imports. "Used by"
 relationships aren't persisted, so they're intentionally absent.
 
 ---
@@ -1980,10 +1980,10 @@ relationships aren't persisted, so they're intentionally absent.
 
 `AppSessionService` (`backend/app/services/app_sessions.py`) records
 app-testing sessions and captures screenshots (later.md Tier 1 + Tier 4). One
-module, one responsibility (Rule 4): it watches and records — it never drives
+module, one responsibility (Rule 4): it watches and records â€” it never drives
 the app (Rule 2), and everything it produces is deterministic (Rule 3).
 
-**Marker protocol** — sessions annotate the app's *own* log
+**Marker protocol** â€” sessions annotate the app's *own* log
 (`data/logs/apps/<slug>.log`, same derivation as `build_runner._launch_app`:
 `Path(settings.db_path).parent.parent / "logs" / "apps"`), so provenance is a
 single file the launched app already writes to:
@@ -1991,42 +1991,42 @@ single file the launched app already writes to:
 - `[sentinel] checkpoint: <iso> <session_id>: <label>` (`checkpoint()`)
 - `[sentinel] Session ended <iso> <session_id>: <status>` (`end()`)
 
-**Log slice** — `_slice_for(project, session_id)` reads the log and returns
+**Log slice** â€” `_slice_for(project, session_id)` reads the log and returns
 the lines between the session's own start and end markers (inclusive);
 interleaved sessions slice to their own end marker (lines from other sessions
-inside the range stay — that is what the log contains, and the slice is
+inside the range stay â€” that is what the log contains, and the slice is
 byte-for-byte reproducible); an unfinished session slices to EOF. The slice is
 captured into `AppSession.log_slice` at `end()`.
 
-**Screenshots** — `capture(session_id, checkpoint_id=None)` runs a PIL
+**Screenshots** â€” `capture(session_id, checkpoint_id=None)` runs a PIL
 full-screen grab (`ImageGrab.grab()`) into
-`data/screenshots/<slug>/<iso>.png` with a 90×60 thumbnail
+`data/screenshots/<slug>/<iso>.png` with a 90Ã—60 thumbnail
 (`<stem>.thumb.png`) next to it (same aspect-constrained size family as the
-portfolio's card thumbs). Called on demand and auto at `end()` — a failed
+portfolio's card thumbs). Called on demand and auto at `end()` â€” a failed
 auto-shot never loses the session (logged, not raised). Deletion removes the
 rows and the PNG + thumb files.
 
-**Portfolio export** — `export_to_portfolio(session_id, screenshot_id)`
+**Portfolio export** â€” `export_to_portfolio(session_id, screenshot_id)`
 copies PNG + thumb into `SENTINEL_PORTFOLIO_DIR`'s `images/sessions/`
 (default `C:\Users\j\projects\jamesdileva\jamesdileva.github.io`, new env in
 `config.py` + `.env.example`) and returns the copied paths plus a ready-made
 card HTML snippet matching the site's `.card`/`.images`/`openModal` markup.
-Sentinel never pushes (Rule 2) — the snippet is for the user to paste and
+Sentinel never pushes (Rule 2) â€” the snippet is for the user to paste and
 commit manually.
 
-**Models** — `backend/app/db/models.py`: `AppSession` (project FK, title,
+**Models** â€” `backend/app/db/models.py`: `AppSession` (project FK, title,
 expected_output, actual_outcome, `SessionStatus` enum
 running/passed/failed/investigate, started_at/ended_at, log_slice) +
 `SessionCheckpoint` (session FK, label, at) + `SessionScreenshot` (session FK,
 nullable checkpoint FK, path, captured_at).
 
-**Endpoints** — `POST/GET/PATCH/DELETE /sessions`, `/sessions/{id}/checkpoints`,
+**Endpoints** â€” `POST/GET/PATCH/DELETE /sessions`, `/sessions/{id}/checkpoints`,
 `/sessions/{id}/end`, `/sessions/{id}/screenshots` (+`/{shot}/export`), and the
 media route `/sessions/{id}/screenshots/{filename}` (filename whitelist
-`[A-Za-z0-9._-]+` + resolve-inside-dir check — path traversal blocked). See
-§2.12. Registered in `main.py`.
+`[A-Za-z0-9._-]+` + resolve-inside-dir check â€” path traversal blocked). See
+Â§2.12. Registered in `main.py`.
 
-**Frontend** — `/sessions` nav item + route (`components/nav.ts`,
+**Frontend** â€” `/sessions` nav item + route (`components/nav.ts`,
 `routes/index.tsx`), `pages/Sessions.tsx` + `api/sessions.ts`: create dialog,
 project + status filters (with per-status counts), expandable session rows
 (checkpoint timeline, log slice with `[sentinel]` lines highlighted,
@@ -2039,57 +2039,58 @@ status radio) / Delete / Export-to-portfolio (copyable card snippet dialog).
 
 | Date | Version | Change | Author |
 |------|---------|--------|--------|
-| 2026-08-15 | 1.17.10.0 | **Sessions (Tier 1 recorder) + Tier 4 screenshot capture.** Backend: three new tables — `AppSession` (project FK, status enum running/passed/failed/investigate, expected/actual, started/ended, `log_slice`), `SessionCheckpoint` (session FK, label, at), `SessionScreenshot` (session FK, nullable checkpoint FK, path, captured_at). `services/app_sessions.py` (one module, Rule 4) annotates the app's *own* log (`data/logs/apps/<slug>.log`, same derivation as `build_runner`) with `[sentinel] Session started|checkpoint:|Session ended <iso> <id>: ...` markers and captures the deterministic log slice between a session's own markers (interleaved sessions slice to their own end marker or EOF; byte-for-byte reproducible). Screenshots: PIL `ImageGrab.grab()` full-screen grabs + 90×60 thumbs under `data/screenshots/<slug>/`, on demand or auto at session end (Rule 2 — capture, never act); delete removes rows + PNG/thumb files. Portfolio export: copies PNG + thumb into `SENTINEL_PORTFOLIO_DIR` (`images/sessions/`, default `C:\Users\j\projects\jamesdileva\jamesdileva.github.io`; new env in config.py + `.env.example`) and returns a ready-made card HTML snippet matching the site's `.card`/`openModal` markup — Sentinel never pushes, the user pastes and commits manually. API: `POST/GET/PATCH/DELETE /api/v1/sessions`, `POST .../checkpoints`, `POST .../end`, `POST .../screenshots` (+`/{shot_id}/export`), media route `GET .../screenshots/{filename}` (filename whitelist + resolve-inside-dir guard — traversal blocked). Dependency: `pillow>=10.0` in pyproject. Frontend: `/sessions` nav item + route, `pages/Sessions.tsx` + `api/sessions.ts` — create dialog, project + status filters (per-status counts), expandable rows (checkpoints timeline, log slice with `[sentinel]` lines highlighted, screenshot grid + zoom modal), Capture / Add checkpoint / End (outcome + status) / Delete / Export-to-portfolio (copyable snippet dialog). Docs: 01 §9 data dirs + changelog, 02 §2.12 + §14.7 + changelog, 03 changelog, later.md Tiers 1 + 4 marked done (2-3 renumbered), .env.example, AGENTS.md env list. Tests: +16 backend (CRUD, marker-slice boundaries incl. interleaved sessions, checkpoint ordering, capture files + thumb, auto-capture on end, delete cleans files, export copy + snippet, traversal guard, full API flow), +12 frontend (list/badges, project + status filters, expand detail, create, checkpoint, capture, end, export snippet dialog, delete, zoom modal). Backend 449 / frontend 120 green; black/isort/flake8 + prettier clean. | AI agent |
-| 2026-08-15 | 1.17.11.0 | **Scripted testers (later.md Tier 2, docs/tier2_plan.md).** Backend: `app/testers/` — per-app deterministic Python testers (Rule 3: substring/status/exit-code matchers only; Rule 2: manual "Run tester" button only). `_helpers.py` TesterContext (launch/http/cli/pytest/wait_log/wait/checkpoint/screenshot; bounded timeouts; raises TesterAssertionError → session `failed`, TesterEnvError/TesterTimeoutError → `investigate`; `cli` appends `[tester]` lines to the app log, never env values — tested); `__init__.py` Tester dataclass + registry (project slug → tester, circular-safe submodule imports) + `DEFAULT_SMOKE` (launch → wait → scan for `Traceback|FATAL ERROR|Cannot find module` → screenshot) for launchable apps without a custom tester; custom testers: Cg (mock-LLM backend + watches the renderer's broken `/api/pipeline/jobs/` call in the app log + Electron + 46-test pytest suite), Ag (static CLI asserts GLTF file; `animate` step is red — AG main.py:283 NameError, evidence in the session log; opencv-python-headless installed into `.venv_sf3d`), Demake Engine (upload trailer → poll status → manifest → asset, structural asserts), Tv-Scheduler, Workflow-Toolkit, Card-Game, Dinner-Menu-Generator. Ground-truth revocations (honest "No tester", descriptor 404): Mlbattles, Hft-Order-Book, Algo-Trader, Python-Projects. `services/tester_runner.py` (resolve/describe/run — auto-creates `Tester: <name>` session, auto screenshot + status), `tasks/tester_tasks.py` (job-pool task, activity_bus "tester" event), `job_scheduler` registry + `run_tester`, `schemas/tester.py`, API `GET /api/v1/testers/{project_id}` + `POST /api/v1/testers/run` (202 JobEnvelope), `build_runner._launch_app` gained an `env` overlay (tester launches; backward compatible). Frontend: Builds page "Run tester" button (descriptor-aware; disabled "No tester"; run → session-result card with status tone + View session link; polls sessions for the post-click `Tester:` session), `api/testers.ts`. Docs: tier2_plan.md (Phase B ground-truth revision), later.md Tier 2 → DONE, changelogs 01/02/03. Tests: +21 backend (registry, resolve, context helpers incl. timeout + env redaction, runner statuses, API descriptor/404/JobEnvelope with inline runner), +6 frontend (button states, run flow, passed/failed result tones); 470 backend / 124 frontend green; black/isort/flake8 (max-line 100) clean. | AI agent |
+| 2026-08-15 | 1.17.10.0 | **Sessions (Tier 1 recorder) + Tier 4 screenshot capture.** Backend: three new tables â€” `AppSession` (project FK, status enum running/passed/failed/investigate, expected/actual, started/ended, `log_slice`), `SessionCheckpoint` (session FK, label, at), `SessionScreenshot` (session FK, nullable checkpoint FK, path, captured_at). `services/app_sessions.py` (one module, Rule 4) annotates the app's *own* log (`data/logs/apps/<slug>.log`, same derivation as `build_runner`) with `[sentinel] Session started|checkpoint:|Session ended <iso> <id>: ...` markers and captures the deterministic log slice between a session's own markers (interleaved sessions slice to their own end marker or EOF; byte-for-byte reproducible). Screenshots: PIL `ImageGrab.grab()` full-screen grabs + 90Ã—60 thumbs under `data/screenshots/<slug>/`, on demand or auto at session end (Rule 2 â€” capture, never act); delete removes rows + PNG/thumb files. Portfolio export: copies PNG + thumb into `SENTINEL_PORTFOLIO_DIR` (`images/sessions/`, default `C:\Users\j\projects\jamesdileva\jamesdileva.github.io`; new env in config.py + `.env.example`) and returns a ready-made card HTML snippet matching the site's `.card`/`openModal` markup â€” Sentinel never pushes, the user pastes and commits manually. API: `POST/GET/PATCH/DELETE /api/v1/sessions`, `POST .../checkpoints`, `POST .../end`, `POST .../screenshots` (+`/{shot_id}/export`), media route `GET .../screenshots/{filename}` (filename whitelist + resolve-inside-dir guard â€” traversal blocked). Dependency: `pillow>=10.0` in pyproject. Frontend: `/sessions` nav item + route, `pages/Sessions.tsx` + `api/sessions.ts` â€” create dialog, project + status filters (per-status counts), expandable rows (checkpoints timeline, log slice with `[sentinel]` lines highlighted, screenshot grid + zoom modal), Capture / Add checkpoint / End (outcome + status) / Delete / Export-to-portfolio (copyable snippet dialog). Docs: 01 Â§9 data dirs + changelog, 02 Â§2.12 + Â§14.7 + changelog, 03 changelog, later.md Tiers 1 + 4 marked done (2-3 renumbered), .env.example, AGENTS.md env list. Tests: +16 backend (CRUD, marker-slice boundaries incl. interleaved sessions, checkpoint ordering, capture files + thumb, auto-capture on end, delete cleans files, export copy + snippet, traversal guard, full API flow), +12 frontend (list/badges, project + status filters, expand detail, create, checkpoint, capture, end, export snippet dialog, delete, zoom modal). Backend 449 / frontend 120 green; black/isort/flake8 + prettier clean. | AI agent |
+| 2026-08-15 | 1.17.11.0 | **Scripted testers (later.md Tier 2, docs/tier2_plan.md).** Backend: `app/testers/` â€” per-app deterministic Python testers (Rule 3: substring/status/exit-code matchers only; Rule 2: manual "Run tester" button only). `_helpers.py` TesterContext (launch/http/cli/pytest/wait_log/wait/checkpoint/screenshot; bounded timeouts; raises TesterAssertionError â†’ session `failed`, TesterEnvError/TesterTimeoutError â†’ `investigate`; `cli` appends `[tester]` lines to the app log, never env values â€” tested); `__init__.py` Tester dataclass + registry (project slug â†’ tester, circular-safe submodule imports) + `DEFAULT_SMOKE` (launch â†’ wait â†’ scan for `Traceback|FATAL ERROR|Cannot find module` â†’ screenshot) for launchable apps without a custom tester; custom testers: Cg (mock-LLM backend + watches the renderer's broken `/api/pipeline/jobs/` call in the app log + Electron + 46-test pytest suite), Ag (static CLI asserts GLTF file; `animate` step is red â€” AG main.py:283 NameError, evidence in the session log; opencv-python-headless installed into `.venv_sf3d`), Demake Engine (upload trailer â†’ poll status â†’ manifest â†’ asset, structural asserts), Tv-Scheduler, Workflow-Toolkit, Card-Game, Dinner-Menu-Generator. Ground-truth revocations (honest "No tester", descriptor 404): Mlbattles, Hft-Order-Book, Algo-Trader, Python-Projects. `services/tester_runner.py` (resolve/describe/run â€” auto-creates `Tester: <name>` session, auto screenshot + status), `tasks/tester_tasks.py` (job-pool task, activity_bus "tester" event), `job_scheduler` registry + `run_tester`, `schemas/tester.py`, API `GET /api/v1/testers/{project_id}` + `POST /api/v1/testers/run` (202 JobEnvelope), `build_runner._launch_app` gained an `env` overlay (tester launches; backward compatible). Frontend: Builds page "Run tester" button (descriptor-aware; disabled "No tester"; run â†’ session-result card with status tone + View session link; polls sessions for the post-click `Tester:` session), `api/testers.ts`. Docs: tier2_plan.md (Phase B ground-truth revision), later.md Tier 2 â†’ DONE, changelogs 01/02/03. Bugfix: log-slice read tolerates non-UTF-8 app-log bytes (cp1252 child output) — end() no longer crashes with UnicodeDecodeError leaving sessions 'running' (regression test added; live catch: Demake's upload print of U+2192 under redirected stdout). Tests: +21 backend (registry, resolve, context helpers incl. timeout + env redaction, runner statuses, API descriptor/404/JobEnvelope with inline runner), +6 frontend (button states, run flow, passed/failed result tones); 470 backend / 124 frontend green; black/isort/flake8 (max-line 100) clean. | AI agent |
 | 2026-08-15 | 1.17.9.3 | **Galaxy Families hotfix: island projects crashed the clustering view.** `ClusterView` built its project->tech map only from graph links, so a project with zero shared techs (e.g. the 8 idea repos with no dependencies) had no entry; `clusterProjects` then called `jaccard(undefined, ...)` -> `TypeError: can't access property Symbol.iterator` on switching Metro -> Families. Fix: seed an empty tech set for every project before clustering (`derived` memo in `ClusterView.tsx`). Regression test added (island project renders with zero cells next to a linked project). Tests: 108 frontend green, backend untouched (433). | AI agent |
 | 2026-08-15 | 1.17.9.2 | **Galaxy rework: Metro + Families views.** Frontend-only redesign of the Observatory galaxy, motivated by the two-column graph's overlap and flicker (the focus panel used to sit in the same flex row as the SVG, so mounting it rescaled the whole graph). Metro view (`MetroView.tsx`): shared techs become colored transit lines (top-N slider, default 15 of 51, line labels show usage), projects become stations that get x-slots in order of their highest-usage line - interchanges align vertically and stations can never collide; click a station or a line to focus/reverse-focus, hover highlights, stations stay draggable with Reset, projects with no visible-line tech become clickable 'unserved' chips. Families view (`ClusterView.tsx`): Jaccard similarity over shared techs + UPGMA clustering with lexicographic tie-breaks (deterministic) -> dendrogram family tree on top of a usage matrix; hover highlights row + column, tech labels reverse-focus their projects. Both views reuse the extracted `FocusPanel.tsx` (name, checkout dir, framework, shared techs / users) rendered in a fixed-width grid column that never reflows. Old `ProjectGalaxy.tsx` removed. Tests: +16 frontend (10 metro: rails/slider/interchange/alignment/hover/reverse-focus/drag/unserved/tooltips; 6 families: rows/cells, leaf-order clustering, row-col highlight, focus panel, reverse focus, single-project), suite 107 green; backend untouched (433 green). | AI agent |
 | 2026-08-14 | 1.17.9.1 | **Galaxy interactive pass + repo cleanup + sync exclusion.** Frontend Galaxy (`ProjectGalaxy.tsx`): fixed two-column layout (projects in the left gutter, techs right) with end-anchored project labels and a text halo, curved quadratic-bezier links, tech nodes as rotated diamonds, hover highlight (neighbors dim, unpinned), click-to-pin focus panel (project detail, framework, shared-tech chips, or the tech's usage list, plus clear button), drag-to-reposition with Reset layout (clamped to the viewBox; islands stay dim). Backend: `GalaxyNode.framework` added and populated by `galaxy()` so the panel shows each project's framework. Repo sync: new `SENTINEL_GITHUB_EXCLUDE` (comma-separated, `config.py` validator + `remote_repos()` case-insensitive filter, 2 tests) - `juduncan/cse455` is excluded because the repo still exists upstream (collaborator account, cannot delete); with both local checkouts gone the restart GC removed the Cse455 rows. Housekeeping: 8 new idea repos pushed to GitHub (resmaker, betsim, coach, manvsmachine, nexus, surfhop, whoareyou, worldsim; public), MM received its architecture doc (repo was empty), Card-Game's one-branch README/package-lock divergence merged (pull --rebase + push), duplicate checkouts deleted (projects\jamesdileva\MM, \utilitytool). Tests: +3 backend (exclusion x2, galaxy framework x1), frontend galaxy suite rewritten for the new shapes: 13 tests (+5 net; gutter anchor, hover dim, drag + reset, tech reverse-focus, focus panel with framework, diamond/curved-link selectors). | AI agent |
 | 2026-08-14 | 1.17.9.0 | **Observatory v2 UI pass + galaxy data fix.** Backend ? dependency extraction (`indexer.extract_dependencies`) now discovers manifests below the project root (git-tracked, bounded depth 2, noise-pruned) so projects with backend//renderer// manifests stop reporting zero deps (Sentinel/Cg/Ag went 0 -> 15-25 each; fastapi now shared by 3, uvicorn 3, react 2+), and names are case-canonicalized (most common casing wins ? `Flask` + `flask` merge). Galaxy groups techs case-insensitively with the most common casing as label and disambiguates same-named projects (Cse455 x2 -> detail = checkout dir). Timeline gained `kind` (comma list), `project_id`, and `offset`/`limit` pagination with `has_more` (old hard 500 cap per-request became a 5000 safety bound). Frontend ? Galaxy: click a project to focus its links + techs and dim the rest, zero-link projects render as dim islands, tech labels moved inside the viewBox, tech list sorted by usage count, tooltip detail for duplicate names. Timeline: day-grouped headers with per-day counts (no more endless scroll), kind chips + project filter, Load-more pagination. Architecture Map: collapsible dirs, file-type colors, search box, stats header (files/dirs/top-level chips), collapse-all/expand-all. Tests: +10 backend (subdir manifests, noise pruning, case canonicalization, galaxy grouping + disambiguation, timeline kind/project filters, pagination, API params), +8 frontend (day groups, chips, load more, galaxy focus/dimming/sorting/detail, collapse/search/stats). | AI agent |
 | 2026-08-14 | 1.17.8.2 | **App-launch logging fixed ? the app tree's own output now actually lands in `data/logs/apps/<slug>.log`.** The launch used `DETACHED_PROCESS`, which on Windows makes cmd.exe spawn external children (npm, python, node) with invalid stdout/stderr handles ? so the launched apps' logs silently vanished and only the `[sentinel]` launch marker landed (probed flag combinations: direct children were fine, every cmd-spawned child lost output even on natural exit). `build_runner._launch_app` now uses `CREATE_NEW_PROCESS_GROUP` alone, which captures the whole chain; the app tree attaches to Sentinel's hidden console, which is harmless. Tests: +1 real-process integration test (startup command prints, asserts the child's line appears in the app log ? regression-guarded, fails under DETACHED_PROCESS). | AI agent |
 | 2026-08-14 | 1.17.8.1 | **Sentinel moves to port 8420.** The uvicorn default 8000 is what the indexed projects' dev servers (Cg, Demake Engine) bind, so build-to-open launches died on WinError 10013 while Sentinel held the port. `SENTINEL_PORT` default is now 8420 (config.py, run.py --port, .env.example, vite proxy, playwright e2e, packaging test) ? Cg and Demake dev servers now bind 8000 freely. Docs: README, AGENTS.md, desktop.md, 01 ?9/?10, 02 ?4.2/?13, 03 updated. Tests: packaging default-port assert. | AI agent |
-| 2026-08-14 | 1.17.8.0 | **Subdir-aware command discovery; build→open.** (1) **Discovery finds builds one level down** (command_extractor.py): known subdirs renderer/frontend/client/web/ui/dashboard → `cd <dir> && npm install`/`npm run build`/`npm run start|dev`/`npm run test` from their package.json; backend/server/api requirements.txt → `cd <dir> && pip install -r requirements.txt` (root manifests still win per family; commands run from the project root via the shell runner). Python entry modules with an argparse `gui`/`web` subcommand are launchable apps by *code*, not prose (AG: `python -m rigging_engine.main gui` — master_reference2.md's command, now deterministic); a FastAPI entry that documents `uvicorn main:app` gets it as startup (demake: `cd backend && uvicorn main:app --reload`); DEVELOPMENT.md/docs/DEVELOPMENT.md join the README candidates; docs now also yield startup commands (whitelisted spellings only); `_venv_python` accepts a plain `venv/` dir (CG, demake) and the `backend/tests/` pytest convention runs `cd backend && "<venv python>" -m pytest` (CG; deterministic conventions now run *before* the doc scan — CG's README documents a `npm run test` that doesn't exist, the real suite is backend pytest in `venv/`). Live discovery: AG = startup gui CLI + venv pytest (399 collected; 1 cv2 env-gap collection error, documented in AG's AGENTS.md); CG = build/startup/install/test all real; demake = uvicorn startup + root pip. (2) **build→open** (build_runner.py): Run Build becomes Build & Open for every project — a green build, or a project with no compile step ("Build not needed — this project has no compile step."), launches the `startup` command **detached** (DETACHED_PROCESS, no command timeout — the app keeps running) appending to `data/logs/apps/<name>.log`, through the repo's own venv interpreter when it has one (`python`-prefixed commands rewritten to the venv exe; backslash-safe lambda replace). A failed build never opens the app; neither-build-nor-startup stays the honest v1.17.7.5 skipped record. New `BuildLog.launch_command` (ALTER migration via connection.py) surfaced in BuildLogRead/JobStatus; Builds.tsx action label adapts to the discovered commands (Build & Open / Open app / Build / Run build), the log shows an "App launched: …" line, and the completion toast notes the launch. Launch is always user-initiated (Rule 2: beats never open apps). Docs: AGENTS.md rules honored — changelog rows in 01/02/03, builds.md recipe table refreshed (AG/CG/Demake/Sentinel rows + build→open note). Tests: +13 extractor (subdir npm/pip, root-wins, CLI gui/web, entry uvicorn, DEVELOPMENT.md, startup-from-docs, subdir pytest, plain venv, venv-qualified cd-pytest, prose-ignored), +5 runner (no-build launches, venv rewrite, no-launch-on-failure, launch-after-success, launch-failure honesty), +4 frontend (labels + log line + toast); suite green | AI agent |
+| 2026-08-14 | 1.17.8.0 | **Subdir-aware command discovery; buildâ†’open.** (1) **Discovery finds builds one level down** (command_extractor.py): known subdirs renderer/frontend/client/web/ui/dashboard â†’ `cd <dir> && npm install`/`npm run build`/`npm run start|dev`/`npm run test` from their package.json; backend/server/api requirements.txt â†’ `cd <dir> && pip install -r requirements.txt` (root manifests still win per family; commands run from the project root via the shell runner). Python entry modules with an argparse `gui`/`web` subcommand are launchable apps by *code*, not prose (AG: `python -m rigging_engine.main gui` â€” master_reference2.md's command, now deterministic); a FastAPI entry that documents `uvicorn main:app` gets it as startup (demake: `cd backend && uvicorn main:app --reload`); DEVELOPMENT.md/docs/DEVELOPMENT.md join the README candidates; docs now also yield startup commands (whitelisted spellings only); `_venv_python` accepts a plain `venv/` dir (CG, demake) and the `backend/tests/` pytest convention runs `cd backend && "<venv python>" -m pytest` (CG; deterministic conventions now run *before* the doc scan â€” CG's README documents a `npm run test` that doesn't exist, the real suite is backend pytest in `venv/`). Live discovery: AG = startup gui CLI + venv pytest (399 collected; 1 cv2 env-gap collection error, documented in AG's AGENTS.md); CG = build/startup/install/test all real; demake = uvicorn startup + root pip. (2) **buildâ†’open** (build_runner.py): Run Build becomes Build & Open for every project â€” a green build, or a project with no compile step ("Build not needed â€” this project has no compile step."), launches the `startup` command **detached** (DETACHED_PROCESS, no command timeout â€” the app keeps running) appending to `data/logs/apps/<name>.log`, through the repo's own venv interpreter when it has one (`python`-prefixed commands rewritten to the venv exe; backslash-safe lambda replace). A failed build never opens the app; neither-build-nor-startup stays the honest v1.17.7.5 skipped record. New `BuildLog.launch_command` (ALTER migration via connection.py) surfaced in BuildLogRead/JobStatus; Builds.tsx action label adapts to the discovered commands (Build & Open / Open app / Build / Run build), the log shows an "App launched: â€¦" line, and the completion toast notes the launch. Launch is always user-initiated (Rule 2: beats never open apps). Docs: AGENTS.md rules honored â€” changelog rows in 01/02/03, builds.md recipe table refreshed (AG/CG/Demake/Sentinel rows + buildâ†’open note). Tests: +13 extractor (subdir npm/pip, root-wins, CLI gui/web, entry uvicorn, DEVELOPMENT.md, startup-from-docs, subdir pytest, plain venv, venv-qualified cd-pytest, prose-ignored), +5 runner (no-build launches, venv rewrite, no-launch-on-failure, launch-after-success, launch-failure honesty), +4 frontend (labels + log line + toast); suite green | AI agent |
 | 2026-08-14 | 1.17.7.7 | **Live UI updates for scans and builds; resolved findings are cleanable; AG finally testable.** (1) **Builds poll race fixed** (Builds.tsx): `finish()` cleared `pollingJobId` *before* the awaited history refresh, so the effect cleanup flipped `cancelled` and dropped both the refreshed list and the toast - the row stayed "running..." forever on a real network; the refresh + toast now run first, then the poll state clears (regression test with a slow history fetch). (2) **Security tab refreshes on completion** (Security.tsx): after queueing a scan/scan-all the tab polls `GET /projects/{id}` every 2 s until `last_scanned` moves past the pre-scan snapshot (stamped by the scanner on every run - the only deterministic completion signal, since a clean scan writes no finding row), then refetches findings + toasts. Scan buttons show "Scanning..." while the poll is live (10-min cap). (3) **Resolved findings cleanable**: every stale leftover is `resolved=True` forever (Ag 209, WT 183, Sentinel 7, others 1-2 - all false positives from the pre-v1.17.7.5 scanner) and spammed the observatory timeline (~400 events). New `DELETE /api/v1/security/findings?project_id=` removes *resolved* rows only (SecurityRepository.delete_resolved, open findings untouched - they are the live scan state and the idempotence keys); the tab defaults to open findings with a "Show resolved" toggle + "Clear resolved (N)" button; the timeline now filters `resolved == False`. (4) **AG gets a test command**: AG's root has no manifest (requirements live in stable-fast-3d//triposr/ subdirs; AGENTS.md is a session log with zero command literals), so discovery honestly found nothing. Two deterministic additions (command_extractor.py): `AGENTS.md`/`docs/AGENTS.md` join the README candidates but are scanned for fenced code blocks only (Sentinel's own AGENTS.md mentions "pytest in backend/" mid-sentence - a whole-file scan would mint a wrong command), and a pytest convention extractor (last in order): a root `tests/` dir + at least one root-level `.py` file yields `test: pytest`. Empty extractor results no longer claim keys (an earlier extractor that found nothing must not block a later confident one - the AGENTS.md scan returned `test: ""` and shadowed the convention). AG now discovers test: pytest; its build step stays honestly skipped (interpreted Python app - nothing compiles). Docs: 01/02/03 changelogs. Tests: +4 backend (DELETE API x3, repo delete_resolved, timeline excludes resolved, extractor: AGENTS.md fenced, AGENTS.md prose ignored, pytest convention x2) +5 frontend (Security poll/toggle/clear x5, Builds slow-refresh regression) | AI agent |
 | 2026-08-14 | 1.17.7.6 | **World tab removed from the sidebar.** The world simulator is opt-in since v1.17.7.3 (SENTINEL_WORLD_SIM_ENABLED=true); with it off, the World nav item loaded a page that 404s on every API call. 
-av.ts drops the World entry and outes/index.tsx drops the route, so a stale /world link falls through to the Dashboard catch-all; WorldSimulatorPage/WorldGridMap/world_sim.ts stay in place for a future re-enable (re-add the nav line + route) | AI agent |
-| 2026-08-14 | 1.17.7.6 | **C++/CMake build discovery + builds.md recipe reference.** (1) **CMake extractor** (command_extractor.py _from_cmake, ordered before the README scan): a root CMakeLists.txt yields uild: cmake --build build � the canonical invocation that reuses the cached generator (Algo Trader and HFT-Order-Book are configured with MinGW Makefiles, so it drives mingw32-make in uild/) and re-runs configure automatically when CMakeLists.txt changes; 	est: ctest --test-dir build only when enable_testing()/dd_test appears. Blast radius is exactly the two CMake repos in the projects root. (2) **Stale-stack fallback** (uild_runner.py): a stored stack.commands.build that is empty no longer short-circuits to *skipped* � the runner re-discovers at build time (same runtime-fallback pattern as the portfolio matrix), so extractor improvements apply without re-indexing. (3) **docs/builds.md**: versioned recipe reference for all 21 projects (install/build/test/startup per project, discovered commands only) + a C++ deep-dive � Algo Trader: configure once cmake -S . -B build -G "MinGW Makefiles", build via cmake --build build, outputs uild\trader.exe + uild\backtester.exe; acktester is a separate strategy-testing executable *within* the repo, not its own project; data lives in config/settings.json/data\algo_trader.db. HFT-Order-Book: same CMake layout (cpp-httplib vendored). Doc is indexed by the knowledge system and security-scanned, so it stays free of credential-like literals. Docs: 01/02/03 changelogs, builds.md. Tests: +3 parametrized extractor cases (CMakeLists alone, +enable_testing, +dd_test) and +1 runner fallback test (stale empty stack re-discovers cmake --build build) | AI agent |
-| 2026-08-14 | 1.17.7.5 | **Index-gated security scans (no more false positives); honest no-command builds; README build discovery.** (1) **Scanner scans what the index indexes** (`security_scanner.py`): the project walk used the indexer's `_iter_source_files` directly, so untracked junk got flagged — live run showed AG with 208 eval/exec findings in `.venv_sf3d\Lib\site-packages`, WorkFlow-Toolkit 174 in the untracked `backend\runtime\python\Lib` stdlib + `release\win-unpacked\` outputs, and Sentinel flagging itself (3 findings: regex titles "Use of eval()"/"Use of exec()" as *string literals* matched by the old regex `_STATIC_PATTERNS`, and a comment example placeholder token (the alphabetical `ghp_`-prefixed sample) caught by the Generic Secret). Fix: `_iter_scan_files` reads the indexed `ProjectFile` rows (`absolute_path`; fallback = the same gated walk), and static analysis is now **AST-based** — `eval`/`exec`/`compile` are flagged only as real `Call`/`Name` nodes, never inside strings or comments; the placeholder comment no longer contains a literal GitHub token. Expected live effect after the re-scan: AG 209→1, WT 183→0, Sentinel 3→0. (2) **"No build command" is now an honest *skipped*** (`build_runner.py`): no discoverable command used to record `success=True, exit_code=0` and feed "Build passed" — it now records `success=None, exit_code=None` ("No build command configured for this project."), the feed says "Build skipped", `JobStatus` gains the `skipped` literal (was: the old code mapped `success=None` → "failed"), and `Builds.tsx` labels completed null-success logs "skipped" (was "running"). Portfolio: the static 21 build points still require a command — `_has_build_command` consults `extract_build_commands` at runtime as a fallback so README-discovered commands count. (3) **Better command discovery** (`command_extractor.py` rewrite): ordered extractors for Makefile (`make build`/`make all`), Cargo.toml (`cargo build`/`cargo test`), go.mod (`go build ./...`/`go test ./...`), Maven `pom.xml`/wrappers (`mvn package`/`mvn test`), Gradle `build.gradle`/wrappers (`gradle build`/`gradle test`), dotnet `.sln`/`.csproj` (`dotnet build`/`dotnet test`), lockfile-aware package.json install (pnpm/yarn/bun), plus **README/docs discovery** — known command spellings (`npm run build`, `make build`, `cargo build`, `gradle build`, `mvn package`, `dotnet build`, `go build ./...`, `pip install`, ...) matched in README.md/BUILDING.md/docs with a word-boundary regex; explicit manifests always win over prose. Docs: 01 §17, 02 §14.5 + changelog, 03 changelog. Tests: +2 backend (AST ignores string literals; scanner uses indexed files only — untracked `.venv_sf3d`/`release` never scanned), +10 parametrized extractor tests (Makefile ×3, cargo, go, maven, dotnet ×2, gradle, README code-block/plain/invention-guard/package.json-precedence), honesty tests rewritten (runner: `success is None`; API: "skipped" status), +1 index-completeness test (git fixture: every tracked file across docs/backend/frontend is indexed), +1 vitest (skipped label); 93.6 % coverage | AI agent |
-| 2026-08-12 | 1.17.7.3 | **Projects root; git-tracked indexing; watch-dirs parser fix; world-sim opt-in.** (1) **Projects root** (this machine): all project checkouts moved from the home dir to `C:\Users\j\projects` (nested `jamesdileva\`/`juduncan\` canonical checkouts moved along); `.env` now sets `SENTINEL_WATCH_DIRS=C:\Users\j\projects`, so the home dir is never walked and the projects-root dirs (betsim, coach, nexus, ResMaker, surfhop, ...) become projects at the next scan. DB rows keep their identity via the new `scripts/migrate_projects_root.py` path rewrite (`project.path`, `projectfile.path`/`absolute_path`, `securityfinding.file_path`; `--dry-run` first) run after the move — no GC churn, no chat/summary loss (21 project rows + 12,470 file paths on the desktop). (2) **Git-tracked indexing** (`indexer.py`): file lists come from `git ls-files -z` for real git checkouts (walk fallback for non-git and bare `.git/` dirs, rc 128) — untracked `.env` secrets, IDE state and uncommitted junk never enter the index (the makehuman `.env` case); ignore/binary/size gates still apply; stale rows prune on rescan as before. AG `tests/conftest.py` + WorkFlow-Toolkit `test.py` updated for the new root. (3) **Watch-dirs parser fix** (`config.py`): `SENTINEL_WATCH_DIRS` accepts a single dir, comma-separated, or JSON — the documented comma format previously crashed pydantic-settings' JSON-only parser (`SettingsError`). (4) **World sim opt-in**: `world_sim_enabled` defaults to `False` (router + beat register only with `SENTINEL_WORLD_SIM_ENABLED=true`); world-sim API tests mount the router explicitly. Docs: AGENTS.md, desktop.md, 02 §4.2/§13.4, 01/02/03 changelogs. Tests: +5 backend (watch-dirs forms ×3, git tracked-only, walk fallback, world-sim default), full suite green | AI agent |
-| 2026-08-12 | 1.17.7.2 | **Junk-free file index; honest knowledge reset; no autostart task.** (1) **Ignore patterns** (`config.py`): `Library/` (Unity's regenerable PackageCache/Artifacts/BurstCache — Khd4 alone was 25.6k cache files), `release/` + `win-unpacked/` (electron-builder output — WorkFlow-Toolkit 7.6k, Airadio 65), `*.pdb`/`*.bhc` (build symbols/Burst caches) — the desktop index had swollen to 47,455 files vs ~4k of real source on the laptop (v1.17.7.1 gates covered `.venv*/`/`dist/`/`build/` but not these); ignored rows prune themselves on the next scan (`_index_files` drops rows no longer walked, proven by Demake 35k→339 and AG 26k→1.3k). (2) **Reset now sticks** (`job_scheduler.py`, `rag_tasks.py`): new `JobScheduler.cancel_queued(name_prefix)` cancels not-yet-started pool jobs (futures tracked per submit, callback-pruned); `run_reset_knowledge` cancels queued `run_index_knowledge` jobs before clearing flags + dropping collections, so the embedded count goes to 0 and stays 0 — previously the boot auto-index re-queued ~20 projects and re-embedded seconds after the reset, making it look like a no-op. (3) **Autostart task removed**: `scripts/install_service.py` deleted, `run.py` drops `--service`/`--install`/`--uninstall` (and the now-unused PYWIN candidates), the desktop task uninstalled (`schtasks /delete /tn Sentinel`) — the 5-min Task-Scheduler rerun spawned a console window every time it found the port free (Last Result 1 bind races against a manual start); the server is started manually with `run.py`. Docs: AGENTS.md, README, desktop.md, 01 repo tree, 02 §13.3/§13.4 + troubleshooting, 03 Phase 13. Tests: −2 packaging (install_service), +ignore-pattern indexer, +cancel_queued, +reset cancels queued jobs | AI agent |
-| 2026-08-12 | 1.17.7.1 | **Junk-file indexing gates + fast boot scans.** The first full scan on the desktop froze the API for ~25-40 min: `_iter_source_files` rglob'd entire trees (demake-engine: 35.3k files / 11 GB incl. a 3.3 GB `model.onnx_data`; AG: 26.8k files incl. `.venv_sf3d` — the exact `.venv/` ignore pattern missed venv-like dirs) and parsers `read_text`'d whole files, decoding multi-GB binaries to strings on every scan. Fixes: **(1) file gates** — `SENTINEL_MAX_FILE_KB` (default 5120, `config.py`) + a `_BINARY_SUFFIXES` denylist (.onnx/.onnx_data/.pt/.pth/.safetensors/.dll/.so/.db/.sqlite/images/media/archives/...) applied in `_is_skippable` to both full scans and `update_incremental`; **(2) walk prune** — the project walk is a DFS that never descends into ignored dirs (`.git/`, `node_modules/`, `.venv*/`, `dist/`, `build/`, `data/` — `data/` added, `.venv/`→`.venv*/`) instead of rglob+filter (24k ignored entries under this repo alone: `backend/.venv` 15.9k, `frontend/node_modules` 8.2k); **(3) mtime fast-path** — new `ProjectFile.mtime_ns` (BIGINT, ALTER migration via `connection._MIGRATIONS`): `_upsert_file` skips re-read/re-parse when `mtime_ns`+`size_bytes` are unchanged, so boot scans drop to seconds after the first pass. **run.py venv resolution** (caught during deploy): the launcher only knew repo-root `.venv` + a Linux-style fallback, so `run.py` died `FileNotFoundError` on this machine — `PY_CANDIDATES`/`PYWIN_CANDIDATES` now resolve `backend\.venv` first, root `.venv` second, `.venv/bin/python3` last. **CLI transparency**: `index --all` reports `Indexed k/N: <name>` per project via a progress callback on `scan_all_projects`. Tests: +3 backend (binary+size gates, ignored-dir prune incl. `.venv_sf3d`/`data/`, mtime fast-path skip→reparse), 93.66 % | AI agent |
-| 2026-08-12 | 1.17.7 | **Single-desktop deployment; GitHub is now optional; scans decoupled from sync.** The laptop is retired — the desktop is both the dev workstation and the always-on server (docs/laptop.md → `docs/desktop.md`; docs/01 §9/§10, docs/02 §13 rewritten; dashboard at `http://127.0.0.1:8000`, localhost only). **Tokenless first-class**: `sync_tasks.run_repo_sync` no longer says "skipped" and startup no longer publishes a token warning (`main.py` logs one INFO line instead); the `repo-sync` beat registers only when `SENTINEL_GITHUB_TOKEN` is set (`job_scheduler.py`). **Security scan-all owns its own beat**: new `SENTINEL_SCAN_INTERVAL_MINUTES` (default 1440, `config.py`) — previously the daily scan ran chained to the repo-sync pass, so a tokenless install never scanned; `run_repo_sync` no longer calls `run_security_scan_all`. **Home-dir discovery pruning** (`indexer.py`): the full-home `rglob` walk replaced with a depth-aware walk that prunes noise dirs (`AppData`, `OneDrive`, `node_modules`, `.venv`, tool caches — `_DISCOVERY_SKIP_DIRS`) during traversal and never enters paths beyond `_DISCOVERY_DEPTH`; checkouts at depth ≤ 4 still found, eligible set unchanged (validated: 21 sync-owned projects in `C:\Users\j`). **install_service venv fallback**: the Task-Scheduler command resolves `backend\.venv` (this machine) or the repo-root `.venv` (previously only repo-root `.venv` — the task would point at a nonexistent pythonw here). Tests: +8 backend (scan-all/repo-sync beat registration tokenless+token, scan decoupled from sync, scan interval config, discovery pruning ×3, install_service venv ×2), 93.95 % total | AI agent |
-| 2026-08-10 | 1.17.5 | Duplicates eliminated at the source (Rule 5: projects are known entities). **Discovery eligibility**: only *sync-owned* checkouts can become projects — a canonical `<root>/<owner>/<name>` clone whose origin URL matches `github.com/<owner>/<name>`, or a flat direct-child checkout with any GitHub origin (the repos repo-sync adopted in v1.17.4 live there) — so git worktrees (`CG.worktrees\agents-*`), stray copies (`Desktop\airadio`, `Documents\CG`, `Desktop\backups\algo-trader`), nested sub-repos (`AG\stable-fast-3d`, `Python Projects\main`), `.codex\*` and seed fixtures are disqualified; same-origin duplicates keep the canonical nested checkout. **Project-row GC**: nothing ever deleted a `project` row — deleted dirs (the laptop's `jamesdileva\*` clone folders, the old `Projects\jamesdileva\*` copies) survived as zombie projects that looked alive forever; the full startup scan now drops rows whose checkout is gone, disqualified, or outside the watch roots, cascading files/dependencies/findings/results/logs/summaries/chat/portfolio + stored Chroma docs (FK-safe `delete`). Repo-sync's targeted rescans never GC. Verified read-only against the real desktop home dir: 60 checkouts discovered → 21 kept (18 flat-adopted + 2 new clones + 1 fork), zero churn. Tests: +7 indexer (eligibility variants, origin normalization, canonical-vs-flat dedupe, GC ×3), 94.5 % total | AI agent |
-| 2026-08-11 | 1.17.6 | Damaged knowledge index made detectable and recoverable. **ChromaManager** (`services/chroma_manager.py`): per-collection operation locks (RLock — two knowledge jobs can no longer interleave upserts on one collection), cached health probe that actually touches each non-empty collection's HNSW segment reader (`count()` only reads metadata, so a wiped segment dir still reported healthy), `RagIndexError` translating ChromaDB's `InternalError: Nothing found on disk` (killed write) into a **503 + rebuild hint** instead of a bare 500, `delete_by_project()` sweeping the **real** collections (the GC previously deleted from a phantom `knowledge` collection, orphaning vectors forever) and `reset_all()` as the deterministic recovery. **API**: `GET /rag/index/status` now carries `health` (`broken`/`checked`); `POST /rag/index/reset` (202 job) runs `run_reset_knowledge` (registry entry). **CLI**: `rag-index --reset` (no Ollama, no project id needed). **Frontend**: Knowledge page shows a damaged-index banner + "Rebuild knowledge index" confirm-action. **Scheduler**: graceful shutdown — `cancel_futures=True` used to kill an in-flight index mid-upsert, the exact corruption this release detects; workers now drain. **RAG queries**: all-project questions are summary-first (architecture summaries fill the top slots before noisier collections) and context lines now name the source project (metadata only ever stored ids). Tests: +10 backend (API 503/reset/health, delete_by_project on real collections, reset heals the probe, summary-first ordering, project names in context, task/registry/CLI reset), +2 frontend (banner + rebuild action, cancel path) | AI agent |
-| 2026-08-11 | 1.17.6.1 | Reset recovery completed: `run_reset_knowledge` (`tasks/rag_tasks.py`) now also clears `ProjectFile.embedding_id` after dropping the collections — `ingest_files` skips any file whose flag is set (the v1.17.1 incremental optimization), so a reset that kept the flags would re-embed **nothing** and the index would stay empty forever. The task returns `files_unflagged`; the next index (startup auto-index or `sentinel rag-index`) rebuilds everything. Tests: +1 (flags cleared after reset; the v1.17.6 task test updated for the new return value) | AI agent |
-| 2026-08-11 | 1.17.6.2 | Laptop recovery: RAG chat + semantic search work again after a damaged index. **Probe fixed** (`services/chroma_manager.py` `health`): the v1.17.6 probe (`get(limit=1)`) could pass while the query path raised (`Nothing found on disk`) — the laptop showed "damaged" 503s in chat while the dashboard reported healthy, so the rebuild banner never appeared; the probe now runs a real query with a stored embedding, the exact operation search uses. `reset()` also tolerates `InternalError` during `delete_collection` (a broken store can raise on drop — treated as reset since the collection is being discarded). **Auto-index always includes the AI architecture summary**: `queue_knowledge_index_unembedded` (startup scan + repo-sync pass) submits `run_index_knowledge` with `with_summary=True`, and `ingest_project_summary` dedupes to **once per project** (an existing `architecture` summary is reused — no Ollama burn per scan; CLI `rag-index <project> --summary` forces a regenerate via `force_summary`). Dashboard "Include AI architecture summary" checkbox removed (redundant; API `with_summary` param kept). New projects and post-reset re-indexes get summaries automatically, so all-project chat ("what are these projects about") is summary-first as designed. Deferred (noted): summary regeneration when repos change / after re-index — needs file-change detection (edits are never re-embedded today); the sync pass already knows changed repos, so the hook is cheap to add later. Tests: +5 backend (query-path probe broken+healthy, reset tolerating InternalError, summary dedupe + force, queued auto-index args), +1 frontend update (checkbox removed, always-summary) | AI agent |
-| 2026-08-12 | 1.17.6.8 | **Full re-embed is now a button; Ollama timeouts + summary truncation fixed.** Knowledge page: "Rebuild knowledge index" is **always visible** (previously only inside the damaged-index banner — a healthy-but-stale index had no in-UI path to re-embed with current chunking/summary prompt); confirm dialog covers both the damaged-disk and stale-embeddings cases, banner is informational only. Timeout hardening (laptop `sentinel(2).log`: 3 of 17 post-reset jobs failed at `ingest_project_summary` — the v1.17.6.6 doc-first prompt ~10k-token prefill outgrew the 600 s read timeout against the embedding flood; files were embedded fine, summaries were lost): `ollama_timeout_seconds` default 600 → 1800 (`SENTINEL_OLLAMA_TIMEOUT_SECONDS` overrides). Summary output budget: new `ollama_summary_max_tokens` default **1250** — the fed-more context produces structured components/stack/notes summaries past the old shared 500 cap; chat answers keep 500 (`_generate_with_metrics` forwards `max_tokens`; summary call site passes the setting). `.env.example` documents both overrides. Tests: +1 backend (summary call carries the 1250 cap, chat stays 500), +1 frontend (rebuild action visible on a healthy index) | AI agent |
-| 2026-08-12 | 1.17.6.7 | **"Re-index all projects" button 500 fixed.** Root cause: `/api/v1/rag/index/all` (`api/v1/rag.py`) submits the job name `run_index_knowledge_all`, but `_build_registry()` (`services/job_scheduler.py`) never added the entry when 1.17.6.4 introduced the task — `JobScheduler.submit` raised `KeyError: 'run_index_knowledge_all'` on every click. The registry contract test (`tests/test_job_scheduler.py`) asserted an *exact* name set that predated the task, so it stayed green; the set now includes the name and a new regression test verifies the exact names the API routers submit all resolve through the real registry. CLI `rag-index --all` never hit the bug (calls the task directly, no registry). **CLI `rag-index --reset` fixed**: it called `get_chroma_manager().reset_all()` directly, so it dropped the collections but never cleared `ProjectFile.embedding_id` — the startup auto-index then found nothing to re-embed and the Knowledge page kept showing every file as embedded against an empty index (the v1.17.6.1 flag-clearing lived only in the API path). It now runs the same `run_reset_knowledge()` task as the API button and prints `files_unflagged`. **Flaky gate fixed**: the lifespan startup scan (`main.py`) spawned a `sentinel-scan` daemon thread that outlived its TestClient and could persist a `SyncRun` into a later test's engine — intermittently failing `test_system_sync_endpoint`; the autouse `conftest.py` fixture now pins `auto_scan_on_startup=False` (renamed `_quiet_background`). Tests: +1 backend (registry), +1 backend updated (CLI reset runs the task) | AI agent |
+av.ts drops the World entry and 
+outes/index.tsx drops the route, so a stale /world link falls through to the Dashboard catch-all; WorldSimulatorPage/WorldGridMap/world_sim.ts stay in place for a future re-enable (re-add the nav line + route) | AI agent |
+| 2026-08-14 | 1.17.7.6 | **C++/CMake build discovery + builds.md recipe reference.** (1) **CMake extractor** (command_extractor.py _from_cmake, ordered before the README scan): a root CMakeLists.txt yields uild: cmake --build build ï¿½ the canonical invocation that reuses the cached generator (Algo Trader and HFT-Order-Book are configured with MinGW Makefiles, so it drives mingw32-make in uild/) and re-runs configure automatically when CMakeLists.txt changes; 	est: ctest --test-dir build only when enable_testing()/dd_test appears. Blast radius is exactly the two CMake repos in the projects root. (2) **Stale-stack fallback** (uild_runner.py): a stored stack.commands.build that is empty no longer short-circuits to *skipped* ï¿½ the runner re-discovers at build time (same runtime-fallback pattern as the portfolio matrix), so extractor improvements apply without re-indexing. (3) **docs/builds.md**: versioned recipe reference for all 21 projects (install/build/test/startup per project, discovered commands only) + a C++ deep-dive ï¿½ Algo Trader: configure once cmake -S . -B build -G "MinGW Makefiles", build via cmake --build build, outputs uild\trader.exe + uild\backtester.exe; acktester is a separate strategy-testing executable *within* the repo, not its own project; data lives in config/settings.json/data\algo_trader.db. HFT-Order-Book: same CMake layout (cpp-httplib vendored). Doc is indexed by the knowledge system and security-scanned, so it stays free of credential-like literals. Docs: 01/02/03 changelogs, builds.md. Tests: +3 parametrized extractor cases (CMakeLists alone, +enable_testing, +dd_test) and +1 runner fallback test (stale empty stack re-discovers cmake --build build) | AI agent |
+| 2026-08-14 | 1.17.7.5 | **Index-gated security scans (no more false positives); honest no-command builds; README build discovery.** (1) **Scanner scans what the index indexes** (`security_scanner.py`): the project walk used the indexer's `_iter_source_files` directly, so untracked junk got flagged â€” live run showed AG with 208 eval/exec findings in `.venv_sf3d\Lib\site-packages`, WorkFlow-Toolkit 174 in the untracked `backend\runtime\python\Lib` stdlib + `release\win-unpacked\` outputs, and Sentinel flagging itself (3 findings: regex titles "Use of eval()"/"Use of exec()" as *string literals* matched by the old regex `_STATIC_PATTERNS`, and a comment example placeholder token (the alphabetical `ghp_`-prefixed sample) caught by the Generic Secret). Fix: `_iter_scan_files` reads the indexed `ProjectFile` rows (`absolute_path`; fallback = the same gated walk), and static analysis is now **AST-based** â€” `eval`/`exec`/`compile` are flagged only as real `Call`/`Name` nodes, never inside strings or comments; the placeholder comment no longer contains a literal GitHub token. Expected live effect after the re-scan: AG 209â†’1, WT 183â†’0, Sentinel 3â†’0. (2) **"No build command" is now an honest *skipped*** (`build_runner.py`): no discoverable command used to record `success=True, exit_code=0` and feed "Build passed" â€” it now records `success=None, exit_code=None` ("No build command configured for this project."), the feed says "Build skipped", `JobStatus` gains the `skipped` literal (was: the old code mapped `success=None` â†’ "failed"), and `Builds.tsx` labels completed null-success logs "skipped" (was "running"). Portfolio: the static 21 build points still require a command â€” `_has_build_command` consults `extract_build_commands` at runtime as a fallback so README-discovered commands count. (3) **Better command discovery** (`command_extractor.py` rewrite): ordered extractors for Makefile (`make build`/`make all`), Cargo.toml (`cargo build`/`cargo test`), go.mod (`go build ./...`/`go test ./...`), Maven `pom.xml`/wrappers (`mvn package`/`mvn test`), Gradle `build.gradle`/wrappers (`gradle build`/`gradle test`), dotnet `.sln`/`.csproj` (`dotnet build`/`dotnet test`), lockfile-aware package.json install (pnpm/yarn/bun), plus **README/docs discovery** â€” known command spellings (`npm run build`, `make build`, `cargo build`, `gradle build`, `mvn package`, `dotnet build`, `go build ./...`, `pip install`, ...) matched in README.md/BUILDING.md/docs with a word-boundary regex; explicit manifests always win over prose. Docs: 01 Â§17, 02 Â§14.5 + changelog, 03 changelog. Tests: +2 backend (AST ignores string literals; scanner uses indexed files only â€” untracked `.venv_sf3d`/`release` never scanned), +10 parametrized extractor tests (Makefile Ã—3, cargo, go, maven, dotnet Ã—2, gradle, README code-block/plain/invention-guard/package.json-precedence), honesty tests rewritten (runner: `success is None`; API: "skipped" status), +1 index-completeness test (git fixture: every tracked file across docs/backend/frontend is indexed), +1 vitest (skipped label); 93.6 % coverage | AI agent |
+| 2026-08-12 | 1.17.7.3 | **Projects root; git-tracked indexing; watch-dirs parser fix; world-sim opt-in.** (1) **Projects root** (this machine): all project checkouts moved from the home dir to `C:\Users\j\projects` (nested `jamesdileva\`/`juduncan\` canonical checkouts moved along); `.env` now sets `SENTINEL_WATCH_DIRS=C:\Users\j\projects`, so the home dir is never walked and the projects-root dirs (betsim, coach, nexus, ResMaker, surfhop, ...) become projects at the next scan. DB rows keep their identity via the new `scripts/migrate_projects_root.py` path rewrite (`project.path`, `projectfile.path`/`absolute_path`, `securityfinding.file_path`; `--dry-run` first) run after the move â€” no GC churn, no chat/summary loss (21 project rows + 12,470 file paths on the desktop). (2) **Git-tracked indexing** (`indexer.py`): file lists come from `git ls-files -z` for real git checkouts (walk fallback for non-git and bare `.git/` dirs, rc 128) â€” untracked `.env` secrets, IDE state and uncommitted junk never enter the index (the makehuman `.env` case); ignore/binary/size gates still apply; stale rows prune on rescan as before. AG `tests/conftest.py` + WorkFlow-Toolkit `test.py` updated for the new root. (3) **Watch-dirs parser fix** (`config.py`): `SENTINEL_WATCH_DIRS` accepts a single dir, comma-separated, or JSON â€” the documented comma format previously crashed pydantic-settings' JSON-only parser (`SettingsError`). (4) **World sim opt-in**: `world_sim_enabled` defaults to `False` (router + beat register only with `SENTINEL_WORLD_SIM_ENABLED=true`); world-sim API tests mount the router explicitly. Docs: AGENTS.md, desktop.md, 02 Â§4.2/Â§13.4, 01/02/03 changelogs. Tests: +5 backend (watch-dirs forms Ã—3, git tracked-only, walk fallback, world-sim default), full suite green | AI agent |
+| 2026-08-12 | 1.17.7.2 | **Junk-free file index; honest knowledge reset; no autostart task.** (1) **Ignore patterns** (`config.py`): `Library/` (Unity's regenerable PackageCache/Artifacts/BurstCache â€” Khd4 alone was 25.6k cache files), `release/` + `win-unpacked/` (electron-builder output â€” WorkFlow-Toolkit 7.6k, Airadio 65), `*.pdb`/`*.bhc` (build symbols/Burst caches) â€” the desktop index had swollen to 47,455 files vs ~4k of real source on the laptop (v1.17.7.1 gates covered `.venv*/`/`dist/`/`build/` but not these); ignored rows prune themselves on the next scan (`_index_files` drops rows no longer walked, proven by Demake 35kâ†’339 and AG 26kâ†’1.3k). (2) **Reset now sticks** (`job_scheduler.py`, `rag_tasks.py`): new `JobScheduler.cancel_queued(name_prefix)` cancels not-yet-started pool jobs (futures tracked per submit, callback-pruned); `run_reset_knowledge` cancels queued `run_index_knowledge` jobs before clearing flags + dropping collections, so the embedded count goes to 0 and stays 0 â€” previously the boot auto-index re-queued ~20 projects and re-embedded seconds after the reset, making it look like a no-op. (3) **Autostart task removed**: `scripts/install_service.py` deleted, `run.py` drops `--service`/`--install`/`--uninstall` (and the now-unused PYWIN candidates), the desktop task uninstalled (`schtasks /delete /tn Sentinel`) â€” the 5-min Task-Scheduler rerun spawned a console window every time it found the port free (Last Result 1 bind races against a manual start); the server is started manually with `run.py`. Docs: AGENTS.md, README, desktop.md, 01 repo tree, 02 Â§13.3/Â§13.4 + troubleshooting, 03 Phase 13. Tests: âˆ’2 packaging (install_service), +ignore-pattern indexer, +cancel_queued, +reset cancels queued jobs | AI agent |
+| 2026-08-12 | 1.17.7.1 | **Junk-file indexing gates + fast boot scans.** The first full scan on the desktop froze the API for ~25-40 min: `_iter_source_files` rglob'd entire trees (demake-engine: 35.3k files / 11 GB incl. a 3.3 GB `model.onnx_data`; AG: 26.8k files incl. `.venv_sf3d` â€” the exact `.venv/` ignore pattern missed venv-like dirs) and parsers `read_text`'d whole files, decoding multi-GB binaries to strings on every scan. Fixes: **(1) file gates** â€” `SENTINEL_MAX_FILE_KB` (default 5120, `config.py`) + a `_BINARY_SUFFIXES` denylist (.onnx/.onnx_data/.pt/.pth/.safetensors/.dll/.so/.db/.sqlite/images/media/archives/...) applied in `_is_skippable` to both full scans and `update_incremental`; **(2) walk prune** â€” the project walk is a DFS that never descends into ignored dirs (`.git/`, `node_modules/`, `.venv*/`, `dist/`, `build/`, `data/` â€” `data/` added, `.venv/`â†’`.venv*/`) instead of rglob+filter (24k ignored entries under this repo alone: `backend/.venv` 15.9k, `frontend/node_modules` 8.2k); **(3) mtime fast-path** â€” new `ProjectFile.mtime_ns` (BIGINT, ALTER migration via `connection._MIGRATIONS`): `_upsert_file` skips re-read/re-parse when `mtime_ns`+`size_bytes` are unchanged, so boot scans drop to seconds after the first pass. **run.py venv resolution** (caught during deploy): the launcher only knew repo-root `.venv` + a Linux-style fallback, so `run.py` died `FileNotFoundError` on this machine â€” `PY_CANDIDATES`/`PYWIN_CANDIDATES` now resolve `backend\.venv` first, root `.venv` second, `.venv/bin/python3` last. **CLI transparency**: `index --all` reports `Indexed k/N: <name>` per project via a progress callback on `scan_all_projects`. Tests: +3 backend (binary+size gates, ignored-dir prune incl. `.venv_sf3d`/`data/`, mtime fast-path skipâ†’reparse), 93.66 % | AI agent |
+| 2026-08-12 | 1.17.7 | **Single-desktop deployment; GitHub is now optional; scans decoupled from sync.** The laptop is retired â€” the desktop is both the dev workstation and the always-on server (docs/laptop.md â†’ `docs/desktop.md`; docs/01 Â§9/Â§10, docs/02 Â§13 rewritten; dashboard at `http://127.0.0.1:8000`, localhost only). **Tokenless first-class**: `sync_tasks.run_repo_sync` no longer says "skipped" and startup no longer publishes a token warning (`main.py` logs one INFO line instead); the `repo-sync` beat registers only when `SENTINEL_GITHUB_TOKEN` is set (`job_scheduler.py`). **Security scan-all owns its own beat**: new `SENTINEL_SCAN_INTERVAL_MINUTES` (default 1440, `config.py`) â€” previously the daily scan ran chained to the repo-sync pass, so a tokenless install never scanned; `run_repo_sync` no longer calls `run_security_scan_all`. **Home-dir discovery pruning** (`indexer.py`): the full-home `rglob` walk replaced with a depth-aware walk that prunes noise dirs (`AppData`, `OneDrive`, `node_modules`, `.venv`, tool caches â€” `_DISCOVERY_SKIP_DIRS`) during traversal and never enters paths beyond `_DISCOVERY_DEPTH`; checkouts at depth â‰¤ 4 still found, eligible set unchanged (validated: 21 sync-owned projects in `C:\Users\j`). **install_service venv fallback**: the Task-Scheduler command resolves `backend\.venv` (this machine) or the repo-root `.venv` (previously only repo-root `.venv` â€” the task would point at a nonexistent pythonw here). Tests: +8 backend (scan-all/repo-sync beat registration tokenless+token, scan decoupled from sync, scan interval config, discovery pruning Ã—3, install_service venv Ã—2), 93.95 % total | AI agent |
+| 2026-08-10 | 1.17.5 | Duplicates eliminated at the source (Rule 5: projects are known entities). **Discovery eligibility**: only *sync-owned* checkouts can become projects â€” a canonical `<root>/<owner>/<name>` clone whose origin URL matches `github.com/<owner>/<name>`, or a flat direct-child checkout with any GitHub origin (the repos repo-sync adopted in v1.17.4 live there) â€” so git worktrees (`CG.worktrees\agents-*`), stray copies (`Desktop\airadio`, `Documents\CG`, `Desktop\backups\algo-trader`), nested sub-repos (`AG\stable-fast-3d`, `Python Projects\main`), `.codex\*` and seed fixtures are disqualified; same-origin duplicates keep the canonical nested checkout. **Project-row GC**: nothing ever deleted a `project` row â€” deleted dirs (the laptop's `jamesdileva\*` clone folders, the old `Projects\jamesdileva\*` copies) survived as zombie projects that looked alive forever; the full startup scan now drops rows whose checkout is gone, disqualified, or outside the watch roots, cascading files/dependencies/findings/results/logs/summaries/chat/portfolio + stored Chroma docs (FK-safe `delete`). Repo-sync's targeted rescans never GC. Verified read-only against the real desktop home dir: 60 checkouts discovered â†’ 21 kept (18 flat-adopted + 2 new clones + 1 fork), zero churn. Tests: +7 indexer (eligibility variants, origin normalization, canonical-vs-flat dedupe, GC Ã—3), 94.5 % total | AI agent |
+| 2026-08-11 | 1.17.6 | Damaged knowledge index made detectable and recoverable. **ChromaManager** (`services/chroma_manager.py`): per-collection operation locks (RLock â€” two knowledge jobs can no longer interleave upserts on one collection), cached health probe that actually touches each non-empty collection's HNSW segment reader (`count()` only reads metadata, so a wiped segment dir still reported healthy), `RagIndexError` translating ChromaDB's `InternalError: Nothing found on disk` (killed write) into a **503 + rebuild hint** instead of a bare 500, `delete_by_project()` sweeping the **real** collections (the GC previously deleted from a phantom `knowledge` collection, orphaning vectors forever) and `reset_all()` as the deterministic recovery. **API**: `GET /rag/index/status` now carries `health` (`broken`/`checked`); `POST /rag/index/reset` (202 job) runs `run_reset_knowledge` (registry entry). **CLI**: `rag-index --reset` (no Ollama, no project id needed). **Frontend**: Knowledge page shows a damaged-index banner + "Rebuild knowledge index" confirm-action. **Scheduler**: graceful shutdown â€” `cancel_futures=True` used to kill an in-flight index mid-upsert, the exact corruption this release detects; workers now drain. **RAG queries**: all-project questions are summary-first (architecture summaries fill the top slots before noisier collections) and context lines now name the source project (metadata only ever stored ids). Tests: +10 backend (API 503/reset/health, delete_by_project on real collections, reset heals the probe, summary-first ordering, project names in context, task/registry/CLI reset), +2 frontend (banner + rebuild action, cancel path) | AI agent |
+| 2026-08-11 | 1.17.6.1 | Reset recovery completed: `run_reset_knowledge` (`tasks/rag_tasks.py`) now also clears `ProjectFile.embedding_id` after dropping the collections â€” `ingest_files` skips any file whose flag is set (the v1.17.1 incremental optimization), so a reset that kept the flags would re-embed **nothing** and the index would stay empty forever. The task returns `files_unflagged`; the next index (startup auto-index or `sentinel rag-index`) rebuilds everything. Tests: +1 (flags cleared after reset; the v1.17.6 task test updated for the new return value) | AI agent |
+| 2026-08-11 | 1.17.6.2 | Laptop recovery: RAG chat + semantic search work again after a damaged index. **Probe fixed** (`services/chroma_manager.py` `health`): the v1.17.6 probe (`get(limit=1)`) could pass while the query path raised (`Nothing found on disk`) â€” the laptop showed "damaged" 503s in chat while the dashboard reported healthy, so the rebuild banner never appeared; the probe now runs a real query with a stored embedding, the exact operation search uses. `reset()` also tolerates `InternalError` during `delete_collection` (a broken store can raise on drop â€” treated as reset since the collection is being discarded). **Auto-index always includes the AI architecture summary**: `queue_knowledge_index_unembedded` (startup scan + repo-sync pass) submits `run_index_knowledge` with `with_summary=True`, and `ingest_project_summary` dedupes to **once per project** (an existing `architecture` summary is reused â€” no Ollama burn per scan; CLI `rag-index <project> --summary` forces a regenerate via `force_summary`). Dashboard "Include AI architecture summary" checkbox removed (redundant; API `with_summary` param kept). New projects and post-reset re-indexes get summaries automatically, so all-project chat ("what are these projects about") is summary-first as designed. Deferred (noted): summary regeneration when repos change / after re-index â€” needs file-change detection (edits are never re-embedded today); the sync pass already knows changed repos, so the hook is cheap to add later. Tests: +5 backend (query-path probe broken+healthy, reset tolerating InternalError, summary dedupe + force, queued auto-index args), +1 frontend update (checkbox removed, always-summary) | AI agent |
+| 2026-08-12 | 1.17.6.8 | **Full re-embed is now a button; Ollama timeouts + summary truncation fixed.** Knowledge page: "Rebuild knowledge index" is **always visible** (previously only inside the damaged-index banner â€” a healthy-but-stale index had no in-UI path to re-embed with current chunking/summary prompt); confirm dialog covers both the damaged-disk and stale-embeddings cases, banner is informational only. Timeout hardening (laptop `sentinel(2).log`: 3 of 17 post-reset jobs failed at `ingest_project_summary` â€” the v1.17.6.6 doc-first prompt ~10k-token prefill outgrew the 600 s read timeout against the embedding flood; files were embedded fine, summaries were lost): `ollama_timeout_seconds` default 600 â†’ 1800 (`SENTINEL_OLLAMA_TIMEOUT_SECONDS` overrides). Summary output budget: new `ollama_summary_max_tokens` default **1250** â€” the fed-more context produces structured components/stack/notes summaries past the old shared 500 cap; chat answers keep 500 (`_generate_with_metrics` forwards `max_tokens`; summary call site passes the setting). `.env.example` documents both overrides. Tests: +1 backend (summary call carries the 1250 cap, chat stays 500), +1 frontend (rebuild action visible on a healthy index) | AI agent |
+| 2026-08-12 | 1.17.6.7 | **"Re-index all projects" button 500 fixed.** Root cause: `/api/v1/rag/index/all` (`api/v1/rag.py`) submits the job name `run_index_knowledge_all`, but `_build_registry()` (`services/job_scheduler.py`) never added the entry when 1.17.6.4 introduced the task â€” `JobScheduler.submit` raised `KeyError: 'run_index_knowledge_all'` on every click. The registry contract test (`tests/test_job_scheduler.py`) asserted an *exact* name set that predated the task, so it stayed green; the set now includes the name and a new regression test verifies the exact names the API routers submit all resolve through the real registry. CLI `rag-index --all` never hit the bug (calls the task directly, no registry). **CLI `rag-index --reset` fixed**: it called `get_chroma_manager().reset_all()` directly, so it dropped the collections but never cleared `ProjectFile.embedding_id` â€” the startup auto-index then found nothing to re-embed and the Knowledge page kept showing every file as embedded against an empty index (the v1.17.6.1 flag-clearing lived only in the API path). It now runs the same `run_reset_knowledge()` task as the API button and prints `files_unflagged`. **Flaky gate fixed**: the lifespan startup scan (`main.py`) spawned a `sentinel-scan` daemon thread that outlived its TestClient and could persist a `SyncRun` into a later test's engine â€” intermittently failing `test_system_sync_endpoint`; the autouse `conftest.py` fixture now pins `auto_scan_on_startup=False` (renamed `_quiet_background`). Tests: +1 backend (registry), +1 backend updated (CLI reset runs the task) | AI agent |
 
-| 2026-08-12 | 1.17.6.6 | Security scans join the daily sync chain; markdown-aware retrieval. **Scan = once per 24 h, not a separate beat**: `nightly-security-scan` removed from the scheduler (`job_scheduler.py`, `_BEAT_IDS` is now `repo-sync` + `world-sim-tick`) — the daily repo-sync runs the scan at the end of its pass (sync → knowledge index → security scan, whenever sync is configured; `sync_tasks.run_repo_sync` calls `run_security_scan_all`), so findings always reflect freshly pulled code with no extra wake-ups. **Never-scanned ≠ clean**: `Project.last_scanned` (a dead column since Sprint 0) is now stamped by every scan (`scan_project` commits it even when clean); `portfolio_service._security_component(project)` — no findings + never scanned = **pending** (0, "never scanned"), no findings + scanned = **clean** (full 25) — and `_source_epoch` includes `last_scanned`, so the cache refreshes after the first clean scan. **Docs chunked, code kept whole** (`rag_service.py`): `.md`/Markdown/`docs/` files chunked at `_DOC_CHUNK_CHARS=2000` / `_DOC_CHUNK_OVERLAP=200` / `_DOC_CHUNK_MAX=32` (ids `{file}#{i}`), code stays single 4k chunks — "how do I add X" questions now retrieve READMEs and guides, not just code. **Smarter summaries**: `_file_summary_context` is docs-first (`_rank_summary_files`: README 400 > `.md` 300 > `docs/` 150 > entry files 100; `_SUMMARY_FILES=25` × `_SUMMARY_FILE_CHARS=1500`) plus the 25 most recent commit messages as the sprint timeline; `project_summary.j2` rewritten (Overview / Architecture / Build-Run-Test / Phase milestones, "trust docs over code" instruction). **All-project queries scale**: `_search_all_projects` top_k = max(requested, min(indexed projects, `_ALL_PROJECT_CAP=24`)), summary collection consulted first then distance-ranked merge, context trimmed to `_QUERY_CONTEXT_BUDGET=48_000` chars. **`__all__` chat room**: `chat_history`/`chat_save` accept the literal `__all__` (skip `_project_or_404`); RagChat uses `room = projectId ?? "__all__"` for both load and persist. **Frontend**: query timeout 120 s → 600 s, default topK 5 → 10 (`api/rag.ts`). **Context window**: `ollama_num_ctx=32768` (`core/config.py`, passed in `OllamaService.generate` options — Ollama's default 2048 would truncate summaries/answers). Migration: knowledge reset + re-index-all applies the new chunking and regenerates summaries with the new prompt. Tests: +9 backend (docs chunked / code single, `_chunk_document` bounds, summary ranking docs-first + commits appending, all-scope scaling, scanner `last_scanned` stamp, portfolio pending→clean + cache invalidation, sync chains scan + skip when unconfigured, `__all__` room; scheduler beat + num_ctx tests updated), +2 frontend (`__all__` history load/persist); full pytest suite green (coverage gate met) + 75 vitest | AI agent |
+| 2026-08-12 | 1.17.6.6 | Security scans join the daily sync chain; markdown-aware retrieval. **Scan = once per 24 h, not a separate beat**: `nightly-security-scan` removed from the scheduler (`job_scheduler.py`, `_BEAT_IDS` is now `repo-sync` + `world-sim-tick`) â€” the daily repo-sync runs the scan at the end of its pass (sync â†’ knowledge index â†’ security scan, whenever sync is configured; `sync_tasks.run_repo_sync` calls `run_security_scan_all`), so findings always reflect freshly pulled code with no extra wake-ups. **Never-scanned â‰  clean**: `Project.last_scanned` (a dead column since Sprint 0) is now stamped by every scan (`scan_project` commits it even when clean); `portfolio_service._security_component(project)` â€” no findings + never scanned = **pending** (0, "never scanned"), no findings + scanned = **clean** (full 25) â€” and `_source_epoch` includes `last_scanned`, so the cache refreshes after the first clean scan. **Docs chunked, code kept whole** (`rag_service.py`): `.md`/Markdown/`docs/` files chunked at `_DOC_CHUNK_CHARS=2000` / `_DOC_CHUNK_OVERLAP=200` / `_DOC_CHUNK_MAX=32` (ids `{file}#{i}`), code stays single 4k chunks â€” "how do I add X" questions now retrieve READMEs and guides, not just code. **Smarter summaries**: `_file_summary_context` is docs-first (`_rank_summary_files`: README 400 > `.md` 300 > `docs/` 150 > entry files 100; `_SUMMARY_FILES=25` Ã— `_SUMMARY_FILE_CHARS=1500`) plus the 25 most recent commit messages as the sprint timeline; `project_summary.j2` rewritten (Overview / Architecture / Build-Run-Test / Phase milestones, "trust docs over code" instruction). **All-project queries scale**: `_search_all_projects` top_k = max(requested, min(indexed projects, `_ALL_PROJECT_CAP=24`)), summary collection consulted first then distance-ranked merge, context trimmed to `_QUERY_CONTEXT_BUDGET=48_000` chars. **`__all__` chat room**: `chat_history`/`chat_save` accept the literal `__all__` (skip `_project_or_404`); RagChat uses `room = projectId ?? "__all__"` for both load and persist. **Frontend**: query timeout 120 s â†’ 600 s, default topK 5 â†’ 10 (`api/rag.ts`). **Context window**: `ollama_num_ctx=32768` (`core/config.py`, passed in `OllamaService.generate` options â€” Ollama's default 2048 would truncate summaries/answers). Migration: knowledge reset + re-index-all applies the new chunking and regenerates summaries with the new prompt. Tests: +9 backend (docs chunked / code single, `_chunk_document` bounds, summary ranking docs-first + commits appending, all-scope scaling, scanner `last_scanned` stamp, portfolio pendingâ†’clean + cache invalidation, sync chains scan + skip when unconfigured, `__all__` room; scheduler beat + num_ctx tests updated), +2 frontend (`__all__` history load/persist); full pytest suite green (coverage gate met) + 75 vitest | AI agent |
 
-| 2026-08-12 | 1.17.6.5 | **Default LLM switched to `llama3.1:8b`** (was `gemma2`). Head-to-head on the architecture-summary prompt (same `project_summary.j2` template + 8-file/600-char context, app defaults 500 tokens / temp 0.3): gemma2 — 186 tokens, 6.3 tok/s, tight high-level summary that correctly said the context was thin; llama3.1:8b — 294 tokens, 9.0 tok/s, better-structured summary (components / stack / notes, picked up the AGENTS.md rules). Won on structure + speed + instruction following; the prompt already enforces "say so rather than guessing". Changes: `settings.ollama_model` + `world_sim_model` defaults → `llama3.1:8b` (world-sim narratives are deterministic templates — `world_sim_model`/`world_sim_ai_narratives` are currently unused, kept consistent for future AI-narrative wiring), CLI pull guidance (both `ollama pull` messages), `.env.example`, AGENTS.md decision table, docs current-state references. Existing summaries keep their `model` provenance; new generations use the new model — migrate the laptop's summaries with `rag-index <project> --summary` per project. No test changes (no test asserts the default; fixture strings are arbitrary) | AI agent |
-| 2026-08-12 | 1.17.6.4 | Run-log cleanup + re-index-all command. **Log noise** (`app/core/logging.py`): `httpx`/`httpcore` set to WARNING — the 1.17.6.3 run log was ~500 `POST /api/embed` lines in ~1800 (that detail already lives in the activity feed and the Ollama query log). **Deterministic single-write run log**: the file handler is pinned on `uvicorn`/`uvicorn.error`/`uvicorn.access` *and* root, with `propagate=False` forced on the uvicorn loggers, so every line lands in `data/logs/sentinel.log` exactly once regardless of uvicorn's own log config (a pinned handler on a propagating logger chain could write a record two or three times). **Ollama timeout** (`app/core/config.py`): default `ollama_timeout_seconds` 120 → 600 — a laptop saturated by 4 concurrent embedding workers timed out arch-summary generation at 2 min; 10 min covers the slow gemma2 case; `SENTINEL_OLLAMA_TIMEOUT_SECONDS` overrides. **Re-index all projects**: Knowledge-page "Re-index all projects" button + `POST /api/v1/rag/index/all` (`api/v1/rag.py`) + CLI `rag-index --all` (`app/cli.py`) — one deterministic job (`tasks/rag_tasks.py` `run_index_knowledge_all`) loops every project with `with_summary=True`; fully incremental (`ingest_files` skips files whose `embedding_id` is set), so it backfills missing AI architecture summaries without re-embedding (the 1.17.6.3 timed-out summary jobs are exactly this case) and embeds new files from a recent `git pull`; one project's failure never aborts the pass (per-project try/except, `failed` counter). Tests: +8 backend (endpoint queues one job, CLI `--all` runs the task and usage lists it, re-index-all skips embedded files + regenerates a missing summary + survives one bad project, uvicorn loggers pinned propagate=False single-write, httpx silenced to WARNING), frontend reindex-button test | AI agent |
-| 2026-08-11 | 1.17.6.3 | Post-laptop-log runbook pass. **Summary dedupe fixed** (`rag_service.py` `ingest_project_summary`): the v1.17.6.2 dedupe checked the SQLite `KnowledgeSummary` row, not the embedding — `reset()` drops the `project_summaries` collection but keeps the rows, so a post-reset re-index skipped the architecture summary entirely (files re-embedded, `project_summaries` count stayed 0, all-project chat lost its summary-first answers). The dedupe now skips only when the vector exists (`get(where={"$and": [...]})`; damaged-store errors count as missing) and a regeneration reuses the newest row instead of duplicating it — `force` (CLI `--summary`) unchanged. **Per-run log file** (`app/core/logging.py`): `data/logs/sentinel.log` — truncated at startup, INFO level, answers "what happened this run" (the case that started this: a forced shutdown mid-index scrolled the console and vanished). `attach_file_logging()` re-attaches the single file handler at lifespan startup (uvicorn's log config replaces root handlers after app import) and pins it on the `uvicorn`/`uvicorn.error`/`uvicorn.access` loggers (propagate=False) — no duplicated lines, no lost uvicorn logs. **run.py port-owner message**: starting while another instance runs (a second console left open — the v1.17.6.3 trigger) prints the owning PID via `netstat -ano` + a `taskkill` hint instead of uvicorn's raw bind traceback. Tests: +5 backend (summary regenerates after reset with row reuse, once-per-project dedupe maintained, run-log written at INFO, overwrite-mode handler, attach idempotent on root + uvicorn loggers) | AI agent |
-| 2026-08-10 | 1.17.4 | Duplicate-repo fix + feed cleanup after the laptop's first real sync. **Duplicated projects**: sync clones into `<watch-root>/<owner>/<repo>` (`Projects\jamesdileva\Sentinel`) but the existing repos live flat at the watch root (`Projects\Sentinel`, …) — the layout check found no checkout, so all 18 repos were cloned a second time and every project indexed twice; `_local_path` now falls back to any checkout directly under the root whose origin remote URL matches `<owner>/<repo>` (normalized: https/ssh/case/.git suffix) and pulls it instead of cloning (deterministic adoption, `_find_existing_checkout`; flat layouts are never duplicated again). **world_tick feed spam**: the world-sim beat fires every 60 s and each tick published `running` + `finished` activity events (~2880/day, flooding the live feed + DB); beats can now be registered `quiet=True` and the world-sim tick is — per-tick log lines unchanged, on-demand jobs and the sync/scan beats keep their events. **Dashboard build shipped**: v1.17.3's System→Dashboard merge + Settings placeholder never reached the laptop because `backend/app/static` still held the pre-merge build (it is tracked, so the rebuilt assets are now committed; System now shows the Settings placeholder and the Dashboard has the Home server section). Tests: +8 backend (flat-adoption variants + quiet-beat, 35 in the two touched files), 94.5 % total | AI agent |
-| 2026-08-09 | 1.17.2 | Living-week fixes. **No more re-embedding on restart**: `IndexerService._index_files` (§3.1) deleted + re-inserted every `project_file` row per scan, nulling `embedding_id` (Chroma doc ids are the row ids) — auto index re-embedded all 2.9k files after every restart; rows now keyed by path, unchanged files keep id + embedding_id, vanished files drop. **Shared Chroma client** (§6.1): a startup burst of knowledge jobs constructed `PersistentClient`s concurrently and raced ChromaDB's shared-system registry (`'RustBindingsAPI' has no attribute 'bindings'`) — `get_chroma_manager()` hands out one locked client per path (`rag_service.py` default). **Activity feed caching**: `useActivity` mount-seed re-runs when the WS opens and retries once after an empty first load — cached history shows on entering the dashboard; `activity_bus` persist failures now WARN (were debug; the laptop's history could vanish silently). **Embedding t/s**: `OllamaService.embed_with_metrics` (Ollama `prompt_eval_count/duration`) → knowledge progress ticks carry `tokens_per_second` (`rag_tasks.progress` `detail` "~N tok/s") during indexing; generations/chat t/s unchanged. External Ollama clients stay invisible by design — Sentinel measures only its own calls. Tests: +10 backend / 70 vitest | AI agent |
-| 2026-08-09 | 1.17.1 | Regression-fix & ops pass after the first living week. **Scanner false positive fixed**: `\bexec\s*\(` matched `session.exec(` because a dot is a word boundary — 17 of the laptop's 20 findings were SQLModel ORM calls in clean repos; attribute calls are now ignored (only bare identifiers match). **Sync feedback**: an unconfigured sync now publishes *why* on the live feed ("Repo sync skipped — token not configured"), and nothing-changed passes carry a `detail`; new `POST /system/sync` (`{"full": bool}`) + header "Sync now" button run a background pass (409 when already running, activity events per pass; §2.2). **Migration bug fixed**: `migrate_columns` only added missing columns to the *first* affected table — `ollamaquerylog.purpose` was silently absent (would crash chat history past the 5000-row ceiling); migrated tables are now verified via `PRAGMA table_info` and repaired per table. **Sync cadence**: `SENTINEL_SYNC_INTERVAL_MINUTES` default 15 → 1440 (daily; startup still syncs once). **C++ builds deferred** to Sprint 18 (Rule 4 — parser scope is out of control). Tests: regression tests for all four | AI agent |
-| 2026-08-09 | 1.17 | Sprint 17 (Observability & UX pass). **Activity bus**: `app/services/activity_bus.py` — `publish_event(kind, message, detail, data)` persists to the bounded `activity_event` table (5000-row ceiling, lock-serialized) + enriches the live channel; `GET /system/activity` (newest first, cap 500) and WS `/api/v1/ws/jobs` frames `{type: "activity", event: {...}}` + 30 s heartbeat. Publishers: job scheduler (queued/running/finished/failed), sync, build/test/security tasks, rag index start/finish, `rag_service._generate_with_metrics` (kind `ollama`, `purpose` = query/summary/…, data carries model/purpose/tokens/eval_duration_ns for tok/s). **Chat persistence**: `ChatMessage` table + `GET/POST /rag/chat/{project_id}`; RagChat replays + saves every exchange (best-effort). **Auto knowledge-index**: `SENTINEL_AUTO_INDEX_KNOWLEDGE` (default true) — startup scan queues `run_index_knowledge` for projects with unembedded files via shared `queue_knowledge_index_unembedded()` (Ollama-gated); sync pass refactored onto the same helper. **Frontend**: global StatusBar (live dot, latest event, Ollama purpose + tok/s), sync pill visible when unconfigured ("Sync not configured"), Dashboard live activity log (poll fallback in `useActivity`), KnowledgeExplorer live progress refresh (3 s throttle), ProjectGalaxy node labels + legend, HealthCard per-criterion reasons + screenshots chip. **.env path fix**: `config.py` env_file was `BASE_DIR.parent / ".env"` (home) since Sprint 0 — repo-root `.env` never loaded natively; now `BASE_DIR / ".env"` (regression test pins it). **Gate repair**: `scripts/build.py` masked failures (raw exit 0 is falsy in the `and` chain) and ran flake8 at default 79 cols — booleanized + `--max-line-length=100`; stragglers cleared. Tests: 271 backend / 94.49 %, 63 vitest, gate exits 0 | AI agent |
-| 2026-08-08 | 1.16.2 | Dashboard actually served: `app/main.py` still pointed at `frontend/dist` while the build is staged at `backend/app/static` — on a Node-less laptop every non-API path 404'd. Now serves the staged build (dev fallback to `frontend/dist`) and `/` returns dashboard HTML instead of the Sprint-1 health JSON (health stays at `/health` + `/api/v1/health`). SPA-fallback + root tests added; 257 backend green. Docs: venv-path commands tightened (`.\.venv\Scripts\python.exe run.py` — PowerShell ExecutionPolicy blocks `Activate.ps1`, activation never required): §5.2 + §13, laptop.md, AGENTS.md. Watch-dir default changed from hardcoded `C:\Users\j` to the current user's home (`Path.home()`) — laptop `C:\Users\james` found with no config; env override unchanged | AI agent |
-| 2026-08-08 | 1.16.1 | Pi-hole decommissioned on the laptop (docs/laptop.md `Moving off Docker`): router DNS back to Automatic, docker system prune -a --volumes wipes the old stack + Pi-hole, Docker Desktop uninstalled, old Sentinel task removed; laptop now needs only Python (repo ships the staged dashboard in ackend/app/static — no Node). Docs: laptop.md migration section added, 01 §9.2/§10 and 02 §13 updated (Pi-hole retired, DNS Automatic) | User |
+| 2026-08-12 | 1.17.6.5 | **Default LLM switched to `llama3.1:8b`** (was `gemma2`). Head-to-head on the architecture-summary prompt (same `project_summary.j2` template + 8-file/600-char context, app defaults 500 tokens / temp 0.3): gemma2 â€” 186 tokens, 6.3 tok/s, tight high-level summary that correctly said the context was thin; llama3.1:8b â€” 294 tokens, 9.0 tok/s, better-structured summary (components / stack / notes, picked up the AGENTS.md rules). Won on structure + speed + instruction following; the prompt already enforces "say so rather than guessing". Changes: `settings.ollama_model` + `world_sim_model` defaults â†’ `llama3.1:8b` (world-sim narratives are deterministic templates â€” `world_sim_model`/`world_sim_ai_narratives` are currently unused, kept consistent for future AI-narrative wiring), CLI pull guidance (both `ollama pull` messages), `.env.example`, AGENTS.md decision table, docs current-state references. Existing summaries keep their `model` provenance; new generations use the new model â€” migrate the laptop's summaries with `rag-index <project> --summary` per project. No test changes (no test asserts the default; fixture strings are arbitrary) | AI agent |
+| 2026-08-12 | 1.17.6.4 | Run-log cleanup + re-index-all command. **Log noise** (`app/core/logging.py`): `httpx`/`httpcore` set to WARNING â€” the 1.17.6.3 run log was ~500 `POST /api/embed` lines in ~1800 (that detail already lives in the activity feed and the Ollama query log). **Deterministic single-write run log**: the file handler is pinned on `uvicorn`/`uvicorn.error`/`uvicorn.access` *and* root, with `propagate=False` forced on the uvicorn loggers, so every line lands in `data/logs/sentinel.log` exactly once regardless of uvicorn's own log config (a pinned handler on a propagating logger chain could write a record two or three times). **Ollama timeout** (`app/core/config.py`): default `ollama_timeout_seconds` 120 â†’ 600 â€” a laptop saturated by 4 concurrent embedding workers timed out arch-summary generation at 2 min; 10 min covers the slow gemma2 case; `SENTINEL_OLLAMA_TIMEOUT_SECONDS` overrides. **Re-index all projects**: Knowledge-page "Re-index all projects" button + `POST /api/v1/rag/index/all` (`api/v1/rag.py`) + CLI `rag-index --all` (`app/cli.py`) â€” one deterministic job (`tasks/rag_tasks.py` `run_index_knowledge_all`) loops every project with `with_summary=True`; fully incremental (`ingest_files` skips files whose `embedding_id` is set), so it backfills missing AI architecture summaries without re-embedding (the 1.17.6.3 timed-out summary jobs are exactly this case) and embeds new files from a recent `git pull`; one project's failure never aborts the pass (per-project try/except, `failed` counter). Tests: +8 backend (endpoint queues one job, CLI `--all` runs the task and usage lists it, re-index-all skips embedded files + regenerates a missing summary + survives one bad project, uvicorn loggers pinned propagate=False single-write, httpx silenced to WARNING), frontend reindex-button test | AI agent |
+| 2026-08-11 | 1.17.6.3 | Post-laptop-log runbook pass. **Summary dedupe fixed** (`rag_service.py` `ingest_project_summary`): the v1.17.6.2 dedupe checked the SQLite `KnowledgeSummary` row, not the embedding â€” `reset()` drops the `project_summaries` collection but keeps the rows, so a post-reset re-index skipped the architecture summary entirely (files re-embedded, `project_summaries` count stayed 0, all-project chat lost its summary-first answers). The dedupe now skips only when the vector exists (`get(where={"$and": [...]})`; damaged-store errors count as missing) and a regeneration reuses the newest row instead of duplicating it â€” `force` (CLI `--summary`) unchanged. **Per-run log file** (`app/core/logging.py`): `data/logs/sentinel.log` â€” truncated at startup, INFO level, answers "what happened this run" (the case that started this: a forced shutdown mid-index scrolled the console and vanished). `attach_file_logging()` re-attaches the single file handler at lifespan startup (uvicorn's log config replaces root handlers after app import) and pins it on the `uvicorn`/`uvicorn.error`/`uvicorn.access` loggers (propagate=False) â€” no duplicated lines, no lost uvicorn logs. **run.py port-owner message**: starting while another instance runs (a second console left open â€” the v1.17.6.3 trigger) prints the owning PID via `netstat -ano` + a `taskkill` hint instead of uvicorn's raw bind traceback. Tests: +5 backend (summary regenerates after reset with row reuse, once-per-project dedupe maintained, run-log written at INFO, overwrite-mode handler, attach idempotent on root + uvicorn loggers) | AI agent |
+| 2026-08-10 | 1.17.4 | Duplicate-repo fix + feed cleanup after the laptop's first real sync. **Duplicated projects**: sync clones into `<watch-root>/<owner>/<repo>` (`Projects\jamesdileva\Sentinel`) but the existing repos live flat at the watch root (`Projects\Sentinel`, â€¦) â€” the layout check found no checkout, so all 18 repos were cloned a second time and every project indexed twice; `_local_path` now falls back to any checkout directly under the root whose origin remote URL matches `<owner>/<repo>` (normalized: https/ssh/case/.git suffix) and pulls it instead of cloning (deterministic adoption, `_find_existing_checkout`; flat layouts are never duplicated again). **world_tick feed spam**: the world-sim beat fires every 60 s and each tick published `running` + `finished` activity events (~2880/day, flooding the live feed + DB); beats can now be registered `quiet=True` and the world-sim tick is â€” per-tick log lines unchanged, on-demand jobs and the sync/scan beats keep their events. **Dashboard build shipped**: v1.17.3's Systemâ†’Dashboard merge + Settings placeholder never reached the laptop because `backend/app/static` still held the pre-merge build (it is tracked, so the rebuilt assets are now committed; System now shows the Settings placeholder and the Dashboard has the Home server section). Tests: +8 backend (flat-adoption variants + quiet-beat, 35 in the two touched files), 94.5 % total | AI agent |
+| 2026-08-09 | 1.17.2 | Living-week fixes. **No more re-embedding on restart**: `IndexerService._index_files` (Â§3.1) deleted + re-inserted every `project_file` row per scan, nulling `embedding_id` (Chroma doc ids are the row ids) â€” auto index re-embedded all 2.9k files after every restart; rows now keyed by path, unchanged files keep id + embedding_id, vanished files drop. **Shared Chroma client** (Â§6.1): a startup burst of knowledge jobs constructed `PersistentClient`s concurrently and raced ChromaDB's shared-system registry (`'RustBindingsAPI' has no attribute 'bindings'`) â€” `get_chroma_manager()` hands out one locked client per path (`rag_service.py` default). **Activity feed caching**: `useActivity` mount-seed re-runs when the WS opens and retries once after an empty first load â€” cached history shows on entering the dashboard; `activity_bus` persist failures now WARN (were debug; the laptop's history could vanish silently). **Embedding t/s**: `OllamaService.embed_with_metrics` (Ollama `prompt_eval_count/duration`) â†’ knowledge progress ticks carry `tokens_per_second` (`rag_tasks.progress` `detail` "~N tok/s") during indexing; generations/chat t/s unchanged. External Ollama clients stay invisible by design â€” Sentinel measures only its own calls. Tests: +10 backend / 70 vitest | AI agent |
+| 2026-08-09 | 1.17.1 | Regression-fix & ops pass after the first living week. **Scanner false positive fixed**: `\bexec\s*\(` matched `session.exec(` because a dot is a word boundary â€” 17 of the laptop's 20 findings were SQLModel ORM calls in clean repos; attribute calls are now ignored (only bare identifiers match). **Sync feedback**: an unconfigured sync now publishes *why* on the live feed ("Repo sync skipped â€” token not configured"), and nothing-changed passes carry a `detail`; new `POST /system/sync` (`{"full": bool}`) + header "Sync now" button run a background pass (409 when already running, activity events per pass; Â§2.2). **Migration bug fixed**: `migrate_columns` only added missing columns to the *first* affected table â€” `ollamaquerylog.purpose` was silently absent (would crash chat history past the 5000-row ceiling); migrated tables are now verified via `PRAGMA table_info` and repaired per table. **Sync cadence**: `SENTINEL_SYNC_INTERVAL_MINUTES` default 15 â†’ 1440 (daily; startup still syncs once). **C++ builds deferred** to Sprint 18 (Rule 4 â€” parser scope is out of control). Tests: regression tests for all four | AI agent |
+| 2026-08-09 | 1.17 | Sprint 17 (Observability & UX pass). **Activity bus**: `app/services/activity_bus.py` â€” `publish_event(kind, message, detail, data)` persists to the bounded `activity_event` table (5000-row ceiling, lock-serialized) + enriches the live channel; `GET /system/activity` (newest first, cap 500) and WS `/api/v1/ws/jobs` frames `{type: "activity", event: {...}}` + 30 s heartbeat. Publishers: job scheduler (queued/running/finished/failed), sync, build/test/security tasks, rag index start/finish, `rag_service._generate_with_metrics` (kind `ollama`, `purpose` = query/summary/â€¦, data carries model/purpose/tokens/eval_duration_ns for tok/s). **Chat persistence**: `ChatMessage` table + `GET/POST /rag/chat/{project_id}`; RagChat replays + saves every exchange (best-effort). **Auto knowledge-index**: `SENTINEL_AUTO_INDEX_KNOWLEDGE` (default true) â€” startup scan queues `run_index_knowledge` for projects with unembedded files via shared `queue_knowledge_index_unembedded()` (Ollama-gated); sync pass refactored onto the same helper. **Frontend**: global StatusBar (live dot, latest event, Ollama purpose + tok/s), sync pill visible when unconfigured ("Sync not configured"), Dashboard live activity log (poll fallback in `useActivity`), KnowledgeExplorer live progress refresh (3 s throttle), ProjectGalaxy node labels + legend, HealthCard per-criterion reasons + screenshots chip. **.env path fix**: `config.py` env_file was `BASE_DIR.parent / ".env"` (home) since Sprint 0 â€” repo-root `.env` never loaded natively; now `BASE_DIR / ".env"` (regression test pins it). **Gate repair**: `scripts/build.py` masked failures (raw exit 0 is falsy in the `and` chain) and ran flake8 at default 79 cols â€” booleanized + `--max-line-length=100`; stragglers cleared. Tests: 271 backend / 94.49 %, 63 vitest, gate exits 0 | AI agent |
+| 2026-08-08 | 1.16.2 | Dashboard actually served: `app/main.py` still pointed at `frontend/dist` while the build is staged at `backend/app/static` â€” on a Node-less laptop every non-API path 404'd. Now serves the staged build (dev fallback to `frontend/dist`) and `/` returns dashboard HTML instead of the Sprint-1 health JSON (health stays at `/health` + `/api/v1/health`). SPA-fallback + root tests added; 257 backend green. Docs: venv-path commands tightened (`.\.venv\Scripts\python.exe run.py` â€” PowerShell ExecutionPolicy blocks `Activate.ps1`, activation never required): Â§5.2 + Â§13, laptop.md, AGENTS.md. Watch-dir default changed from hardcoded `C:\Users\j` to the current user's home (`Path.home()`) â€” laptop `C:\Users\james` found with no config; env override unchanged | AI agent |
+| 2026-08-08 | 1.16.1 | Pi-hole decommissioned on the laptop (docs/laptop.md `Moving off Docker`): router DNS back to Automatic, docker system prune -a --volumes wipes the old stack + Pi-hole, Docker Desktop uninstalled, old Sentinel task removed; laptop now needs only Python (repo ships the staged dashboard in ackend/app/static â€” no Node). Docs: laptop.md migration section added, 01 Â§9.2/Â§10 and 02 Â§13 updated (Pi-hole retired, DNS Automatic) | User |
 | 2026-08-08 | 1.16 | Sprint 15.1 (Native deployment, decommission Docker). Compose/Docker layer removed: docker-compose*.yml, docker/, scripts/dev.py deleted; 
-un.py (repo root) is the single starting point — startup checks then uvicorn on 127.0.0.1:8000 (--check/--port/--reload/--service/--install/--uninstall); scripts/install_service.py registers the Sentinel Task-Scheduler task (pythonw run.py --service every 5 min, idempotent); scripts/build.py reworked (verify + --dist stages frontend into ackend/app/static, served same-origin by pp/main.py); scripts/release.py ships run.py + scripts + docs + ackend/app; SENTINEL_PORT replaces SENTINEL_API_PORT; §4.2 env table + §13 rewritten (native runbook, troubleshooting); laptop.md rewritten. Pi-hole left the stack — System-page panel + SENTINEL_PIHOLE_* removed. Frontend: /system panel + pi/system.ts types updated. Tests: packaging suite reworked for native artifacts. Docs: changelogs v1.16 | User + AI agent |
-| 2026-08-07 | 1.15 | Sprint 15 (Performance tuning + final polish): §14.5 scoring rewritten (build = 21 static + 9 proven / tests = 24 static + 6 proven — static survives failed runs; docs green ≥50%) + caching (`_fresh_row` serves the stored `PortfolioScore` until a source row is newer) + `GET /portfolio/summary` (dashboard stats); §13.4 GitHub sync — HEAD change detection before/after pull (only moved repos re-indexed, all-clean passes skip the scan, knowledge auto-index narrowed to changed repos), runs persisted to new `SyncRun` table surfaced by `GET /system/sync` (read-only); §2.3 `GET /rag/index/status` (embedded vs total files per project); scanner skips self-scan false positives (`data/`, `fixtures/`, template `.env` names; real `.env` still flagged). Frontend: Dashboard real stats (portfolio summary), header sync pill (Layout), Knowledge page index progress. Tests: 268 backend (new change-detection/persistence in `test_sync_service.py`, `/system/sync` in `test_system_service.py`, `/rag/index/status` in `test_rag_api.py`, scoring/cache/`is_test_file_path` in `test_portfolio.py`, scanner tests) + 58 vitest (Layout pill, Dashboard stats, KnowledgeExplorer) | User + AI |
-| 2026-08-07 | 1.14 | Sprint 12.2 (Bugs + UI pages): §11 world sim unblocked — events/expansion: new step 2.5 **recruitment** (`event_generator.py`, food-secure settlements scale roles with population: farmers `pop//6` capped by new `FARM_CAPACITY` per terrain, builders/merchants/explorers pop//12//30//60; starving settlements recruit nobody), food store capped at `pop × MAX_FOOD_DAYS` (§11.3, bounds +6%/road trade growth so SQLite ints never overflow), expansion stops at `MAX_ACTIVE_SETTLEMENTS = 60`, raids restricted to road-connected pairs (O(roads) vs O(n²)), skill bonuses clamp at level 10 (+45% production / +90% rebuild); worlds now naturally reach ~60 settlements/58 roads (was dead at ~130 pop / 0 roads because farmers were fixed at bootstrap); new `test_roads_appear_from_natural_growth`. **Indexer encoding hardening**: `indexer.py`/`framework_detector.py`/`command_extractor.py` read text/json as UTF-8 with `errors="replace"` and catch `UnicodeDecodeError` so a non-UTF-8 `requirements.txt` (MLBattles) can't abort indexing; regression `test_index_project_survives_non_utf8_requirements`. **Knowledge auto-index after sync**: `sync_service._queue_knowledge_index` — after a pass, projects that still have files with `embedding_id IS NULL` get a `run_index_knowledge` Celery task queued per project (best-effort: skipped with `"ollama-unavailable"` when Ollama is down, never fails the sync); `rag_service.ingest_files` marks unreadable files with `embedding_id = record.id` and commits even with zero embeds so the pending query doesn't re-queue forever; CLI `sentinel sync` prints the knowledge line; 2 new tests. Frontend: placeholder content removed — real `/projects`, `/builds`, `/security` pages (`pages/Projects.tsx|Builds.tsx|Security.tsx`, `api/tests.ts`, etc) with expandable file lists, per-project run + history + log/finding drill-downs; `ArchitectureMap.test.tsx` race fixed (`findByText`). Tests: 256 backend (95.08% cov), 48 vitest. Docs: §11.3/§11.4/§11.5, §13.4 sync notes, changelogs v1.14 | User + AI agent |
-| 2026-08-07 | 1.13 | Sprint 12.1 (Repo auto-sync + Pi-hole v6 auth fix + SMB revert): §13.4 rewritten — laptop projects now come from **GitHub auto-sync** instead of an SMB share: `RepoSyncService`: `RepoSyncService` (`services/sync_service.py`) lists repos via GitHub API (read-only PAT, `SENTINEL_GITHUB_TOKEN`, paged `GET /user/repos`), `git clone`s missing repos and `git pull --ff-only` existing checkouts under `SENTINEL_PROJECTS_DIR` (local target → `/data/projects`), then re-indexes; CLI `sentinel sync` + Celery beat `repo-sync` (`SENTINEL_SYNC_INTERVAL_MINUTES`, default 15); git never prompts (`GIT_TERMINAL_PROMPT=0`), fail-fast stderr captured per repo. Pi-hole System-page client fixed (v6 session auth): `POST /api/auth` with `SENTINEL_PIHOLE_PASSWORD` → `X-FTL-SID` header (new `SENTINEL_PIHOLE_PASSWORD` config; v5 `SENTINEL_PIHOLE_API_TOKEN`/`X-FTL-API-KEY` removed); read-only, Rule 2. Compose/`.env.example` pass `SENTINEL_GITHUB_TOKEN`/`SENTINEL_SYNC_INTERVAL_MINUTES`/`SENTINEL_PIHOLE_PASSWORD` to backend + worker; env table §4 updated. Desktop SMB plumbing reverted. Tests: 251 backend (95.2% cov) — new `test_sync_service.py` (MockTransport + run_command stubs: clone/pull/failed/per-repo errors, unconfigured skip, GitHub error), `test_system_service.py` reworked (session auth happy path, bad password 401, X-FTL-SID asserted), CLI sync tests. Docs: laptop.md, AGENTS.md, changelogs v1.13 | User + AI agent |
-| 2026-08-06 | 1.12 | Sprint 12 (Home Server + System page): §13.4 new home-server runbook — laptop runs full stack from one compose file; `frontend` nginx container (docker/frontend/Dockerfile multi-stage → nginx, `8080:80`, `/api` + WS proxy to backend) serves the dashboard at `http://192.168.4.40:8080`; dev overrides moved to explicit `docker-compose.dev.yml` (prod default); `SENTINEL_API_PORT`/`SENTINEL_PROJECTS_DIR`/`SENTINEL_OLLAMA_HOST` env-overridable (SMB projects share = no second copy). Backend: startup validation `services/startup_check.py` (database/chroma/watch dirs/ollama), System page surface — `OllamaQueryLog` table, `generate_with_metrics` (eval_count/eval_duration → tokens/sec), `OllamaStatus`/`PiHoleStatus`/`system_overview`, router `api/v1/system.py` (read-only), Pi-hole v6 read-only client (`X-FTL-API-KEY`). CLI finalized per §12.6: `portfolio` wired to `PortfolioService`, new `docs <id>`, `world-sim start`. Packaging: `scripts/build.py` + `scripts/release.py` (zip + sha256). Frontend: `/system` page + nav item + `ErrorBoundary`. Tests: §12 update — test_compose (prod/dev split + frontend service), test_system_service (8), test_startup_check (5), test_packaging (5), System page vitest (4), ErrorBoundary vitest (3), e2e system.spec (2); 238 backend / 36 vitest / 9 e2e | User + AI agent |
-| 2026-08-05 | 1.10.1 | Sprint 10.5 (Observatory): new §2.11 endpoint docs (`GET /observatory/galaxy|timeline?days=|architecture/{id}`), new §14.6 Observatory — `ObservatoryService` (`backend/app/services/observatory_service.py`): galaxy = project nodes + shared tech nodes (framework + `Dependency.name`, 2+ projects: tech, links tech-sorted), timeline = `project-created`/`commit`/`build`/`test`/`finding` from `created_at`/`GitCommit.timestamp`/`BuildLog.started_at`/`TestResult.run_at`/`SecurityFinding.detected_at`, naive-UTC cutoff, descending, cap 500, messages clipped to 120 chars; architecture = recursive tree from indexed file paths (dirs-first, count = files beneath, leaf = 1, root = total files), 404 on unknown project. Router `api/v1/observatory.py` registered in `main.py`; schemas `observatory.py` (`GalaxyGraph`/`GalaxyNode`/`GalaxyLink`, `Timeline`/`TimelineEvent`, `ArchitectureNode`, exported). Tests: `tests/test_observatory.py` (11 tests: galaxy shared-tech filtering, timeline window/order/cap/exclusion, tree nesting + counts, `_clip`, API galaxy/timeline/architecture + 404, in-memory SQLite, dependency override). §2.6 stale never-built `/projects/{id}/timeline` replaced by a pointer to §2.11. Full suite 152 green; black/isort/flake8 clean on new files; `npm run build` clean. Frontend: `/observatory` route + nav item, `pages/Observatory.tsx` (Galaxy + Timeline + Architecture sections), `components/ProjectGalaxy.tsx` (plain SVG node-link graph), `ProjectTimeline.tsx` (kind-colored dots + days-window selector), `ArchitectureMap.tsx` (project dropdown + indented tree), `api/observatory.ts` on shared axios client; `types/index.ts` observatory interfaces | User + AI agent |
-| 2026-08-05 | 1.10 | Sprint 10 (Portfolio Intelligence): §2.7 rewritten to the shipped endpoints (`/portfolio/scores`, `/best-candidates?min_score=`, `/feature-matrix`), new §14.5 Portfolio Intelligence — `PortfolioService` (`backend/app/services/portfolio_service.py`, deterministic 30/30/25/15 formula, missing = 0; build latest log success/failure/pending, tests pass ratio, security severity penalties, docs = README/Markdown/`docs/` file ratio; recompute-on-read + upsert to `PortfolioScore`), router `backend/app/api/v1/portfolio.py` registered in `main.py`, `tests/test_portfolio.py` (12 tests, in-memory SQLite, API via dependency override). Frontend: `pages/Portfolio.tsx` (health grid, best candidates, feature matrix), `components/HealthCard.tsx`, `components/FeatureMatrix.tsx`, `api/portfolio.ts` aligned to backend schemas, `/portfolio` route now real (nav item already existed). Observatory (galaxy/timeline/architecture) deferred to Sprint 10.5 | User + AI agent |
-| 2026-08-05 | 1.9.1 | Sprint 9 closeout (eero→Pi-hole DNS handoff): §13.3 verification extended with the network-wide blocking steps — eero app Custom DNS (IPv4 primary `192.168.4.40` Pi-hole, secondary `192.168.4.1` fallback, IPv6 empty), leave DHCP/NAT on Automatic and eero Secure off, verify via `ipconfig`/DNS showing `192.168.4.40` + `nslookup doubleclick.net` → `0.0.0.0`; Pi-hole v6 login notes (password-only form is normal for the single admin user; `FTLCONF_webpassword` is only applied at first boot, so a stale container shows "wrong password" — reset via `docker exec -it sentinel-pihole-1 pihole setpassword`, container name is `sentinel-pihole-1` not `pihole`) | User + AI agent |
-| 2026-08-05 | 1.9 | Sprint 9 (World Simulator v1): §11 rewritten from the original container-based "AI world" plan to the shipped deterministic ant-farm — isolated SQLite `data/world_sim/world.db` (own metadata; tables `world_sim_state`, `world_settlements`, `world_roads`, `world_events`), rules engine (`rules_engine.py`: terrain as pure `(x,y,seed)` hash, food/growth/construction/expansion/trade/raids/disasters), `event_generator.simulate_day` (9 steps, seeded per day), skill system (`skill_system.py`: `20+5×(severity−1)` survival XP → tiers 0/50/150/300/500 → levels 1–5, +5% production/+10% rebuild per level), `WorldSimulatorService` (advance_day single transaction, bounded catch-up, god tools), API `POST/GET /api/v1/world-sim/*` (state/history/settlements/tick/reset/accelerate/disaster), Celery beat `world-sim-tick` (no new container), CLI `world-sim state|tick|reset|accelerate|disaster|inspect`, 26 tests; §2.9 endpoint list + §5.1 CLI updated. Frontend: `/world` route + nav, `api/world_sim.ts`, `WorldSimulatorPage` (polling, god controls, settlement inspector, event feed), `WorldGridMap` (2D canvas; BigInt copy of the terrain hash so map == backend) | User + AI agent |
-| 2026-08-04 | 1.8 | Sprint 8.5 (Infrastructure Services): §13.1 compose spec updated — Pi-hole uses the official `ghcr.io/pi-hole/pihole:latest` image (Pi-hole no longer publishes to Docker Hub; `docker.io/pi-hole/pihole` pulls fail with repository-not-found) with v6 env (`FTLCONF_LOCAL_IPV4`, `FTLCONF_webpassword` from gitignored `.env`, `TZ`), `SENTINEL_OLLAMA_HOST` in backend/worker/scheduler points at the laptop (`http://192.168.4.40:11434`), the `ollama` profile is documented as a local fallback; new §13.3 laptop deployment walkthrough (native Ollama `OLLAMA_HOST=0.0.0.0:11434` + firewall rules, model pulls `llama3.1:8b`/`gemma2`/`nomic-embed-text`, clone + `docker compose --profile pihole up -d pihole` with `PIHOLE_WEBPASSWORD`/`PIHOLE_TZ`, router DHCP reservation + LAN DNS), multi-host Ollama env-var table (Sentinel `SENTINEL_OLLAMA_HOST`; airadio `OLLAMA_URL`/`OLLAMA_MODEL`), verification commands (admin UI 8053, `/api/tags`, `nslookup doubleclick.net` → 0.0.0.0) | User + AI agent |
+un.py (repo root) is the single starting point â€” startup checks then uvicorn on 127.0.0.1:8000 (--check/--port/--reload/--service/--install/--uninstall); scripts/install_service.py registers the Sentinel Task-Scheduler task (pythonw run.py --service every 5 min, idempotent); scripts/build.py reworked (verify + --dist stages frontend into ackend/app/static, served same-origin by pp/main.py); scripts/release.py ships run.py + scripts + docs + ackend/app; SENTINEL_PORT replaces SENTINEL_API_PORT; Â§4.2 env table + Â§13 rewritten (native runbook, troubleshooting); laptop.md rewritten. Pi-hole left the stack â€” System-page panel + SENTINEL_PIHOLE_* removed. Frontend: /system panel + pi/system.ts types updated. Tests: packaging suite reworked for native artifacts. Docs: changelogs v1.16 | User + AI agent |
+| 2026-08-07 | 1.15 | Sprint 15 (Performance tuning + final polish): Â§14.5 scoring rewritten (build = 21 static + 9 proven / tests = 24 static + 6 proven â€” static survives failed runs; docs green â‰¥50%) + caching (`_fresh_row` serves the stored `PortfolioScore` until a source row is newer) + `GET /portfolio/summary` (dashboard stats); Â§13.4 GitHub sync â€” HEAD change detection before/after pull (only moved repos re-indexed, all-clean passes skip the scan, knowledge auto-index narrowed to changed repos), runs persisted to new `SyncRun` table surfaced by `GET /system/sync` (read-only); Â§2.3 `GET /rag/index/status` (embedded vs total files per project); scanner skips self-scan false positives (`data/`, `fixtures/`, template `.env` names; real `.env` still flagged). Frontend: Dashboard real stats (portfolio summary), header sync pill (Layout), Knowledge page index progress. Tests: 268 backend (new change-detection/persistence in `test_sync_service.py`, `/system/sync` in `test_system_service.py`, `/rag/index/status` in `test_rag_api.py`, scoring/cache/`is_test_file_path` in `test_portfolio.py`, scanner tests) + 58 vitest (Layout pill, Dashboard stats, KnowledgeExplorer) | User + AI |
+| 2026-08-07 | 1.14 | Sprint 12.2 (Bugs + UI pages): Â§11 world sim unblocked â€” events/expansion: new step 2.5 **recruitment** (`event_generator.py`, food-secure settlements scale roles with population: farmers `pop//6` capped by new `FARM_CAPACITY` per terrain, builders/merchants/explorers pop//12//30//60; starving settlements recruit nobody), food store capped at `pop Ã— MAX_FOOD_DAYS` (Â§11.3, bounds +6%/road trade growth so SQLite ints never overflow), expansion stops at `MAX_ACTIVE_SETTLEMENTS = 60`, raids restricted to road-connected pairs (O(roads) vs O(nÂ²)), skill bonuses clamp at level 10 (+45% production / +90% rebuild); worlds now naturally reach ~60 settlements/58 roads (was dead at ~130 pop / 0 roads because farmers were fixed at bootstrap); new `test_roads_appear_from_natural_growth`. **Indexer encoding hardening**: `indexer.py`/`framework_detector.py`/`command_extractor.py` read text/json as UTF-8 with `errors="replace"` and catch `UnicodeDecodeError` so a non-UTF-8 `requirements.txt` (MLBattles) can't abort indexing; regression `test_index_project_survives_non_utf8_requirements`. **Knowledge auto-index after sync**: `sync_service._queue_knowledge_index` â€” after a pass, projects that still have files with `embedding_id IS NULL` get a `run_index_knowledge` Celery task queued per project (best-effort: skipped with `"ollama-unavailable"` when Ollama is down, never fails the sync); `rag_service.ingest_files` marks unreadable files with `embedding_id = record.id` and commits even with zero embeds so the pending query doesn't re-queue forever; CLI `sentinel sync` prints the knowledge line; 2 new tests. Frontend: placeholder content removed â€” real `/projects`, `/builds`, `/security` pages (`pages/Projects.tsx|Builds.tsx|Security.tsx`, `api/tests.ts`, etc) with expandable file lists, per-project run + history + log/finding drill-downs; `ArchitectureMap.test.tsx` race fixed (`findByText`). Tests: 256 backend (95.08% cov), 48 vitest. Docs: Â§11.3/Â§11.4/Â§11.5, Â§13.4 sync notes, changelogs v1.14 | User + AI agent |
+| 2026-08-07 | 1.13 | Sprint 12.1 (Repo auto-sync + Pi-hole v6 auth fix + SMB revert): Â§13.4 rewritten â€” laptop projects now come from **GitHub auto-sync** instead of an SMB share: `RepoSyncService`: `RepoSyncService` (`services/sync_service.py`) lists repos via GitHub API (read-only PAT, `SENTINEL_GITHUB_TOKEN`, paged `GET /user/repos`), `git clone`s missing repos and `git pull --ff-only` existing checkouts under `SENTINEL_PROJECTS_DIR` (local target â†’ `/data/projects`), then re-indexes; CLI `sentinel sync` + Celery beat `repo-sync` (`SENTINEL_SYNC_INTERVAL_MINUTES`, default 15); git never prompts (`GIT_TERMINAL_PROMPT=0`), fail-fast stderr captured per repo. Pi-hole System-page client fixed (v6 session auth): `POST /api/auth` with `SENTINEL_PIHOLE_PASSWORD` â†’ `X-FTL-SID` header (new `SENTINEL_PIHOLE_PASSWORD` config; v5 `SENTINEL_PIHOLE_API_TOKEN`/`X-FTL-API-KEY` removed); read-only, Rule 2. Compose/`.env.example` pass `SENTINEL_GITHUB_TOKEN`/`SENTINEL_SYNC_INTERVAL_MINUTES`/`SENTINEL_PIHOLE_PASSWORD` to backend + worker; env table Â§4 updated. Desktop SMB plumbing reverted. Tests: 251 backend (95.2% cov) â€” new `test_sync_service.py` (MockTransport + run_command stubs: clone/pull/failed/per-repo errors, unconfigured skip, GitHub error), `test_system_service.py` reworked (session auth happy path, bad password 401, X-FTL-SID asserted), CLI sync tests. Docs: laptop.md, AGENTS.md, changelogs v1.13 | User + AI agent |
+| 2026-08-06 | 1.12 | Sprint 12 (Home Server + System page): Â§13.4 new home-server runbook â€” laptop runs full stack from one compose file; `frontend` nginx container (docker/frontend/Dockerfile multi-stage â†’ nginx, `8080:80`, `/api` + WS proxy to backend) serves the dashboard at `http://192.168.4.40:8080`; dev overrides moved to explicit `docker-compose.dev.yml` (prod default); `SENTINEL_API_PORT`/`SENTINEL_PROJECTS_DIR`/`SENTINEL_OLLAMA_HOST` env-overridable (SMB projects share = no second copy). Backend: startup validation `services/startup_check.py` (database/chroma/watch dirs/ollama), System page surface â€” `OllamaQueryLog` table, `generate_with_metrics` (eval_count/eval_duration â†’ tokens/sec), `OllamaStatus`/`PiHoleStatus`/`system_overview`, router `api/v1/system.py` (read-only), Pi-hole v6 read-only client (`X-FTL-API-KEY`). CLI finalized per Â§12.6: `portfolio` wired to `PortfolioService`, new `docs <id>`, `world-sim start`. Packaging: `scripts/build.py` + `scripts/release.py` (zip + sha256). Frontend: `/system` page + nav item + `ErrorBoundary`. Tests: Â§12 update â€” test_compose (prod/dev split + frontend service), test_system_service (8), test_startup_check (5), test_packaging (5), System page vitest (4), ErrorBoundary vitest (3), e2e system.spec (2); 238 backend / 36 vitest / 9 e2e | User + AI agent |
+| 2026-08-05 | 1.10.1 | Sprint 10.5 (Observatory): new Â§2.11 endpoint docs (`GET /observatory/galaxy|timeline?days=|architecture/{id}`), new Â§14.6 Observatory â€” `ObservatoryService` (`backend/app/services/observatory_service.py`): galaxy = project nodes + shared tech nodes (framework + `Dependency.name`, 2+ projects: tech, links tech-sorted), timeline = `project-created`/`commit`/`build`/`test`/`finding` from `created_at`/`GitCommit.timestamp`/`BuildLog.started_at`/`TestResult.run_at`/`SecurityFinding.detected_at`, naive-UTC cutoff, descending, cap 500, messages clipped to 120 chars; architecture = recursive tree from indexed file paths (dirs-first, count = files beneath, leaf = 1, root = total files), 404 on unknown project. Router `api/v1/observatory.py` registered in `main.py`; schemas `observatory.py` (`GalaxyGraph`/`GalaxyNode`/`GalaxyLink`, `Timeline`/`TimelineEvent`, `ArchitectureNode`, exported). Tests: `tests/test_observatory.py` (11 tests: galaxy shared-tech filtering, timeline window/order/cap/exclusion, tree nesting + counts, `_clip`, API galaxy/timeline/architecture + 404, in-memory SQLite, dependency override). Â§2.6 stale never-built `/projects/{id}/timeline` replaced by a pointer to Â§2.11. Full suite 152 green; black/isort/flake8 clean on new files; `npm run build` clean. Frontend: `/observatory` route + nav item, `pages/Observatory.tsx` (Galaxy + Timeline + Architecture sections), `components/ProjectGalaxy.tsx` (plain SVG node-link graph), `ProjectTimeline.tsx` (kind-colored dots + days-window selector), `ArchitectureMap.tsx` (project dropdown + indented tree), `api/observatory.ts` on shared axios client; `types/index.ts` observatory interfaces | User + AI agent |
+| 2026-08-05 | 1.10 | Sprint 10 (Portfolio Intelligence): Â§2.7 rewritten to the shipped endpoints (`/portfolio/scores`, `/best-candidates?min_score=`, `/feature-matrix`), new Â§14.5 Portfolio Intelligence â€” `PortfolioService` (`backend/app/services/portfolio_service.py`, deterministic 30/30/25/15 formula, missing = 0; build latest log success/failure/pending, tests pass ratio, security severity penalties, docs = README/Markdown/`docs/` file ratio; recompute-on-read + upsert to `PortfolioScore`), router `backend/app/api/v1/portfolio.py` registered in `main.py`, `tests/test_portfolio.py` (12 tests, in-memory SQLite, API via dependency override). Frontend: `pages/Portfolio.tsx` (health grid, best candidates, feature matrix), `components/HealthCard.tsx`, `components/FeatureMatrix.tsx`, `api/portfolio.ts` aligned to backend schemas, `/portfolio` route now real (nav item already existed). Observatory (galaxy/timeline/architecture) deferred to Sprint 10.5 | User + AI agent |
+| 2026-08-05 | 1.9.1 | Sprint 9 closeout (eeroâ†’Pi-hole DNS handoff): Â§13.3 verification extended with the network-wide blocking steps â€” eero app Custom DNS (IPv4 primary `192.168.4.40` Pi-hole, secondary `192.168.4.1` fallback, IPv6 empty), leave DHCP/NAT on Automatic and eero Secure off, verify via `ipconfig`/DNS showing `192.168.4.40` + `nslookup doubleclick.net` â†’ `0.0.0.0`; Pi-hole v6 login notes (password-only form is normal for the single admin user; `FTLCONF_webpassword` is only applied at first boot, so a stale container shows "wrong password" â€” reset via `docker exec -it sentinel-pihole-1 pihole setpassword`, container name is `sentinel-pihole-1` not `pihole`) | User + AI agent |
+| 2026-08-05 | 1.9 | Sprint 9 (World Simulator v1): Â§11 rewritten from the original container-based "AI world" plan to the shipped deterministic ant-farm â€” isolated SQLite `data/world_sim/world.db` (own metadata; tables `world_sim_state`, `world_settlements`, `world_roads`, `world_events`), rules engine (`rules_engine.py`: terrain as pure `(x,y,seed)` hash, food/growth/construction/expansion/trade/raids/disasters), `event_generator.simulate_day` (9 steps, seeded per day), skill system (`skill_system.py`: `20+5Ã—(severityâˆ’1)` survival XP â†’ tiers 0/50/150/300/500 â†’ levels 1â€“5, +5% production/+10% rebuild per level), `WorldSimulatorService` (advance_day single transaction, bounded catch-up, god tools), API `POST/GET /api/v1/world-sim/*` (state/history/settlements/tick/reset/accelerate/disaster), Celery beat `world-sim-tick` (no new container), CLI `world-sim state|tick|reset|accelerate|disaster|inspect`, 26 tests; Â§2.9 endpoint list + Â§5.1 CLI updated. Frontend: `/world` route + nav, `api/world_sim.ts`, `WorldSimulatorPage` (polling, god controls, settlement inspector, event feed), `WorldGridMap` (2D canvas; BigInt copy of the terrain hash so map == backend) | User + AI agent |
+| 2026-08-04 | 1.8 | Sprint 8.5 (Infrastructure Services): Â§13.1 compose spec updated â€” Pi-hole uses the official `ghcr.io/pi-hole/pihole:latest` image (Pi-hole no longer publishes to Docker Hub; `docker.io/pi-hole/pihole` pulls fail with repository-not-found) with v6 env (`FTLCONF_LOCAL_IPV4`, `FTLCONF_webpassword` from gitignored `.env`, `TZ`), `SENTINEL_OLLAMA_HOST` in backend/worker/scheduler points at the laptop (`http://192.168.4.40:11434`), the `ollama` profile is documented as a local fallback; new Â§13.3 laptop deployment walkthrough (native Ollama `OLLAMA_HOST=0.0.0.0:11434` + firewall rules, model pulls `llama3.1:8b`/`gemma2`/`nomic-embed-text`, clone + `docker compose --profile pihole up -d pihole` with `PIHOLE_WEBPASSWORD`/`PIHOLE_TZ`, router DHCP reservation + LAN DNS), multi-host Ollama env-var table (Sentinel `SENTINEL_OLLAMA_HOST`; airadio `OLLAMA_URL`/`OLLAMA_MODEL`), verification commands (admin UI 8053, `/api/tags`, `nslookup doubleclick.net` â†’ 0.0.0.0) | User + AI agent |
 | 2026-08-04 | 1.7 | Sprint 8 Part 2 (chat UI + live E2E): frontend RAG client `api/rag.ts` (search / query with 120s timeout / index / summaries), `RagChat` + `ChatMessage` components (bubbles, source citations with distance, model/generated_at/confidence provenance, error states, auto-scroll), `KnowledgeExplorer` page (project scope selector, "Index knowledge" with optional AI architecture summary, semantic search list, chat), `/knowledge` route. Verified live against native host Ollama: indexing (`nomic-embed-text` embeddings) populated ChromaDB; `POST /rag/query` returned a grounded answer with 5 sources + provenance (`gemma2:2b`); `with_summary` persisted an `architecture` KnowledgeSummary; CLI `ask` same path; Vite dev proxy serves the API. Docker image lacks `git` (commit indexing warns and continues); chat dev-time note: run `docker compose --profile ollama up` with `ollama pull gemma2 nomic-embed-text`, or point `SENTINEL_OLLAMA_HOST` at a running native Ollama | User + AI agent | frontend RAG client `api/rag.ts` (search / query with 120s timeout / index / summaries), `RagChat` + `ChatMessage` components (bubbles, source citations with distance, model/generated_at/confidence provenance, error states, auto-scroll), `KnowledgeExplorer` page (project scope selector, "Index knowledge" with optional AI architecture summary, semantic search list, chat), `/knowledge` route. Verified live against native host Ollama: indexing (`nomic-embed-text` embeddings) populated ChromaDB; `POST /rag/query` returned a grounded answer with 5 sources + provenance (`gemma2:2b`); `with_summary` persisted an `architecture` KnowledgeSummary; CLI `ask` same path; Vite dev proxy serves the API. Docker image lacks `git` (commit indexing warns and continues); chat dev-time note: run `docker compose --profile ollama up` with `ollama pull gemma2 nomic-embed-text`, or point `SENTINEL_OLLAMA_HOST` at a running native Ollama | User + AI agent |
-| 2026-08-04 | 1.6 | Sprint 8 Part 1: RAG backend core. New services: `OllamaService` (`generate`, `embed` with `/api/embed` + legacy `/api/embeddings` fallback, `is_available`/`list_models`, injectable `httpx.BaseTransport`), `ChromaManager` (embedded PersistentClient, 6 named collections, hnsw+cosine, `upsert`/`search` with `where` scoping/`delete_by_project`/`count`), `RagService` (injectable `embedder`/`llm`/`chroma` for deterministic tests; `index_project` ingests raw file content into `file_summaries`, git commits, test/security/build collections; optional Ollama architecture summary persisted as `KnowledgeSummary`; `search` + grounded `query` returning sources with `model`/`generated_at`/`confidence` provenance), `GitHistoryService` + pure `parse_log` (`%H|%an|%aI|%s`, dedupe by hash). New repos `git`/`knowledge_summary`; schemas `rag.py`/`knowledge.py`. Endpoints: `POST /api/v1/rag/search`, `POST /api/v1/rag/query`, `POST /api/v1/rag/index` (202 JobEnvelope → Celery `run_index_knowledge`), `GET /api/v1/projects/{id}/summaries`. CLI `ask` + `rag-index` (pre-check Ollama availability, exit 1 with pull instructions). Deps: `chromadb>=0.5`, `httpx>=0.27` moved to main. Windows note: git `--pretty` format must be double-quoted (cmd treats unquoted `|` as a pipe). Frontend chat UI + live E2E is Part 2 | User + AI agent |
+| 2026-08-04 | 1.6 | Sprint 8 Part 1: RAG backend core. New services: `OllamaService` (`generate`, `embed` with `/api/embed` + legacy `/api/embeddings` fallback, `is_available`/`list_models`, injectable `httpx.BaseTransport`), `ChromaManager` (embedded PersistentClient, 6 named collections, hnsw+cosine, `upsert`/`search` with `where` scoping/`delete_by_project`/`count`), `RagService` (injectable `embedder`/`llm`/`chroma` for deterministic tests; `index_project` ingests raw file content into `file_summaries`, git commits, test/security/build collections; optional Ollama architecture summary persisted as `KnowledgeSummary`; `search` + grounded `query` returning sources with `model`/`generated_at`/`confidence` provenance), `GitHistoryService` + pure `parse_log` (`%H|%an|%aI|%s`, dedupe by hash). New repos `git`/`knowledge_summary`; schemas `rag.py`/`knowledge.py`. Endpoints: `POST /api/v1/rag/search`, `POST /api/v1/rag/query`, `POST /api/v1/rag/index` (202 JobEnvelope â†’ Celery `run_index_knowledge`), `GET /api/v1/projects/{id}/summaries`. CLI `ask` + `rag-index` (pre-check Ollama availability, exit 1 with pull instructions). Deps: `chromadb>=0.5`, `httpx>=0.27` moved to main. Windows note: git `--pretty` format must be double-quoted (cmd treats unquoted `|` as a pipe). Frontend chat UI + live E2E is Part 2 | User + AI agent |
 | 2026-08-04 | 1.5 | Sprint 7: AutomationEngine split into BuildRunner/TestRunner/SecurityScanner services behind Celery tasks (`app/tasks/`). Endpoints: `POST /api/v1/builds/run` (202, job row pre-created with id == Celery task id; poll via `GET /api/v1/builds/status/{job_id}`), `GET /api/v1/builds/history?project_id=`, `POST /api/v1/tests/run?project_id=` (query param), `GET /api/v1/tests/results?project_id=`, `POST /api/v1/security/scan?project_id=`, `GET /api/v1/security/findings?project_id=`. Compose adds `worker` + `scheduler` (celery + beat, `-P solo`); backend gets `SENTINEL_REDIS_URL`; config adds `redis_url`/`celery_eager`/`command_timeout_seconds`; CLI `build`/`test`/`scan` run synchronously. Deps from pyproject carry no version (parser keeps `requirements.txt` versions); secrets/static findings deterministic | User + AI agent |
-| 2026-08-04 | 1.4 | Sprint 6: added `GET /api/v1/projects/`, `GET /api/v1/projects/{id}`, `GET /api/v1/projects/{id}/files`, `WS /api/v1/ws/jobs` (welcome + heartbeat; real job events in Sprint 7). No project create/update — indexing stays CLI/IndexerService-only. Frontend: axios client with `/api` proxy, UI/Project/Build contexts, useProjects + useWebSocket (exponential backoff, capped 30s) | User + AI agent |
-| 2026-08-04 | 1.3 | Sprint 5: frontend scaffolded — Vite 7, React 19, TypeScript strict, Tailwind 3.4 (class dark-mode), React Router v8 (`react-router` package; `react-router-dom` 7.x had a high-severity RSC-mode CSRF advisory, GHSA-qwww-vcr4-c8h2, fixed only in v8), dev proxy `/api` → `127.0.0.1:8000`, port 5173 strict | User + AI agent |
-| 2026-08-04 | 1.2 | Sprint 4: `docker-compose.yml` implemented — backend + redis run by default (`docker compose up`), Ollama behind the `ollama` profile; `worker`/`scheduler` services deferred to Sprint 7 (Celery), `frontend` deferred to Sprint 5, docker.sock bind deferred to Sprint 7 (runner isolation). Build context is repo root so `.dockerignore` lives at the root. `scripts/dev.py` added with `--backend-only`, `--frontend-only`, `--with-ollama`, `--down`. Watch dirs in-container default to `/data/projects` (mounted from `./data/projects`) | User + AI agent |
-| 2026-08-04 | 1.1 | Sprint 0 alignment: ChromaDB is embedded (no `chromadb` container, removed from compose; `version: "3.8"` key removed), scan endpoints unified on `project_id`, watch dirs default to `C:\Users\j`, fixed unclosed code block in §3.2 | User + AI agent |
+| 2026-08-04 | 1.4 | Sprint 6: added `GET /api/v1/projects/`, `GET /api/v1/projects/{id}`, `GET /api/v1/projects/{id}/files`, `WS /api/v1/ws/jobs` (welcome + heartbeat; real job events in Sprint 7). No project create/update â€” indexing stays CLI/IndexerService-only. Frontend: axios client with `/api` proxy, UI/Project/Build contexts, useProjects + useWebSocket (exponential backoff, capped 30s) | User + AI agent |
+| 2026-08-04 | 1.3 | Sprint 5: frontend scaffolded â€” Vite 7, React 19, TypeScript strict, Tailwind 3.4 (class dark-mode), React Router v8 (`react-router` package; `react-router-dom` 7.x had a high-severity RSC-mode CSRF advisory, GHSA-qwww-vcr4-c8h2, fixed only in v8), dev proxy `/api` â†’ `127.0.0.1:8000`, port 5173 strict | User + AI agent |
+| 2026-08-04 | 1.2 | Sprint 4: `docker-compose.yml` implemented â€” backend + redis run by default (`docker compose up`), Ollama behind the `ollama` profile; `worker`/`scheduler` services deferred to Sprint 7 (Celery), `frontend` deferred to Sprint 5, docker.sock bind deferred to Sprint 7 (runner isolation). Build context is repo root so `.dockerignore` lives at the root. `scripts/dev.py` added with `--backend-only`, `--frontend-only`, `--with-ollama`, `--down`. Watch dirs in-container default to `/data/projects` (mounted from `./data/projects`) | User + AI agent |
+| 2026-08-04 | 1.1 | Sprint 0 alignment: ChromaDB is embedded (no `chromadb` container, removed from compose; `version: "3.8"` key removed), scan endpoints unified on `project_id`, watch dirs default to `C:\Users\j`, fixed unclosed code block in Â§3.2 | User + AI agent |

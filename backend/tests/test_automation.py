@@ -282,6 +282,25 @@ def test_build_runner_launch_rewrites_venv_console_scripts(
         assert "venv" in log.launch_command
 
 
+def test_build_runner_does_not_double_rewrite_venv_uvicorn(tmp_db, tmp_path, fake_popen):
+    """v1.17.11.0 regression: a tester launch that already embeds the venv
+    interpreter with `-m uvicorn` must stay a single rewrite — the old regex
+    produced `"<venv>\python.exe" -m "<venv>\python.exe" -m uvicorn …`
+    (ModuleNotFoundError, port never bound)."""
+    root = tmp_path / "venv-uvicorn-already"
+    root.mkdir()
+    venv = root / "venv" / "Scripts"
+    venv.mkdir(parents=True)
+    (venv / "python.exe").write_text("dummy")
+    embedded = f'"{root}\\venv\\Scripts\\python.exe" -m uvicorn backend.main:app'
+    with Session(connection.get_engine()) as session:
+        project = _project_at(session, {"startup": embedded}, root)
+        log = BuildRunner(session).run_build(project)
+        assert log.launch_command is not None
+        assert log.launch_command == embedded
+        assert 'python.exe" -m "' not in log.launch_command
+
+
 def test_build_runner_does_not_launch_on_failure(tmp_db, tmp_path, fake_popen):
     """A failed build never opens the app."""
     root = tmp_path / "broken-app"

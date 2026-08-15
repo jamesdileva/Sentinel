@@ -84,7 +84,11 @@ class AppSessionService:
         path = self._log_path(project)
         if not path.exists():
             return []
-        with open(path, "r", encoding="utf-8") as fh:
+        # Child processes write the log with their own locale encoding
+        # (cp1252 on this machine), so tolerate non-UTF-8 bytes — the slice
+        # keeps every line, unknown bytes become U+FFFD (v1.17.11.0 bugfix:
+        # end() crashed with UnicodeDecodeError and left the session running).
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
             return fh.read().splitlines()
 
     def _slice_for(self, project: Project, session_id: str) -> str:

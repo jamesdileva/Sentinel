@@ -3,8 +3,9 @@
 Verified ground truth (2026-08-15):
 - Backend runs from the repo root via the repo venv:
   `"<repo>\\venv\\Scripts\\python.exe" -m uvicorn backend.main:app` on :8000.
-- `LLM_PROVIDER` defaults to "mock" (backend/core/config.py) — topic
-  generation is deterministic (fixed MOCK_TOPICS list).
+- `LLM_PROVIDER=mock` is pinned in the launch env (observed default differs
+  between config and runtime) — topic generation is deterministic (fixed
+  MOCK_TOPICS list).
 - Backend pytest suite is green (46 passed, ~66s) and runs without the
   server.
 - Renderer bug on record: renderer/src/api/client.ts:308 calls
@@ -30,9 +31,8 @@ def run(ctx: TesterContext) -> None:
     if not venv_python.exists():
         raise TesterEnvError(f"CG venv python missing: {venv_python}")
 
-    ctx.launch(BACKEND_CMD.format(venv_python))
-    ctx.wait_log("[sentinel] App launched", 30)
-    ctx.wait(6)
+    ctx.launch(BACKEND_CMD.format(venv_python), env={"LLM_PROVIDER": "mock"})
+    ctx.wait_log("Uvicorn running on", 60)
     ctx.http("GET", f"{PORT}/health", expect_body="healthy")
     ctx.http("GET", f"{PORT}/", expect_body="AI Documentary Studio")
     ctx.http("POST", f"{PORT}/api/topics/generate")

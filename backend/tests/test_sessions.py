@@ -178,6 +178,23 @@ def test_end_auto_captures_screenshot(tmp_db, project):
     assert len(shots) == 1
 
 
+def test_end_survives_non_utf8_app_log_bytes(tmp_db, project):
+    """v1.17.11.0 regression: child apps write the log in their locale
+    encoding (cp1252 here); end() used to crash reading the slice with
+    UnicodeDecodeError and left the session 'running' forever."""
+    with DbSession(get_engine()) as db:
+        app_session = _session(db, project.id)
+        path = _log_path(project.name)
+        with open(path, "ab") as fh:
+            fh.write(b"\x97 engine ready\x97\n")
+        AppSessionService(db).end(app_session.id, "ok", "passed")
+        db.refresh(app_session)
+        assert app_session.status == SessionStatus.PASSED
+        assert app_session.ended_at is not None
+        assert app_session.log_slice is not None
+        assert "\ufffd engine ready\ufffd" in app_session.log_slice
+
+
 def test_capture_with_checkpoint_link(tmp_db, project):
     with DbSession(get_engine()) as db:
         app_session = _session(db, project.id)
