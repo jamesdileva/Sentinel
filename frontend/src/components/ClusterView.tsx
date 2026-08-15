@@ -82,7 +82,7 @@ function clusterProjects(
 }
 
 function leafOrder(t: TreeNode): string[] {
-  if (!t.left) return [t.id];
+  if (!t.left || !t.right) return [t.id];
   return [...leafOrder(t.left), ...leafOrder(t.right)];
 }
 
@@ -155,7 +155,7 @@ export default function ClusterView() {
 
   const dendroSegments: React.ReactNode[] = [];
   const drawNode = (t: TreeNode): number => {
-    if (!t.left) return leafX.get(t.id)!;
+    if (!t.left || !t.right) return leafX.get(t.id)!;
     const lx = drawNode(t.left);
     const rx = drawNode(t.right);
     const y = nodeY(t);
