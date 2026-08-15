@@ -119,6 +119,9 @@ export default function ClusterView() {
     const projects = graph.nodes
       .filter((n) => n.kind === "project")
       .sort((a, b) => a.label.localeCompare(b.label));
+    for (const p of projects) {
+      if (!techOf.has(p.id)) techOf.set(p.id, new Set());
+    }
     const techs = graph.nodes
       .filter((n) => n.kind === "tech")
       .sort((a, b) => usageCount(b.detail) - usageCount(a.detail));

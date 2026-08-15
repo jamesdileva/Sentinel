@@ -152,6 +152,26 @@ describe("ClusterView", () => {
     expect(cell(container, "p2", "react")!.getAttribute("opacity")).toBe("0.2");
   });
 
+  it("renders island projects (no shared techs) without crashing", async () => {
+    mockGetGalaxy.mockResolvedValue({
+      nodes: [
+        node("p1", "project", "Alpha"),
+        node("p2", "project", "Beta"),
+        node("react", "tech", "React", "used by 2 projects"),
+      ],
+      links: [link("p1", "react", "React")],
+    });
+
+    const { container } = render(<ClusterView />);
+    await screen.findAllByText(/used by 2 projects/);
+
+    expect(
+      container.querySelectorAll('text[data-project-label]'),
+    ).toHaveLength(2);
+    expect(cells(container)).toHaveLength(1);
+    expect(container.querySelector('rect[data-row="p2"]')).toBeNull();
+  });
+
   it("renders a single-project portfolio without crashing", async () => {
     mockGetGalaxy.mockResolvedValue({
       nodes: [node("p1", "project", "Alpha")],
