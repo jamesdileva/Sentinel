@@ -8,6 +8,7 @@ import Observatory from "../pages/Observatory";
 import Portfolio from "../pages/Portfolio";
 import Projects from "../pages/Projects";
 import Security from "../pages/Security";
+import Sessions from "../pages/Sessions";
 import System from "../pages/System";
 
 export function AppRoutes() {
@@ -17,6 +18,7 @@ export function AppRoutes() {
         <Route index element={<Dashboard />} />
         <Route path="projects" element={<Projects />} />
         <Route path="builds" element={<Builds />} />
+        <Route path="sessions" element={<Sessions />} />
         <Route path="security" element={<Security />} />
         <Route path="knowledge" element={<KnowledgeExplorer />} />
         <Route path="portfolio" element={<Portfolio />} />

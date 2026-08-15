@@ -91,7 +91,9 @@ These are the project's constitution. They must be upheld in every decision, cha
   `SENTINEL_GITHUB_EXCLUDE` (optional, comma-separated `owner/repo` list the
   repo-sync skips — v1.17.9.1), `SENTINEL_WATCH_DIRS`, `SENTINEL_PORT`,
   `SENTINEL_DB_PATH`/
-  `SENTINEL_CHROMA_PATH`, `SENTINEL_SCAN_INTERVAL_MINUTES` — see `.env.example`.
+  `SENTINEL_CHROMA_PATH`, `SENTINEL_SCAN_INTERVAL_MINUTES`,
+  `SENTINEL_PORTFOLIO_DIR` (session-screenshot export target, default
+  `projects\jamesdileva\jamesdileva.github.io` — v1.17.10) — see `.env.example`.
 - **System page**: `/system` is a read-only home snapshot (Ollama availability/
   models/tokens-per-sec + startup checks). Per Rule 2 it never toggles
   anything server-side.

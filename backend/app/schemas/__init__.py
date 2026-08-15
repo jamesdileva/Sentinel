@@ -43,6 +43,17 @@ from app.schemas.security import (
     SecurityFindingCreate,
     SecurityFindingRead,
 )
+from app.schemas.session import (
+    SessionCheckpointCreate,
+    SessionCheckpointRead,
+    SessionCreate,
+    SessionEndRequest,
+    SessionExportRead,
+    SessionRead,
+    SessionScreenshotCreate,
+    SessionScreenshotRead,
+    SessionUpdate,
+)
 from app.schemas.test import TestResultRead, TestRunResponse
 from app.schemas.world_sim import (
     WorldAccelerateRequest,
@@ -90,6 +101,15 @@ __all__ = [
     "ScanResponse",
     "SecurityFindingCreate",
     "SecurityFindingRead",
+    "SessionCheckpointCreate",
+    "SessionCheckpointRead",
+    "SessionCreate",
+    "SessionEndRequest",
+    "SessionExportRead",
+    "SessionRead",
+    "SessionScreenshotCreate",
+    "SessionScreenshotRead",
+    "SessionUpdate",
     "TestResultRead",
     "TestRunResponse",
     "Timeline",

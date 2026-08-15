@@ -161,6 +161,11 @@ class Settings(BaseSettings):
     # v1.17.3: full path to a git executable, for contexts with a minimal PATH
     # (Task Scheduler autostart). Auto-discovered when empty.
     git_executable: str = ""
+    # v1.17.10: the jamesdileva.github.io checkout that "Export to portfolio"
+    # copies screenshots into (default: <projects-root>/jamesdileva/jamesdileva.github.io).
+    # Sentinel only copies files and returns an HTML snippet — pushing the site
+    # is always the user's manual step (Rule 1 explicit export, Rule 2).
+    portfolio_dir: Path = BASE_DIR.parent / "jamesdileva" / "jamesdileva.github.io"
 
 
 settings = Settings()

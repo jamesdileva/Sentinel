@@ -8,6 +8,11 @@ from app.repositories.git import GitCommitRepository
 from app.repositories.knowledge_summary import KnowledgeSummaryRepository
 from app.repositories.project import ProjectRepository
 from app.repositories.security import SecurityRepository
+from app.repositories.session import (
+    SessionCheckpointRepository,
+    SessionRepository,
+    SessionScreenshotRepository,
+)
 from app.repositories.test import TestRepository
 
 __all__ = [
@@ -19,5 +24,8 @@ __all__ = [
     "ProjectRepository",
     "Repository",
     "SecurityRepository",
+    "SessionCheckpointRepository",
+    "SessionRepository",
+    "SessionScreenshotRepository",
     "TestRepository",
 ]

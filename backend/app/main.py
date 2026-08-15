@@ -21,6 +21,7 @@ from app.api.v1.portfolio import router as portfolio_router
 from app.api.v1.projects import router as projects_router
 from app.api.v1.rag import router as rag_router
 from app.api.v1.security import router as security_router
+from app.api.v1.sessions import router as sessions_router
 from app.api.v1.system import router as system_router
 from app.api.v1.tests import router as tests_router
 from app.api.v1.world_sim import router as world_sim_router
@@ -187,6 +188,7 @@ app.include_router(observatory_router, prefix="/api/v1")
 app.include_router(builds_router, prefix="/api/v1")
 app.include_router(tests_router, prefix="/api/v1")
 app.include_router(security_router, prefix="/api/v1")
+app.include_router(sessions_router, prefix="/api/v1")
 app.include_router(system_router, prefix="/api/v1")
 app.include_router(rag_router, prefix="/api/v1")
 app.include_router(ws_router, prefix="/api/v1")

@@ -58,6 +58,7 @@ class Project(SQLModel, table=True):
         back_populates="project"
     )
     portfolio_score: "PortfolioScore" = Relationship(back_populates="project")
+    sessions: list["AppSession"] = Relationship(back_populates="project")
 
 
 class ProjectFile(SQLModel, table=True):
@@ -274,3 +275,64 @@ class SyncRun(SQLModel, table=True):
     indexed: int = 0
     knowledge_queued: int = 0
     detail: str | None = None
+
+
+class SessionStatus(str, enum.Enum):
+    """v1.17.10: session lifecycle — RUNNING until the user ends it."""
+
+    RUNNING = "running"
+    PASSED = "passed"
+    FAILED = "failed"
+    INVESTIGATE = "investigate"
+
+
+class AppSession(SQLModel, table=True):
+    """A recorded app-testing session (later.md Tier 1).
+
+    The session writes `[sentinel]` markers into the app's own log
+    (data/logs/apps/<slug>.log — the same file the launched app's output
+    flows into); `log_slice` is captured deterministically between the
+    session's start and end markers at `end()`.
+    """
+
+    id: str = Field(default_factory=_uuid, primary_key=True)
+    project_id: str = Field(foreign_key="project.id")
+    title: str
+    expected_output: str | None = None
+    actual_outcome: str | None = None
+    status: SessionStatus = SessionStatus.RUNNING
+    started_at: datetime.datetime = Field(default_factory=_utcnow)
+    ended_at: datetime.datetime | None = None
+    log_slice: str | None = None
+
+    project: Project = Relationship(back_populates="sessions")
+    checkpoints: list["SessionCheckpoint"] = Relationship(back_populates="session")
+    screenshots: list["SessionScreenshot"] = Relationship(back_populates="session")
+
+
+class SessionCheckpoint(SQLModel, table=True):
+    """A user-labeled moment during a session (later.md Tier 1)."""
+
+    id: str = Field(default_factory=_uuid, primary_key=True)
+    session_id: str = Field(foreign_key="appsession.id")
+    label: str
+    at: datetime.datetime = Field(default_factory=_utcnow)
+
+    session: AppSession = Relationship(back_populates="checkpoints")
+
+
+class SessionScreenshot(SQLModel, table=True):
+    """A full-screen grab taken during a session (later.md Tier 4).
+
+    `path` is relative to data/screenshots/<project-slug>/; the thumbnail
+    lives next to it as <stem>.thumb.png (90x60, matching the portfolio's
+    card thumbs).
+    """
+
+    id: str = Field(default_factory=_uuid, primary_key=True)
+    session_id: str = Field(foreign_key="appsession.id")
+    checkpoint_id: str | None = Field(default=None, foreign_key="sessioncheckpoint.id")
+    path: str
+    captured_at: datetime.datetime = Field(default_factory=_utcnow)
+
+    session: AppSession = Relationship(back_populates="screenshots")

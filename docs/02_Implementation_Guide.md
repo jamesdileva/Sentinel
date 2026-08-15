@@ -501,6 +501,51 @@ Read-only project overviews, deterministic from stored data (§14.6).
 
 ---
 
+### 2.12. Sessions (v1.17.10)
+
+App-testing session recorder + screenshot capture (later.md Tier 1 + Tier 4;
+see §14.7). All session state is written by the user's own actions — Sentinel
+only records (Rule 2: it never presses buttons in the app; Rule 3: log slices
+and captures are deterministic, AI never interprets).
+
+**POST `/sessions`** — start a session
+- Body: `{"project_id", "title", "expected_output"?}`
+- Writes `[sentinel] Session started <iso> <session_id>: <title>` into the
+  app's own log (`data/logs/apps/<slug>.log` — the same file the launched app
+  appends its output to)
+- Returns: `SessionRead` (id, project_name, status `running`, checkpoints, screenshots)
+
+**POST `/sessions/{id}/checkpoints`** — `{"label"}` → appends
+`[sentinel] checkpoint: <iso> <session_id>: <label>`; row in `sessioncheckpoint`
+
+**POST `/sessions/{id}/end`** — `{"actual_outcome"?, "status": passed|failed|investigate}`
+- Appends `[sentinel] Session ended <iso> <session_id>: <status>`, captures the
+  deterministic log slice between this session's own start/end markers
+  (interleaved sessions slice to their own end marker or EOF), and auto-captures
+  a screenshot (Tier 4 — every session ends with a record even without a manual
+  Capture press)
+
+**POST `/sessions/{id}/screenshots`** — `{"checkpoint_id"?}` full-screen grab
+(PIL `ImageGrab`) → `data/screenshots/<slug>/<iso>.png` + 90×60 thumb; row in
+`sessionscreenshot`
+
+**POST `/sessions/{id}/screenshots/{shot_id}/export`** — copies PNG + thumb
+into `SENTINEL_PORTFOLIO_DIR` (`images/sessions/`, default
+`C:\Users\j\projects\jamesdileva\jamesdileva.github.io`) and returns
+`{"copied": [...], "snippet": "<card HTML>"}` — the user pastes the snippet
+into the portfolio's index.html and pushes manually; Sentinel never pushes
+
+**GET `/sessions?project_id=&status=`** — list (newest first); **GET
+`/sessions/{id}`** — detail with nested checkpoints + screenshots;
+**PATCH `/sessions/{id}`** — edit title/expected_output/actual_outcome/status;
+**DELETE `/sessions/{id}`** — removes rows + screenshot files
+
+**GET `/sessions/{id}/screenshots/{filename}`** — media route (filename
+restricted to `[A-Za-z0-9._-]+`, resolved within the session's screenshot dir —
+path traversal blocked)
+
+---
+
 ## 3. Service Interfaces
 
 ### 3.1. IndexerService
@@ -1931,10 +1976,70 @@ relationships aren't persisted, so they're intentionally absent.
 
 ---
 
+## 14.7. Sessions (v1.17.10)
+
+`AppSessionService` (`backend/app/services/app_sessions.py`) records
+app-testing sessions and captures screenshots (later.md Tier 1 + Tier 4). One
+module, one responsibility (Rule 4): it watches and records — it never drives
+the app (Rule 2), and everything it produces is deterministic (Rule 3).
+
+**Marker protocol** — sessions annotate the app's *own* log
+(`data/logs/apps/<slug>.log`, same derivation as `build_runner._launch_app`:
+`Path(settings.db_path).parent.parent / "logs" / "apps"`), so provenance is a
+single file the launched app already writes to:
+- `[sentinel] Session started <iso> <session_id>: <title>` (`start()`)
+- `[sentinel] checkpoint: <iso> <session_id>: <label>` (`checkpoint()`)
+- `[sentinel] Session ended <iso> <session_id>: <status>` (`end()`)
+
+**Log slice** — `_slice_for(project, session_id)` reads the log and returns
+the lines between the session's own start and end markers (inclusive);
+interleaved sessions slice to their own end marker (lines from other sessions
+inside the range stay — that is what the log contains, and the slice is
+byte-for-byte reproducible); an unfinished session slices to EOF. The slice is
+captured into `AppSession.log_slice` at `end()`.
+
+**Screenshots** — `capture(session_id, checkpoint_id=None)` runs a PIL
+full-screen grab (`ImageGrab.grab()`) into
+`data/screenshots/<slug>/<iso>.png` with a 90×60 thumbnail
+(`<stem>.thumb.png`) next to it (same aspect-constrained size family as the
+portfolio's card thumbs). Called on demand and auto at `end()` — a failed
+auto-shot never loses the session (logged, not raised). Deletion removes the
+rows and the PNG + thumb files.
+
+**Portfolio export** — `export_to_portfolio(session_id, screenshot_id)`
+copies PNG + thumb into `SENTINEL_PORTFOLIO_DIR`'s `images/sessions/`
+(default `C:\Users\j\projects\jamesdileva\jamesdileva.github.io`, new env in
+`config.py` + `.env.example`) and returns the copied paths plus a ready-made
+card HTML snippet matching the site's `.card`/`.images`/`openModal` markup.
+Sentinel never pushes (Rule 2) — the snippet is for the user to paste and
+commit manually.
+
+**Models** — `backend/app/db/models.py`: `AppSession` (project FK, title,
+expected_output, actual_outcome, `SessionStatus` enum
+running/passed/failed/investigate, started_at/ended_at, log_slice) +
+`SessionCheckpoint` (session FK, label, at) + `SessionScreenshot` (session FK,
+nullable checkpoint FK, path, captured_at).
+
+**Endpoints** — `POST/GET/PATCH/DELETE /sessions`, `/sessions/{id}/checkpoints`,
+`/sessions/{id}/end`, `/sessions/{id}/screenshots` (+`/{shot}/export`), and the
+media route `/sessions/{id}/screenshots/{filename}` (filename whitelist
+`[A-Za-z0-9._-]+` + resolve-inside-dir check — path traversal blocked). See
+§2.12. Registered in `main.py`.
+
+**Frontend** — `/sessions` nav item + route (`components/nav.ts`,
+`routes/index.tsx`), `pages/Sessions.tsx` + `api/sessions.ts`: create dialog,
+project + status filters (with per-status counts), expandable session rows
+(checkpoint timeline, log slice with `[sentinel]` lines highlighted,
+screenshot grid with zoom modal), Capture / Add checkpoint / End (outcome +
+status radio) / Delete / Export-to-portfolio (copyable card snippet dialog).
+
+---
+
 ## Changelog
 
 | Date | Version | Change | Author |
 |------|---------|--------|--------|
+| 2026-08-15 | 1.17.10.0 | **Sessions (Tier 1 recorder) + Tier 4 screenshot capture.** Backend: three new tables — `AppSession` (project FK, status enum running/passed/failed/investigate, expected/actual, started/ended, `log_slice`), `SessionCheckpoint` (session FK, label, at), `SessionScreenshot` (session FK, nullable checkpoint FK, path, captured_at). `services/app_sessions.py` (one module, Rule 4) annotates the app's *own* log (`data/logs/apps/<slug>.log`, same derivation as `build_runner`) with `[sentinel] Session started|checkpoint:|Session ended <iso> <id>: ...` markers and captures the deterministic log slice between a session's own markers (interleaved sessions slice to their own end marker or EOF; byte-for-byte reproducible). Screenshots: PIL `ImageGrab.grab()` full-screen grabs + 90×60 thumbs under `data/screenshots/<slug>/`, on demand or auto at session end (Rule 2 — capture, never act); delete removes rows + PNG/thumb files. Portfolio export: copies PNG + thumb into `SENTINEL_PORTFOLIO_DIR` (`images/sessions/`, default `C:\Users\j\projects\jamesdileva\jamesdileva.github.io`; new env in config.py + `.env.example`) and returns a ready-made card HTML snippet matching the site's `.card`/`openModal` markup — Sentinel never pushes, the user pastes and commits manually. API: `POST/GET/PATCH/DELETE /api/v1/sessions`, `POST .../checkpoints`, `POST .../end`, `POST .../screenshots` (+`/{shot_id}/export`), media route `GET .../screenshots/{filename}` (filename whitelist + resolve-inside-dir guard — traversal blocked). Dependency: `pillow>=10.0` in pyproject. Frontend: `/sessions` nav item + route, `pages/Sessions.tsx` + `api/sessions.ts` — create dialog, project + status filters (per-status counts), expandable rows (checkpoints timeline, log slice with `[sentinel]` lines highlighted, screenshot grid + zoom modal), Capture / Add checkpoint / End (outcome + status) / Delete / Export-to-portfolio (copyable snippet dialog). Docs: 01 §9 data dirs + changelog, 02 §2.12 + §14.7 + changelog, 03 changelog, later.md Tiers 1 + 4 marked done (2-3 renumbered), .env.example, AGENTS.md env list. Tests: +16 backend (CRUD, marker-slice boundaries incl. interleaved sessions, checkpoint ordering, capture files + thumb, auto-capture on end, delete cleans files, export copy + snippet, traversal guard, full API flow), +12 frontend (list/badges, project + status filters, expand detail, create, checkpoint, capture, end, export snippet dialog, delete, zoom modal). Backend 449 / frontend 120 green; black/isort/flake8 + prettier clean. | AI agent |
 | 2026-08-15 | 1.17.9.3 | **Galaxy Families hotfix: island projects crashed the clustering view.** `ClusterView` built its project->tech map only from graph links, so a project with zero shared techs (e.g. the 8 idea repos with no dependencies) had no entry; `clusterProjects` then called `jaccard(undefined, ...)` -> `TypeError: can't access property Symbol.iterator` on switching Metro -> Families. Fix: seed an empty tech set for every project before clustering (`derived` memo in `ClusterView.tsx`). Regression test added (island project renders with zero cells next to a linked project). Tests: 108 frontend green, backend untouched (433). | AI agent |
 | 2026-08-15 | 1.17.9.2 | **Galaxy rework: Metro + Families views.** Frontend-only redesign of the Observatory galaxy, motivated by the two-column graph's overlap and flicker (the focus panel used to sit in the same flex row as the SVG, so mounting it rescaled the whole graph). Metro view (`MetroView.tsx`): shared techs become colored transit lines (top-N slider, default 15 of 51, line labels show usage), projects become stations that get x-slots in order of their highest-usage line - interchanges align vertically and stations can never collide; click a station or a line to focus/reverse-focus, hover highlights, stations stay draggable with Reset, projects with no visible-line tech become clickable 'unserved' chips. Families view (`ClusterView.tsx`): Jaccard similarity over shared techs + UPGMA clustering with lexicographic tie-breaks (deterministic) -> dendrogram family tree on top of a usage matrix; hover highlights row + column, tech labels reverse-focus their projects. Both views reuse the extracted `FocusPanel.tsx` (name, checkout dir, framework, shared techs / users) rendered in a fixed-width grid column that never reflows. Old `ProjectGalaxy.tsx` removed. Tests: +16 frontend (10 metro: rails/slider/interchange/alignment/hover/reverse-focus/drag/unserved/tooltips; 6 families: rows/cells, leaf-order clustering, row-col highlight, focus panel, reverse focus, single-project), suite 107 green; backend untouched (433 green). | AI agent |
 | 2026-08-14 | 1.17.9.1 | **Galaxy interactive pass + repo cleanup + sync exclusion.** Frontend Galaxy (`ProjectGalaxy.tsx`): fixed two-column layout (projects in the left gutter, techs right) with end-anchored project labels and a text halo, curved quadratic-bezier links, tech nodes as rotated diamonds, hover highlight (neighbors dim, unpinned), click-to-pin focus panel (project detail, framework, shared-tech chips, or the tech's usage list, plus clear button), drag-to-reposition with Reset layout (clamped to the viewBox; islands stay dim). Backend: `GalaxyNode.framework` added and populated by `galaxy()` so the panel shows each project's framework. Repo sync: new `SENTINEL_GITHUB_EXCLUDE` (comma-separated, `config.py` validator + `remote_repos()` case-insensitive filter, 2 tests) - `juduncan/cse455` is excluded because the repo still exists upstream (collaborator account, cannot delete); with both local checkouts gone the restart GC removed the Cse455 rows. Housekeeping: 8 new idea repos pushed to GitHub (resmaker, betsim, coach, manvsmachine, nexus, surfhop, whoareyou, worldsim; public), MM received its architecture doc (repo was empty), Card-Game's one-branch README/package-lock divergence merged (pull --rebase + push), duplicate checkouts deleted (projects\jamesdileva\MM, \utilitytool). Tests: +3 backend (exclusion x2, galaxy framework x1), frontend galaxy suite rewritten for the new shapes: 13 tests (+5 net; gutter anchor, hover dim, drag + reset, tech reverse-focus, focus panel with framework, diamond/curved-link selectors). | AI agent |
