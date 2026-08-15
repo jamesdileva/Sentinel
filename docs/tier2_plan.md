@@ -81,18 +81,23 @@ testers hold no credentials; runner redacts env values from logs.
   failing tester is a real catch) -> launch Electron -> wait -> screenshot ->
   pytest suite exit 0.
 - **AG** (387 pytest green with `--ignore`; 12 env-gap failures otherwise):
-  `animate --skeleton default --builtin idle` via `.venv_sf3d` python — **the
-  repo is genuinely broken**: main.py:283 reads `args.root_motion` where
-  `args` is out of scope (NameError, exit 1), so this step is red until AG
-  fixes it (evidence in the session log); `static` CLI works and asserts the
-  GLTF output file; launch GUI (`python -m rigging_engine.main gui`) -> wait
-  -> screenshot. **Env note**: `opencv-python-headless` (cv2 5.0.0) had to be
+  `animate --skeleton default --builtin idle` via `.venv_sf3d` python — the
+  repo bug this step caught (main.py:283 read `args.root_motion` with `args`
+  out of scope, NameError, exit 1) was fixed in the AG repo on 2026-08-15
+  (`run_animation_pipeline` gained a `root_motion: bool = False` param wired
+  from the CLI) — tester is now **green live**; `static` CLI asserts the GLTF
+  output file; launch GUI (`python -m rigging_engine.main gui`) -> wait ->
+  screenshot. **Env note**: `opencv-python-headless` (cv2 5.0.0) had to be
   installed into `.venv_sf3d` — the CLI/GUI import cv2 at module level.
   No pytest step: AG's suite is red in its own venv (lives on the Tests page).
 - **Demake Engine** (no tests): launch uvicorn -> `/health` 200 -> upload
-  `backend/test_game_trailer.mp4` -> poll status until ready (max ~120s) ->
-  manifest 200 -> asset 200 (structural asserts only; tilemap/audio use
-  unseeded random).
+  `backend/test_game_trailer.mp4` -> poll status until ready (max ~7 min —
+  sprite generation can take the slow SD/ONNX path) -> manifest 200 -> asset
+  200 (structural asserts only; tilemap/audio use unseeded random). Repo bug
+  caught live and fixed on 2026-08-15: prints containing non-cp1252 chars
+  (`→`, `✓`, `✗`) crashed the upload endpoint and the pipeline worker under
+  Sentinel's redirected stdout — replaced with ASCII (`->`, `[OK]`, `[FAIL]`).
+  Tester is now **green live** (asset step uses the manifest's absolute URL).
 
 ## Phase B — simple testers
 

@@ -29,7 +29,7 @@ from app.testers._helpers import (
 BACKEND_CMD = "cd backend && uvicorn main:app"
 PORT = "http://127.0.0.1:8000"
 POLL_STEP_S = 5
-MAX_WAIT_S = 240
+MAX_WAIT_S = 420
 
 
 def run(ctx: TesterContext) -> None:
@@ -91,24 +91,32 @@ def run(ctx: TesterContext) -> None:
     sprites = body.get("assets", {}).get("sprites", {})
     if not sprites:
         raise TesterAssertionError("manifest has no sprite assets")
-    filename = next(iter(sprites.values()))
-    if not isinstance(filename, str):
-        raise TesterAssertionError(f"unexpected sprite value: {filename!r}")
-    asset = httpx.get(f"{PORT}/api/v1/demake/{demake_id}/asset/{filename}", timeout=20)
+    sprite_path = next(iter(sprites.values()))
+    if not isinstance(sprite_path, str):
+        raise TesterAssertionError(f"unexpected sprite value: {sprite_path!r}")
+    # The manifest's sprite values are already absolute asset URLs
+    # (`/api/v1/demake/<id>/asset/<name>.png`) — use them as-is.
+    asset_url = (
+        f"{PORT}{sprite_path}"
+        if sprite_path.startswith("/api/")
+        else f"{PORT}/api/v1/demake/{demake_id}/asset/{sprite_path}"
+    )
+    asset = httpx.get(asset_url, timeout=20)
     if asset.status_code != 200:
         raise TesterAssertionError(
-            f"asset {filename!r} -> {asset.status_code}, expected 200"
+            f"asset {sprite_path!r} -> {asset.status_code}, expected 200"
         )
-    ctx.checkpoint(f"asset served: {filename}")
+    ctx.checkpoint(f"asset served: {sprite_path}")
 
 
 TESTER = Tester(
     name="Demake pipeline E2E",
     description=(
         "Launch the FastAPI backend, upload the repo's test_game_trailer.mp4, "
-        "poll the pipeline to ready (max 4 min), then verify the manifest and "
-        "serve a generated sprite asset. Structural asserts only — tilemap and "
-        "audio use unseeded random, so nothing byte-exact is compared."
+        "poll the pipeline to ready (max 7 min — sprite generation can use the "
+        "slow SD/ONNX path), then verify the manifest and serve a generated "
+        "sprite asset. Structural asserts only — tilemap and audio use unseeded "
+        "random, so nothing byte-exact is compared."
     ),
     run=run,
     project_slug="Demake-Engine",
