@@ -88,7 +88,9 @@ These are the project's constitution. They must be upheld in every decision, cha
   single directory, comma-separated, or JSON. The world simulator is off by
   default (`SENTINEL_WORLD_SIM_ENABLED=true` re-enables it).
 - **Env overrides**: `SENTINEL_OLLAMA_HOST`, `SENTINEL_GITHUB_TOKEN` (optional),
-  `SENTINEL_WATCH_DIRS`, `SENTINEL_PORT`, `SENTINEL_DB_PATH`/
+  `SENTINEL_GITHUB_EXCLUDE` (optional, comma-separated `owner/repo` list the
+  repo-sync skips — v1.17.9.1), `SENTINEL_WATCH_DIRS`, `SENTINEL_PORT`,
+  `SENTINEL_DB_PATH`/
   `SENTINEL_CHROMA_PATH`, `SENTINEL_SCAN_INTERVAL_MINUTES` — see `.env.example`.
 - **System page**: `/system` is a read-only home snapshot (Ollama availability/
   models/tokens-per-sec + startup checks). Per Rule 2 it never toggles

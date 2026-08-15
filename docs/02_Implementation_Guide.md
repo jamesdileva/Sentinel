@@ -473,12 +473,14 @@ Deterministic "ant farm" module with its own DB; see §11 for full details.
 Read-only project overviews, deterministic from stored data (§14.6).
 
 **GET `/observatory/galaxy`** — Shared-technology graph
-- Returns: `{"nodes": [{"id", "kind": "project|tech", "label", "detail"}], "links": [{"source", "target", "tech"}]}`
+- Returns: `{"nodes": [{"id", "kind": "project|tech", "label", "detail", "framework"}], "links": [{"source", "target", "tech"}]}`
 - Only technologies used by 2+ projects (`Project.framework` + `Dependency.name`)
   become `tech` nodes; every project is a `project` node linked to each shared tech
 - v1.17.9: techs are grouped case-insensitively (label = most common casing);
   same-named projects get their checkout dir as `detail` (e.g. the jamesdileva +
   juduncan `cse455` checkouts)
+- v1.17.9.1: `project` nodes carry `framework` (the project's own framework) for
+  the focus panel; `tech` nodes leave it null
 
 **GET `/observatory/timeline`** — Chronological activity
 - Query: `?days=365` (default 365; <1 resets to 365), `&kind=commit,build`
@@ -941,6 +943,7 @@ Read from the repo-root `.env` (Sprint 15: no containers — the backend process
 | `SENTINEL_API_KEY` | (empty) | Optional API key for authentication |
 | `SENTINEL_SCHEDULE_INTERVAL` | `60` | Minutes between automation runs |
 | `SENTINEL_GITHUB_TOKEN` | (empty) | **Optional** read-only PAT for `repo-sync` (clone/pull from GitHub). Since v1.17.7 the tokenless setup is first-class: local checkouts with a GitHub origin are indexed directly from the watch dirs, and the daily security scan runs on its own beat regardless |
+| `SENTINEL_GITHUB_EXCLUDE` | (empty) | v1.17.9.1: **Optional** comma-separated repo list (`owner/repo`, case-insensitive) skipped by `repo-sync` — e.g. a repo you cannot delete (collaborator on another account) that must never be re-cloned. Works with or without a token |
 | `SENTINEL_SYNC_INTERVAL_MINUTES` | `1440` | Minutes between repo auto-syncs (v1.17.1: every 24 h — startup always syncs once, then daily unless the header "Sync now" button is pressed). Only relevant with a token |
 | `SENTINEL_SCAN_INTERVAL_MINUTES` | `1440` | v1.17.7: minutes between the security scan-all beat (runs on its own schedule, independent of the GitHub sync — tokenless installs still scan daily) |
 | `SENTINEL_MAX_FILE_KB` | `5120` | v1.17.7.1: files larger than this (default 5 MB) are skipped by project indexing — multi-GB model/binaries (ONNX weights, `.pt` checkpoints, `.dll` bundles) are also blocked by the binary-extension denylist |
@@ -1711,6 +1714,7 @@ backend\.venv\Scripts\python.exe -m pip install -e "backend[dev]"
 backend\.venv\Scripts\python.exe scripts\build.py --dist
 # .env (gitignored) — from .env.example; a tokenless install needs NOTHING:
 #   (optional) SENTINEL_GITHUB_TOKEN=<read-only PAT>   → enables clone/pull auto-sync
+#   (optional) SENTINEL_GITHUB_EXCLUDE=owner/repo     → repos sync must skip (v1.17.9.1)
 backend\.venv\Scripts\python.exe run.py                # start the server (no autostart task since v1.17.7.2)
 ```
 
@@ -1868,7 +1872,8 @@ become `tech` nodes with a `used by N projects` detail. Every project links to
 each tech it shares, so the graph shows reuse across the portfolio. v1.17.9:
 techs are grouped case-insensitively with the most common casing as the label,
 and same-named projects (e.g. the `jamesdileva` + `juduncan` `cse455`
-checkouts) carry their checkout dir as `detail`.
+checkouts) carry their checkout dir as `detail`. v1.17.9.1: project nodes
+carry `framework` (their own `Project.framework`) for the frontend focus panel.
 
 **Timeline** `timeline(days=365, kinds=None, project_id=None, offset=0,
 limit=500)` — collects events from `Project.created_at` (`project-created`),
@@ -1913,6 +1918,7 @@ relationships aren't persisted, so they're intentionally absent.
 
 | Date | Version | Change | Author |
 |------|---------|--------|--------|
+| 2026-08-14 | 1.17.9.1 | **Galaxy interactive pass + repo cleanup + sync exclusion.** Frontend Galaxy (`ProjectGalaxy.tsx`): fixed two-column layout (projects in the left gutter, techs right) with end-anchored project labels and a text halo, curved quadratic-bezier links, tech nodes as rotated diamonds, hover highlight (neighbors dim, unpinned), click-to-pin focus panel (project detail, framework, shared-tech chips, or the tech's usage list, plus clear button), drag-to-reposition with Reset layout (clamped to the viewBox; islands stay dim). Backend: `GalaxyNode.framework` added and populated by `galaxy()` so the panel shows each project's framework. Repo sync: new `SENTINEL_GITHUB_EXCLUDE` (comma-separated, `config.py` validator + `remote_repos()` case-insensitive filter, 2 tests) - `juduncan/cse455` is excluded because the repo still exists upstream (collaborator account, cannot delete); with both local checkouts gone the restart GC removed the Cse455 rows. Housekeeping: 8 new idea repos pushed to GitHub (resmaker, betsim, coach, manvsmachine, nexus, surfhop, whoareyou, worldsim; public), MM received its architecture doc (repo was empty), Card-Game's one-branch README/package-lock divergence merged (pull --rebase + push), duplicate checkouts deleted (projects\jamesdileva\MM, \utilitytool). Tests: +3 backend (exclusion x2, galaxy framework x1), frontend galaxy suite rewritten for the new shapes: 13 tests (+5 net; gutter anchor, hover dim, drag + reset, tech reverse-focus, focus panel with framework, diamond/curved-link selectors). | AI agent |
 | 2026-08-14 | 1.17.9.0 | **Observatory v2 UI pass + galaxy data fix.** Backend ? dependency extraction (`indexer.extract_dependencies`) now discovers manifests below the project root (git-tracked, bounded depth 2, noise-pruned) so projects with backend//renderer// manifests stop reporting zero deps (Sentinel/Cg/Ag went 0 -> 15-25 each; fastapi now shared by 3, uvicorn 3, react 2+), and names are case-canonicalized (most common casing wins ? `Flask` + `flask` merge). Galaxy groups techs case-insensitively with the most common casing as label and disambiguates same-named projects (Cse455 x2 -> detail = checkout dir). Timeline gained `kind` (comma list), `project_id`, and `offset`/`limit` pagination with `has_more` (old hard 500 cap per-request became a 5000 safety bound). Frontend ? Galaxy: click a project to focus its links + techs and dim the rest, zero-link projects render as dim islands, tech labels moved inside the viewBox, tech list sorted by usage count, tooltip detail for duplicate names. Timeline: day-grouped headers with per-day counts (no more endless scroll), kind chips + project filter, Load-more pagination. Architecture Map: collapsible dirs, file-type colors, search box, stats header (files/dirs/top-level chips), collapse-all/expand-all. Tests: +10 backend (subdir manifests, noise pruning, case canonicalization, galaxy grouping + disambiguation, timeline kind/project filters, pagination, API params), +8 frontend (day groups, chips, load more, galaxy focus/dimming/sorting/detail, collapse/search/stats). | AI agent |
 | 2026-08-14 | 1.17.8.2 | **App-launch logging fixed ? the app tree's own output now actually lands in `data/logs/apps/<slug>.log`.** The launch used `DETACHED_PROCESS`, which on Windows makes cmd.exe spawn external children (npm, python, node) with invalid stdout/stderr handles ? so the launched apps' logs silently vanished and only the `[sentinel]` launch marker landed (probed flag combinations: direct children were fine, every cmd-spawned child lost output even on natural exit). `build_runner._launch_app` now uses `CREATE_NEW_PROCESS_GROUP` alone, which captures the whole chain; the app tree attaches to Sentinel's hidden console, which is harmless. Tests: +1 real-process integration test (startup command prints, asserts the child's line appears in the app log ? regression-guarded, fails under DETACHED_PROCESS). | AI agent |
 | 2026-08-14 | 1.17.8.1 | **Sentinel moves to port 8420.** The uvicorn default 8000 is what the indexed projects' dev servers (Cg, Demake Engine) bind, so build-to-open launches died on WinError 10013 while Sentinel held the port. `SENTINEL_PORT` default is now 8420 (config.py, run.py --port, .env.example, vite proxy, playwright e2e, packaging test) ? Cg and Demake dev servers now bind 8000 freely. Docs: README, AGENTS.md, desktop.md, 01 ?9/?10, 02 ?4.2/?13, 03 updated. Tests: packaging default-port assert. | AI agent |

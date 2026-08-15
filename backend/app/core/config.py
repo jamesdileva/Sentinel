@@ -140,6 +140,17 @@ class Settings(BaseSettings):
 
     # Repo auto-sync (Sprint 12.1): clone/pull projects from GitHub.
     github_token: str = ""  # read-only PAT; lists repos + optional private access
+    # v1.17.9.1: repos the sync must never clone/pull (e.g. upstream repos you
+    # are a collaborator on but don't own). Comma-separated full_names.
+    github_exclude: Annotated[list[str], NoDecode] = Field(default_factory=list)
+
+    @field_validator("github_exclude", mode="before")
+    @classmethod
+    def _parse_github_exclude(cls, value: object) -> object:
+        if not isinstance(value, str):
+            return value
+        return [part.strip() for part in value.split(",") if part.strip()]
+
     # v1.17.1: daily cadence — startup always syncs once, then every 24h unless
     # the user presses the header "Sync now" button (POST /api/v1/system/sync).
     sync_interval_minutes: int = 1440

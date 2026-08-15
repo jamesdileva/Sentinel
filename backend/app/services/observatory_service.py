@@ -93,6 +93,8 @@ class ObservatoryService:
                     if name_counts[project.name] > 1
                     else None
                 ),
+                # v1.17.9.1: framework feeds the frontend focus panel.
+                framework=project.framework,
             )
             for project in projects
         ]

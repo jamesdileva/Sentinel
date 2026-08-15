@@ -60,6 +60,8 @@ export interface GalaxyNode {
   kind: "project" | "tech";
   label: string;
   detail: string | null;
+  // v1.17.9.1: project framework for the focus panel (null for tech nodes).
+  framework?: string | null;
 }
 
 export interface GalaxyLink {

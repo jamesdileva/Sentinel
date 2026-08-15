@@ -45,7 +45,9 @@ def make_engine():
 
 
 def seed(engine) -> dict[str, Project]:
-    alpha = Project(name="alpha", path="/repo/alpha", language="python")
+    alpha = Project(
+        name="alpha", path="/repo/alpha", language="python", framework="fastapi"
+    )
     beta = Project(name="beta", path="/repo/beta", language="typescript")
     gamma = Project(name="gamma", path="/repo/gamma", language="rust")
     with Session(engine, expire_on_commit=False) as session:
@@ -166,6 +168,18 @@ def test_galaxy_only_shared_techs():
     assert len(graph.links) == 2
     assert {link.tech for link in graph.links} == {"react"}
     assert all(project.detail is None for project in projects)
+
+
+def test_galaxy_project_nodes_carry_framework():
+    """v1.17.9.1: project nodes expose their framework for the focus panel."""
+    engine = make_engine()
+    seed(engine)
+    graph = make_service(engine).galaxy()
+    alpha = next(n for n in graph.nodes if n.label == "alpha")
+    assert alpha.framework == "fastapi"
+    assert alpha.kind == "project"
+    techs = [n for n in graph.nodes if n.kind == "tech"]
+    assert all(tech.framework is None for tech in techs)
 
 
 def test_galaxy_groups_techs_case_insensitively():

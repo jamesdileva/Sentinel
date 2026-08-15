@@ -79,7 +79,10 @@ class RepoSyncService:
 
         Pages through GET /user/repos (per_page=100) until it returns fewer
         than the page size; loop is bounded to 50 pages (5000 repos).
+        v1.17.9.1: repos listed in SENTINEL_GITHUB_EXCLUDE are dropped before
+        anything is cloned or pulled (case-insensitive full_name match).
         """
+        excluded = {name.lower() for name in settings.github_exclude}
         repos: list[dict] = []
         for page in range(1, 51):
             response = self._client.get(
@@ -87,13 +90,16 @@ class RepoSyncService:
             )
             response.raise_for_status()
             batch = response.json()
-            repos.extend(
-                {
-                    "full_name": repo["full_name"],
-                    "url": repo["clone_url"],
-                }
-                for repo in batch
-            )
+            for repo in batch:
+                if repo["full_name"].lower() in excluded:
+                    logger.info("Skipping excluded repo %s", repo["full_name"])
+                    continue
+                repos.append(
+                    {
+                        "full_name": repo["full_name"],
+                        "url": repo["clone_url"],
+                    }
+                )
             if len(batch) < 100:
                 break
         logger.info("Found %d remote repo(s) for token", len(repos))

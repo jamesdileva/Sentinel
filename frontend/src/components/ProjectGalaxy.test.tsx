@@ -10,6 +10,24 @@ vi.mock("../api/observatory", () => ({
 
 const mockGetGalaxy = vi.mocked(getGalaxy);
 
+const node = (
+  id: string,
+  kind: "project" | "tech",
+  label: string,
+  detail: string | null = null,
+  framework: string | null = null,
+) => ({ id, kind, label, detail, framework });
+
+const link = (source: string, target: string, tech: string) => ({
+  source,
+  target,
+  tech,
+});
+
+function projectById(container: HTMLElement, id: string) {
+  return container.querySelector<SVGGElement>(`g[data-id="${id}"]`);
+}
+
 describe("ProjectGalaxy", () => {
   beforeEach(() => {
     mockGetGalaxy.mockReset();
@@ -17,31 +35,23 @@ describe("ProjectGalaxy", () => {
 
   it("renders the graph and tech summary", async () => {
     mockGetGalaxy.mockResolvedValue({
-      nodes: [
-        { id: "alpha", kind: "project", label: "alpha", detail: null },
-        { id: "react", kind: "tech", label: "React", detail: "18.x" },
-      ],
-      links: [{ source: "alpha", target: "react", tech: "React" }],
+      nodes: [node("alpha", "project", "alpha"), node("react", "tech", "React", "18.x")],
+      links: [link("alpha", "react", "React")],
     });
 
     const { container } = render(<ProjectGalaxy />);
 
-    // The label appears on the node and in the tech summary list.
-    expect((await screen.findAllByText("React")).length).toBeGreaterThanOrEqual(
-      1,
-    );
+    expect((await screen.findAllByText("React")).length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText(/18\.x/).length).toBeGreaterThanOrEqual(1);
-    expect(container.querySelectorAll("circle")).toHaveLength(2);
-    expect(container.querySelectorAll("line")).toHaveLength(1);
+    expect(container.querySelectorAll('g[data-kind="project"]')).toHaveLength(1);
+    expect(container.querySelectorAll('g[data-kind="tech"]')).toHaveLength(1);
+    expect(container.querySelectorAll("path[data-link]")).toHaveLength(1);
   });
 
   it("labels nodes and shows a legend", async () => {
     mockGetGalaxy.mockResolvedValue({
-      nodes: [
-        { id: "alpha", kind: "project", label: "alpha", detail: null },
-        { id: "react", kind: "tech", label: "React", detail: "18.x" },
-      ],
-      links: [{ source: "alpha", target: "react", tech: "React" }],
+      nodes: [node("alpha", "project", "alpha"), node("react", "tech", "React", "18.x")],
+      links: [link("alpha", "react", "React")],
     });
 
     render(<ProjectGalaxy />);
@@ -51,23 +61,37 @@ describe("ProjectGalaxy", () => {
     expect(screen.getByText("Technology / dependency")).toBeInTheDocument();
   });
 
+  it("keeps project labels out of the link field (gutter, end-anchored)", async () => {
+    mockGetGalaxy.mockResolvedValue({
+      nodes: [node("alpha", "project", "alpha"), node("react", "tech", "React", "18.x")],
+      links: [link("alpha", "react", "React")],
+    });
+
+    const { container } = render(<ProjectGalaxy />);
+    await screen.findAllByText("React");
+
+    const label = projectById(container, "alpha")!.querySelector("text")!;
+    expect(label.getAttribute("text-anchor")).toBe("end");
+    const labelX = Number(label.getAttribute("x"));
+    const circleX = Number(projectById(container, "alpha")!.querySelector("circle")!.getAttribute("cx"));
+    expect(labelX).toBeLessThan(circleX);
+  });
+
   it("applies a larger radius to project nodes", async () => {
     mockGetGalaxy.mockResolvedValue({
-      nodes: [
-        { id: "alpha", kind: "project", label: "alpha", detail: null },
-        { id: "rust", kind: "tech", label: "Rust", detail: "1.75" },
-      ],
+      nodes: [node("alpha", "project", "alpha"), node("rust", "tech", "Rust", "1.75")],
       links: [],
     });
 
     const { container } = render(<ProjectGalaxy />);
     await screen.findAllByText("Rust");
 
-    const circles = container.querySelectorAll("circle");
-    const projectNode = circles[0];
-    const techNode = circles[1];
-    expect(projectNode.getAttribute("r")).toBe("22");
-    expect(techNode.getAttribute("r")).toBe("12");
+    expect(
+      projectById(container, "alpha")!.querySelector("circle")!.getAttribute("r"),
+    ).toBe("26");
+    expect(
+      projectById(container, "rust")!.querySelector("rect")!.getAttribute("width"),
+    ).toBe("18");
   });
 
   it("shows an error badge when the request fails", async () => {
@@ -81,75 +105,155 @@ describe("ProjectGalaxy", () => {
   it("dims projects with no shared technology", async () => {
     mockGetGalaxy.mockResolvedValue({
       nodes: [
-        { id: "alpha", kind: "project", label: "alpha", detail: null },
-        { id: "react", kind: "tech", label: "React", detail: "18.x" },
-        { id: "beta", kind: "project", label: "beta", detail: null },
+        node("alpha", "project", "alpha"),
+        node("react", "tech", "React", "18.x"),
+        node("beta", "project", "beta"),
       ],
-      links: [{ source: "alpha", target: "react", tech: "React" }],
+      links: [link("alpha", "react", "React")],
     });
 
     const { container } = render(<ProjectGalaxy />);
     await screen.findAllByText("React");
 
-    const circles = container.querySelectorAll("circle");
-    const beta = [...circles].find((c) => c.parentElement?.querySelector("title")?.textContent === "beta");
-    expect(beta?.parentElement?.getAttribute("opacity")).toBe("0.35");
-    const alpha = [...circles].find((c) => c.parentElement?.querySelector("title")?.textContent === "alpha");
-    expect(alpha?.parentElement?.getAttribute("opacity")).toBe("1");
+    expect(projectById(container, "beta")!.getAttribute("opacity")).toBe("0.35");
+    expect(projectById(container, "alpha")!.getAttribute("opacity")).toBe("1");
   });
 
   it("highlights a clicked project's links and dims the rest", async () => {
     mockGetGalaxy.mockResolvedValue({
       nodes: [
-        { id: "alpha", kind: "project", label: "alpha", detail: null },
-        { id: "beta", kind: "project", label: "beta", detail: null },
-        { id: "react", kind: "tech", label: "React", detail: "18.x" },
-        { id: "rust", kind: "tech", label: "Rust", detail: "1.75" },
+        node("alpha", "project", "alpha"),
+        node("beta", "project", "beta"),
+        node("react", "tech", "React", "18.x"),
+        node("rust", "tech", "Rust", "1.75"),
       ],
-      links: [
-        { source: "alpha", target: "react", tech: "React" },
-        { source: "beta", target: "rust", tech: "Rust" },
-      ],
+      links: [link("alpha", "react", "React"), link("beta", "rust", "Rust")],
     });
 
     const { container } = render(<ProjectGalaxy />);
     await screen.findAllByText("React");
 
-    const alphaCircle = [...container.querySelectorAll("circle")].find(
-      (c) => c.parentElement?.querySelector("title")?.textContent === "alpha",
-    );
-    fireEvent.click(alphaCircle!);
+    fireEvent.click(projectById(container, "alpha")!);
 
-    const lines = container.querySelectorAll("line");
-    // links render in graph order: alpha→react stays bright, beta→rust dims
-    expect(lines[0].getAttribute("opacity")).toBe("1");
-    expect(lines[1].getAttribute("opacity")).toBe("0.12");
+    const links = container.querySelectorAll("path[data-link]");
+    expect(links[0].getAttribute("opacity")).toBe("1");
+    expect(links[1].getAttribute("opacity")).toBe("0.12");
 
-    // beta dims as a project, react stays bright as a linked tech
-    const circles = container.querySelectorAll("circle");
-    const beta = [...circles].find((c) => c.parentElement?.querySelector("title")?.textContent === "beta");
-    expect(beta?.parentElement?.getAttribute("opacity")).toBe("0.2");
+    expect(projectById(container, "beta")!.getAttribute("opacity")).toBe("0.2");
+    expect(projectById(container, "react")!.getAttribute("opacity")).toBe("1");
 
     // clicking again clears the focus
-    fireEvent.click(alphaCircle!);
-    expect(container.querySelectorAll("line[opacity='0.12']")).toHaveLength(0);
+    fireEvent.click(projectById(container, "alpha")!);
+    expect(container.querySelectorAll("path[data-link][opacity='0.12']")).toHaveLength(0);
+  });
+
+  it("highlights on hover without pinning", async () => {
+    mockGetGalaxy.mockResolvedValue({
+      nodes: [
+        node("alpha", "project", "alpha"),
+        node("beta", "project", "beta"),
+        node("react", "tech", "React", "18.x"),
+        node("rust", "tech", "Rust", "1.75"),
+      ],
+      links: [link("alpha", "react", "React"), link("beta", "rust", "Rust")],
+    });
+
+    const { container } = render(<ProjectGalaxy />);
+    await screen.findAllByText("React");
+
+    fireEvent.mouseEnter(projectById(container, "alpha")!);
+    expect(projectById(container, "beta")!.getAttribute("opacity")).toBe("0.2");
+    expect(projectById(container, "react")!.getAttribute("opacity")).toBe("1");
+
+    fireEvent.mouseLeave(projectById(container, "alpha")!);
+    expect(projectById(container, "beta")!.getAttribute("opacity")).toBe("1");
+  });
+
+  it("clicking a tech reverse-focuses the projects sharing it", async () => {
+    mockGetGalaxy.mockResolvedValue({
+      nodes: [
+        node("alpha", "project", "alpha"),
+        node("beta", "project", "beta"),
+        node("react", "tech", "React", "18.x"),
+        node("rust", "tech", "Rust", "1.75"),
+      ],
+      links: [link("alpha", "react", "React"), link("beta", "rust", "Rust")],
+    });
+
+    const { container } = render(<ProjectGalaxy />);
+    await screen.findAllByText("React");
+
+    fireEvent.click(projectById(container, "react")!);
+    expect(projectById(container, "alpha")!.getAttribute("opacity")).toBe("1");
+    expect(projectById(container, "beta")!.getAttribute("opacity")).toBe("0.2");
+    expect(projectById(container, "rust")!.getAttribute("opacity")).toBe("0.2");
+  });
+
+  it("drag repositions a node and reset restores the layout", async () => {
+    mockGetGalaxy.mockResolvedValue({
+      nodes: [node("alpha", "project", "alpha"), node("react", "tech", "React", "18.x")],
+      links: [link("alpha", "react", "React")],
+    });
+
+    const { container } = render(<ProjectGalaxy />);
+    await screen.findAllByText("React");
+
+    const alpha = projectById(container, "alpha")!;
+    const before = Number(alpha.querySelector("circle")!.getAttribute("cx"));
+
+    fireEvent.pointerDown(alpha, { pointerId: 1, clientX: 100, clientY: 100 });
+    fireEvent.pointerMove(alpha, { pointerId: 1, clientX: 160, clientY: 100 });
+    fireEvent.pointerUp(alpha);
+
+    const after = Number(
+      projectById(container, "alpha")!.querySelector("circle")!.getAttribute("cx"),
+    );
+    expect(after).toBeGreaterThan(before + 40);
+
+    fireEvent.click(screen.getByRole("button", { name: "Reset layout" }));
+    const reset = Number(
+      projectById(container, "alpha")!.querySelector("circle")!.getAttribute("cx"),
+    );
+    expect(reset).toBe(before);
+  });
+
+  it("shows a focus panel with framework and shared techs", async () => {
+    mockGetGalaxy.mockResolvedValue({
+      nodes: [
+        node("alpha", "project", "alpha", null, "fastapi"),
+        node("beta", "project", "beta"),
+        node("react", "tech", "React", "used by 2 projects"),
+      ],
+      links: [link("alpha", "react", "React"), link("beta", "react", "React")],
+    });
+
+    const { container } = render(<ProjectGalaxy />);
+    await screen.findAllByText("React");
+
+    fireEvent.click(projectById(container, "alpha")!);
+    expect(screen.getByText("Shared technologies")).toBeInTheDocument();
+    expect(screen.getByText(/fastapi/)).toBeInTheDocument();
+    expect(within(screen.getByRole("complementary")).getByText("React")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear focus" }));
+    expect(screen.queryByText("Shared technologies")).not.toBeInTheDocument();
   });
 
   it("sorts the tech summary by usage count", async () => {
     mockGetGalaxy.mockResolvedValue({
       nodes: [
-        { id: "p1", kind: "project", label: "p1", detail: null },
-        { id: "p2", kind: "project", label: "p2", detail: null },
-        { id: "p3", kind: "project", label: "p3", detail: null },
-        { id: "react", kind: "tech", label: "React", detail: "used by 3 projects" },
-        { id: "rust", kind: "tech", label: "Rust", detail: "used by 2 projects" },
+        node("p1", "project", "p1"),
+        node("p2", "project", "p2"),
+        node("p3", "project", "p3"),
+        node("react", "tech", "React", "used by 3 projects"),
+        node("rust", "tech", "Rust", "used by 2 projects"),
       ],
       links: [
-        { source: "p1", target: "react", tech: "React" },
-        { source: "p2", target: "react", tech: "React" },
-        { source: "p3", target: "react", tech: "React" },
-        { source: "p1", target: "rust", tech: "Rust" },
-        { source: "p2", target: "rust", tech: "Rust" },
+        link("p1", "react", "React"),
+        link("p2", "react", "React"),
+        link("p3", "react", "React"),
+        link("p1", "rust", "Rust"),
+        link("p2", "rust", "Rust"),
       ],
     });
 
@@ -166,8 +270,8 @@ describe("ProjectGalaxy", () => {
   it("shows the checkout dir as detail for duplicate names", async () => {
     mockGetGalaxy.mockResolvedValue({
       nodes: [
-        { id: "a", kind: "project", label: "Cse455", detail: "jamesdileva" },
-        { id: "b", kind: "project", label: "Cse455", detail: "juduncan" },
+        node("a", "project", "Cse455", "jamesdileva"),
+        node("b", "project", "Cse455", "juduncan"),
       ],
       links: [],
     });

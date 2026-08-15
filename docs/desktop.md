@@ -22,6 +22,7 @@ backend\.venv\Scripts\python.exe -m pip install -e "backend[dev]"   # or .\.venv
 # .env (gitignored) — from .env.example; defaults are safe, nothing is required:
 #   SENTINEL_OLLAMA_HOST=http://127.0.0.1:11434   (native Ollama, same host — the default)
 #   SENTINEL_GITHUB_TOKEN=<read-only PAT>         (OPTIONAL — repo auto-sync, Sprint 12.1; tokenless is first-class since v1.17.7)
+#   SENTINEL_GITHUB_EXCLUDE=juduncan/cse455       (OPTIONAL — repos sync must skip, v1.17.9.1; this one cannot be deleted upstream)
 ```
 
 (Optional) To rebuild the dashboard from the frontend sources you need Node:

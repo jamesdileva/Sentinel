@@ -65,6 +65,51 @@ def test_remote_repos_lists_and_paginates():
     ]
 
 
+def test_remote_repos_filters_excluded(monkeypatch):
+    """v1.17.9.1: repos in SENTINEL_GITHUB_EXCLUDE are never cloned or pulled —
+    e.g. an upstream repo you are a collaborator on but don't own."""
+    monkeypatch.setattr(sync_service.settings, "github_exclude", ["juduncan/cse455"])
+    client = _service(
+        "C:\\projects",
+        [
+            {"full_name": "juduncan/cse455", "clone_url": "https://github.com/j/c"},
+            {"full_name": "jamesdileva/MyApp", "clone_url": "https://github.com/a/b"},
+        ],
+    )
+    assert client.remote_repos() == [
+        {"full_name": "jamesdileva/MyApp", "url": "https://github.com/a/b"}
+    ]
+
+
+def test_sync_skips_excluded_repo(tmp_path, monkeypatch):
+    """An excluded repo never reaches the clone/pull loop, even when the API
+    lists it."""
+    monkeypatch.setattr(sync_service.settings, "github_exclude", ["juduncan/cse455"])
+    calls: list[str] = []
+
+    def fake_run(command, cwd=None, timeout=None, env=None):
+        calls.append(command)
+        return _fake_result()
+
+    monkeypatch.setattr(sync_service, "run_command", fake_run)
+    monkeypatch.setattr(
+        sync_service.IndexerService,
+        "scan_all_projects",
+        lambda self, watch_dirs=None: [],
+    )
+    client = _service(
+        str(tmp_path),
+        [
+            {"full_name": "juduncan/cse455", "clone_url": "https://github.com/j/c"},
+            {"full_name": "a/b", "clone_url": "https://github.com/a/b.git"},
+        ],
+    )
+    result = client.sync()
+    assert result["cloned"] == ["a/b"]
+    assert result["pulled"] == []
+    assert not any("cse455" in c for c in calls)
+
+
 def test_not_configured_raises(tmp_path):
     client = RepoSyncService(token="", root=str(tmp_path))
     assert client.configured is False

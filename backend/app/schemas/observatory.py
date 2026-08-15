@@ -13,6 +13,9 @@ class GalaxyNode(BaseModel):
     kind: str  # "project" | "tech"
     label: str
     detail: str | None = None
+    # v1.17.9.1: project framework (fastapi/electron/...) for the focus panel;
+    # None for tech nodes.
+    framework: str | None = None
 
 
 class GalaxyLink(BaseModel):
