@@ -439,3 +439,29 @@ def test_api_run_returns_job_envelope(client, project, monkeypatch):
         assert sessions[0].status == SessionStatus.PASSED
     finally:
         _unregister()
+
+
+# ------------------------------------------------- WorkFlow-Toolkit flagship
+
+
+def test_workflow_toolkit_tester_registered():
+    from app.testers import TESTERS
+
+    tester = TESTERS["Workflow-Toolkit"]
+    assert tester.name == "WorkFlow-Toolkit payroll E2E"
+    assert tester.kind == "custom"
+
+
+def test_wft_backend_command_prefers_runtime_python(tmp_path):
+    from app.testers import workflow_toolkit as wft
+
+    root = tmp_path / "WorkFlow-Toolkit"
+    runtime = root / "backend" / "runtime" / "python" / "python.exe"
+    runtime.parent.mkdir(parents=True)
+    runtime.write_text("", encoding="utf-8")
+    cmd = wft._backend_command(root)
+    assert f'"{runtime}"' in cmd
+    assert "-m uvicorn app.main:app" in cmd
+    assert wft._backend_command(tmp_path / "other") == (
+        "cd backend && python -m uvicorn app.main:app"
+    )

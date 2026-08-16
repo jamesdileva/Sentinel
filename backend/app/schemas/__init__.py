@@ -56,6 +56,7 @@ from app.schemas.session import (
 )
 from app.schemas.test import TestResultRead, TestRunResponse
 from app.schemas.tester import TesterDescriptor, TesterRunRequest
+from app.schemas.triage import TriageEvidence, TriageFrame, TriageRead, TriageSourceLine
 from app.schemas.world_sim import (
     WorldAccelerateRequest,
     WorldDisasterRequest,
@@ -117,6 +118,10 @@ __all__ = [
     "TesterRunRequest",
     "Timeline",
     "TimelineEvent",
+    "TriageEvidence",
+    "TriageFrame",
+    "TriageRead",
+    "TriageSourceLine",
     "WorldAccelerateRequest",
     "WorldDisasterRequest",
     "WorldDisasterResponse",

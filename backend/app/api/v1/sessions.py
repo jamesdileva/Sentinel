@@ -11,6 +11,7 @@ from sqlmodel import Session as DbSession
 
 from app.core.logging import get_logger
 from app.db.connection import get_session
+from app.db.models import SessionStatus
 from app.repositories import ProjectRepository
 from app.schemas.session import (
     SessionCheckpointCreate,
@@ -23,7 +24,10 @@ from app.schemas.session import (
     SessionScreenshotRead,
     SessionUpdate,
 )
+from app.schemas.triage import TriageEvidence, TriageRead
 from app.services.app_sessions import AppSessionService, resolve_screenshot
+from app.services.ollama_service import OllamaUnavailableError
+from app.services.triage_service import TriageService
 
 logger = get_logger(__name__)
 
@@ -124,6 +128,54 @@ def end_session(
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return _read(app_session, db)
+
+
+def _triage_read(analysis, db: DbSession) -> TriageRead:
+    return TriageRead(
+        id=analysis.id,
+        session_id=analysis.session_id,
+        evidence=TriageEvidence.model_validate(analysis.evidence),
+        summary=analysis.summary,
+        model=analysis.model,
+        created_at=analysis.created_at,
+    )
+
+
+def _terminal_session(session_id: str, db: DbSession):
+    """Fetch a session that has ended (failed/investigate) — or 400/404."""
+    try:
+        app_session = _service(db).get(session_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if app_session.status == SessionStatus.RUNNING:
+        raise HTTPException(
+            status_code=400,
+            detail="Session is still running — end it before triaging",
+        )
+    return app_session
+
+
+@router.post("/{session_id}/triage", response_model=TriageRead)
+def triage_session(session_id: str, db: DbSession = Depends(get_session)):
+    """Deterministic error capture: verbatim error lines, traceback frames
+    resolved to project files, source previews. No AI (Rule 3)."""
+    app_session = _terminal_session(session_id, db)
+    analysis = TriageService(db).triage(app_session)
+    return _triage_read(analysis, db)
+
+
+@router.post("/{session_id}/summarize", response_model=TriageRead)
+def summarize_session(session_id: str, db: DbSession = Depends(get_session)):
+    """Optional local-LLM paragraph DESCRIBING the deterministic evidence.
+    No causes, no fixes, no decisions — provenance recorded (Rules 2+7)."""
+    app_session = _terminal_session(session_id, db)
+    try:
+        analysis = TriageService(db).summarize(app_session)
+    except OllamaUnavailableError as exc:
+        raise HTTPException(
+            status_code=503, detail=f"Ollama unavailable: {exc}"
+        ) from exc
+    return _triage_read(analysis, db)
 
 
 @router.post(

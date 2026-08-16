@@ -8,6 +8,7 @@ import type {
   SessionCheckpoint,
   SessionRecord,
   SessionScreenshot,
+  TriageRecord,
 } from "../api/sessions";
 
 vi.mock("../api/sessions", () => ({
@@ -23,6 +24,8 @@ vi.mock("../api/sessions", () => ({
       `/api/v1/sessions/${sessionId}/screenshots/${filename}`,
   ),
   startSession: vi.fn(),
+  summarizeSession: vi.fn(),
+  triageSession: vi.fn(),
 }));
 
 vi.mock("../contexts/UIContext", () => ({
@@ -42,6 +45,8 @@ import {
   getSession,
   listSessions,
   startSession,
+  summarizeSession,
+  triageSession,
 } from "../api/sessions";
 import { useUI } from "../contexts/UIContext";
 import { useProjectList } from "../hooks/useProjects";
@@ -54,6 +59,8 @@ const mockExportScreenshot = vi.mocked(exportScreenshot);
 const mockGetSession = vi.mocked(getSession);
 const mockListSessions = vi.mocked(listSessions);
 const mockStartSession = vi.mocked(startSession);
+const mockSummarizeSession = vi.mocked(summarizeSession);
+const mockTriageSession = vi.mocked(triageSession);
 const mockUseUI = vi.mocked(useUI);
 const mockUseProjectList = vi.mocked(useProjectList);
 
@@ -117,6 +124,38 @@ function makeSession(overrides: Partial<SessionRecord> = {}): SessionRecord {
   };
 }
 
+function makeTriage(overrides: Partial<TriageRecord> = {}): TriageRecord {
+  return {
+    id: "tr1",
+    session_id: "s1",
+    evidence: {
+      status: "failed",
+      actual_outcome: "asset -> 404, expected 200",
+      error_lines: ["ERROR 404: asset missing", "Traceback (most recent call last):"],
+      patterns: ["ModuleNotFoundError"],
+      frames: [
+        {
+          file: "C:\\demo\\app\\main.py",
+          relative_path: "app\\main.py",
+          line: 42,
+          function: "handler",
+          source: [
+            { line_number: 41, text: "    result = run()" },
+            { line_number: 42, text: "    boom()" },
+            { line_number: 43, text: "    ok()" },
+          ],
+        },
+      ],
+      traceback_available: true,
+      note: null,
+    },
+    summary: null,
+    model: null,
+    created_at: "2026-01-01T00:05:00Z",
+    ...overrides,
+  };
+}
+
 describe("Sessions", () => {
   let toastMock: ReturnType<typeof vi.fn>;
   beforeEach(() => {
@@ -136,6 +175,8 @@ describe("Sessions", () => {
     mockExportScreenshot.mockReset();
     mockDeleteSession.mockReset();
     mockGetSession.mockReset();
+    mockTriageSession.mockReset();
+    mockSummarizeSession.mockReset();
     mockListSessions.mockResolvedValue([]);
   });
 
@@ -339,5 +380,77 @@ describe("Sessions", () => {
     expect(
       screen.queryByRole("dialog", { name: "Screenshot preview" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("shows the triage button only for failed/investigate sessions", async () => {
+    mockListSessions.mockResolvedValue([
+      makeSession({ status: "passed" }),
+      makeSession({ id: "s2", title: "Broken run", status: "failed" }),
+    ]);
+    render(<Sessions />);
+    await userEvent.setup().click(await screen.findByText("Play the demo"));
+    expect(
+      screen.queryByRole("button", { name: "Triage failure" }),
+    ).not.toBeInTheDocument();
+    await userEvent.setup().click(await screen.findByText("Broken run"));
+    expect(
+      screen.getByRole("button", { name: "Triage failure" }),
+    ).toBeInTheDocument();
+  });
+
+  it("triages a failed session and renders the evidence card", async () => {
+    mockListSessions.mockResolvedValue([
+      makeSession({ status: "failed", actual_outcome: "boom" }),
+    ]);
+    mockTriageSession.mockResolvedValue(makeTriage());
+    const user = userEvent.setup();
+    render(<Sessions />);
+    await user.click(await screen.findByText("Play the demo"));
+    await user.click(screen.getByRole("button", { name: "Triage failure" }));
+    expect(await screen.findByText(/Error lines \(verbatim/)).toBeInTheDocument();
+    expect(screen.getByText(/ERROR 404: asset missing/)).toBeInTheDocument();
+    expect(screen.getByText(/app\\main\.py:42/)).toBeInTheDocument();
+    expect(screen.getByText("ModuleNotFoundError")).toBeInTheDocument();
+    expect(screen.getByText("boom()")).toBeInTheDocument();
+    expect(mockTriageSession).toHaveBeenCalledWith("s1");
+  });
+
+  it("runs the AI summary and shows provenance", async () => {
+    mockListSessions.mockResolvedValue([
+      makeSession({ status: "investigate" }),
+    ]);
+    mockSummarizeSession.mockResolvedValue(
+      makeTriage({
+        summary: "The handler failed at app/main.py:42.",
+        model: "llama3.1:8b",
+        created_at: "2026-01-01T00:05:00Z",
+      }),
+    );
+    const user = userEvent.setup();
+    render(<Sessions />);
+    await user.click(await screen.findByText("Play the demo"));
+    await user.click(screen.getByRole("button", { name: "AI summary" }));
+    expect(
+      await screen.findByText("The handler failed at app/main.py:42."),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/llama3\.1:8b ·/)).toBeInTheDocument();
+    expect(mockSummarizeSession).toHaveBeenCalledWith("s1");
+  });
+
+  it("toasts an error when Ollama is unavailable", async () => {
+    mockListSessions.mockResolvedValue([
+      makeSession({ status: "failed" }),
+    ]);
+    mockSummarizeSession.mockRejectedValue(new Error("Ollama unavailable: down"));
+    const user = userEvent.setup();
+    render(<Sessions />);
+    await user.click(await screen.findByText("Play the demo"));
+    await user.click(screen.getByRole("button", { name: "AI summary" }));
+    await waitFor(() => {
+      expect(toastMock).toHaveBeenCalledWith(
+        expect.stringContaining("Ollama unavailable"),
+        "error",
+      );
+    });
   });
 });

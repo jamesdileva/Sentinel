@@ -10,9 +10,12 @@ import {
   listSessions,
   screenshotUrl,
   startSession,
+  summarizeSession,
+  triageSession,
   type SessionExport,
   type SessionRecord,
   type SessionStatus,
+  type TriageRecord,
 } from "../api/sessions";
 import { useProjectList } from "../hooks/useProjects";
 import { useUI } from "../contexts/UIContext";
@@ -317,8 +320,13 @@ function SessionDetail({
   >("passed");
   const [checkpointLabel, setCheckpointLabel] = useState("");
   const [addingCheckpoint, setAddingCheckpoint] = useState(false);
+  const [triage, setTriage] = useState<TriageRecord | null>(null);
+  const [triaging, setTriaging] = useState(false);
+  const [summarizing, setSummarizing] = useState(false);
 
   const ended = session.status !== "running";
+  const triageable =
+    ended && (session.status === "failed" || session.status === "investigate");
 
   async function handleCapture(checkpointId?: string) {
     setCapturing(true);
@@ -379,6 +387,36 @@ function SessionDetail({
         err instanceof Error ? err.message : "Failed to export screenshot.",
         "error",
       );
+    }
+  }
+
+  async function handleTriage() {
+    setTriaging(true);
+    try {
+      setTriage(await triageSession(session.id));
+      toast("Triage captured — evidence is deterministic.", "success");
+    } catch (err) {
+      toast(
+        err instanceof Error ? err.message : "Failed to triage session.",
+        "error",
+      );
+    } finally {
+      setTriaging(false);
+    }
+  }
+
+  async function handleSummarize() {
+    setSummarizing(true);
+    try {
+      setTriage(await summarizeSession(session.id));
+      toast("AI summary written (interpretation only).", "success");
+    } catch (err) {
+      toast(
+        err instanceof Error ? err.message : "Failed to summarize session.",
+        "error",
+      );
+    } finally {
+      setSummarizing(false);
     }
   }
 
@@ -446,6 +484,38 @@ function SessionDetail({
               Delete
             </button>
           </div>
+          {triageable && (
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-950">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                  Error triage (deterministic — no AI)
+                </h4>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void handleTriage()}
+                    disabled={triaging}
+                    className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-slate-700 disabled:opacity-50 dark:bg-slate-200 dark:text-slate-900 dark:hover:bg-white"
+                  >
+                    {triaging
+                      ? "Triaging…"
+                      : triage
+                        ? "Re-triage"
+                        : "Triage failure"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleSummarize()}
+                    disabled={summarizing}
+                    className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 transition-colors hover:bg-slate-100 disabled:opacity-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+                  >
+                    {summarizing ? "Summarizing…" : "AI summary"}
+                  </button>
+                </div>
+              </div>
+              {triage && <TriageCard triage={triage} />}
+            </div>
+          )}
           {!ended && (
             <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-950">
               <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
@@ -569,6 +639,108 @@ function SessionDetail({
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+function TriageCard({ triage }: { triage: TriageRecord }) {
+  const evidence = triage.evidence;
+  const hasContent =
+    evidence.error_lines.length > 0 ||
+    evidence.frames.length > 0 ||
+    evidence.patterns.length > 0;
+
+  if (!hasContent && !evidence.note) {
+    return (
+      <p className="mt-2 text-xs text-slate-400 dark:text-slate-500">
+        No error lines or traceback frames found in the log slice.
+      </p>
+    );
+  }
+
+  return (
+    <div className="mt-3 flex flex-col gap-3">
+      {evidence.error_lines.length > 0 && (
+        <div>
+          <h5 className="text-xs font-semibold text-slate-500 dark:text-slate-400">
+            Error lines (verbatim from the app log)
+          </h5>
+          <pre className="mt-1 max-h-40 overflow-auto rounded-lg border border-red-200 bg-red-50 p-3 text-[11px] leading-relaxed text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
+            {evidence.error_lines.map((line, index) => (
+              <div key={index}>{line}</div>
+            ))}
+          </pre>
+        </div>
+      )}
+      {evidence.patterns.length > 0 && (
+        <div className="flex flex-wrap gap-1">
+          {evidence.patterns.map((pattern) => (
+            <span
+              key={pattern}
+              className="rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-[11px] font-medium text-indigo-700 dark:border-indigo-900 dark:bg-indigo-500/10 dark:text-indigo-300"
+            >
+              {pattern}
+            </span>
+          ))}
+        </div>
+      )}
+      {evidence.frames.length > 0 && (
+        <div>
+          <h5 className="text-xs font-semibold text-slate-500 dark:text-slate-400">
+            Traceback frames → project files
+          </h5>
+          <ul className="mt-1 flex flex-col gap-2">
+            {evidence.frames.map((frame, index) => (
+              <li
+                key={index}
+                className="rounded-lg border border-slate-200 bg-white p-2 dark:border-slate-700 dark:bg-slate-900"
+              >
+                <div className="text-[11px] font-medium text-slate-700 dark:text-slate-300">
+                  {frame.relative_path}:{frame.line}
+                  {frame.function ? ` in ${frame.function}` : ""}
+                </div>
+                {frame.source.length > 0 && (
+                  <pre className="mt-1 overflow-auto rounded border border-slate-100 bg-slate-50 p-2 text-[10px] leading-relaxed text-slate-600 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-400">
+                    {frame.source.map((line) => (
+                      <div
+                        key={line.line_number}
+                        className={
+                          line.line_number === frame.line
+                            ? "bg-red-100 font-semibold text-red-700 dark:bg-red-950 dark:text-red-300"
+                            : ""
+                        }
+                      >
+                        <span className="mr-2 inline-block w-6 text-right text-slate-400">
+                          {line.line_number}
+                        </span>
+                        {line.text}
+                      </div>
+                    ))}
+                  </pre>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {evidence.note && (
+        <p className="text-[11px] italic text-slate-400 dark:text-slate-500">
+          {evidence.note}
+        </p>
+      )}
+      {triage.summary && (
+        <div className="rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
+          <h5 className="text-xs font-semibold text-slate-500 dark:text-slate-400">
+            AI summary (interpretation only — no fixes, no decisions)
+          </h5>
+          <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
+            {triage.summary}
+          </p>
+          <p className="mt-2 text-[11px] text-slate-400 dark:text-slate-500">
+            {triage.model} · {formatWhen(triage.created_at)}
+          </p>
+        </div>
+      )}
     </div>
   );
 }

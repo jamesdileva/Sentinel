@@ -14,6 +14,7 @@ from app.repositories.session import (
     SessionScreenshotRepository,
 )
 from app.repositories.test import TestRepository
+from app.repositories.triage import TriageAnalysisRepository
 
 __all__ = [
     "BuildLogRepository",
@@ -28,4 +29,5 @@ __all__ = [
     "SessionRepository",
     "SessionScreenshotRepository",
     "TestRepository",
+    "TriageAnalysisRepository",
 ]

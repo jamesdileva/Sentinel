@@ -308,6 +308,7 @@ class AppSession(SQLModel, table=True):
     project: Project = Relationship(back_populates="sessions")
     checkpoints: list["SessionCheckpoint"] = Relationship(back_populates="session")
     screenshots: list["SessionScreenshot"] = Relationship(back_populates="session")
+    triage_analyses: list["TriageAnalysis"] = Relationship(back_populates="session")
 
 
 class SessionCheckpoint(SQLModel, table=True):
@@ -336,3 +337,24 @@ class SessionScreenshot(SQLModel, table=True):
     captured_at: datetime.datetime = Field(default_factory=_utcnow)
 
     session: AppSession = Relationship(back_populates="screenshots")
+
+
+class TriageAnalysis(SQLModel, table=True):
+    """Deterministic error-triage record for a session (later.md Tier 3).
+
+    `evidence` is the deterministic packet — error lines quoted verbatim from
+    the session's log slice, traceback frames resolved to `file:line` in the
+    project, and source previews read straight from disk. Never AI-written
+    (Rule 3). `summary` is the optional local-LLM paragraph DESCRIBING that
+    evidence — no causes, no fixes, no decisions (Rules 2+3); `model` +
+    `created_at` carry the provenance (Rule 7).
+    """
+
+    id: str = Field(default_factory=_uuid, primary_key=True)
+    session_id: str = Field(foreign_key="appsession.id")
+    evidence: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    summary: str | None = None
+    model: str | None = None
+    created_at: datetime.datetime = Field(default_factory=_utcnow)
+
+    session: AppSession = Relationship(back_populates="triage_analyses")

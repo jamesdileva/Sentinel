@@ -33,6 +33,7 @@ from app.repositories import (
     SessionCheckpointRepository,
     SessionRepository,
     SessionScreenshotRepository,
+    TriageAnalysisRepository,
 )
 
 logger = get_logger(__name__)
@@ -270,6 +271,8 @@ class AppSessionService:
             self.session.delete(screenshot)
         for checkpoint in self.checkpoint_repo.by_session(session_id):
             self.session.delete(checkpoint)
+        for analysis in TriageAnalysisRepository(self.session).by_session(session_id):
+            self.session.delete(analysis)
         self.session.delete(app_session)
         self.session.commit()
 

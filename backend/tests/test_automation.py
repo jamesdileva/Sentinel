@@ -282,10 +282,12 @@ def test_build_runner_launch_rewrites_venv_console_scripts(
         assert "venv" in log.launch_command
 
 
-def test_build_runner_does_not_double_rewrite_venv_uvicorn(tmp_db, tmp_path, fake_popen):
+def test_build_runner_does_not_double_rewrite_venv_uvicorn(
+    tmp_db, tmp_path, fake_popen
+):
     """v1.17.11.0 regression: a tester launch that already embeds the venv
     interpreter with `-m uvicorn` must stay a single rewrite — the old regex
-    produced `"<venv>\python.exe" -m "<venv>\python.exe" -m uvicorn …`
+    produced `"<venv>\\python.exe" -m "<venv>\\python.exe" -m uvicorn …`
     (ModuleNotFoundError, port never bound)."""
     root = tmp_path / "venv-uvicorn-already"
     root.mkdir()

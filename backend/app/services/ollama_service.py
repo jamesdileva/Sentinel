@@ -42,6 +42,7 @@ class OllamaService:
         max_tokens: int = 500,
         temperature: float = 0.3,
         purpose: str = "query",
+        num_ctx: int | None = None,
     ) -> str:
         """Generate a text completion for the given prompt."""
         return self.generate_with_metrics(
@@ -50,6 +51,7 @@ class OllamaService:
             max_tokens=max_tokens,
             temperature=temperature,
             purpose=purpose,
+            num_ctx=num_ctx,
         )["response"]
 
     def generate_with_metrics(
@@ -59,6 +61,7 @@ class OllamaService:
         max_tokens: int = 500,
         temperature: float = 0.3,
         purpose: str = "query",
+        num_ctx: int | None = None,
     ) -> dict:
         """Generate and return text plus Ollama's own perf counters.
 
@@ -80,7 +83,10 @@ class OllamaService:
                 # long prompts; raise it so doc-first summary context and
                 # all-scope RAG context are never cut off (llama3.1:8b is a
                 # 128k-context model, tuned down to settings.ollama_num_ctx).
-                "num_ctx": settings.ollama_num_ctx,
+                # v1.17.12.0: `num_ctx` is overridable — triage keeps it small
+                # (4096) because its packet is tiny and a big context slows
+                # generation for no gain.
+                "num_ctx": num_ctx or settings.ollama_num_ctx,
             },
         }
         try:

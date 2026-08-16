@@ -37,6 +37,38 @@ export interface SessionExport {
   snippet: string;
 }
 
+export interface TriageSourceLine {
+  line_number: number;
+  text: string;
+}
+
+export interface TriageFrame {
+  file: string;
+  relative_path: string;
+  line: number;
+  function: string | null;
+  source: TriageSourceLine[];
+}
+
+export interface TriageEvidence {
+  status: string;
+  actual_outcome: string | null;
+  error_lines: string[];
+  patterns: string[];
+  frames: TriageFrame[];
+  traceback_available: boolean;
+  note: string | null;
+}
+
+export interface TriageRecord {
+  id: string;
+  session_id: string;
+  evidence: TriageEvidence;
+  summary: string | null;
+  model: string | null;
+  created_at: string;
+}
+
 export interface SessionCreate {
   project_id: string;
   title: string;
@@ -129,4 +161,20 @@ export async function exportScreenshot(
 
 export async function deleteSession(sessionId: string): Promise<void> {
   await api.delete(`/v1/sessions/${sessionId}`);
+}
+
+export async function triageSession(sessionId: string): Promise<TriageRecord> {
+  const { data } = await api.post<TriageRecord>(
+    `/v1/sessions/${sessionId}/triage`,
+  );
+  return data;
+}
+
+export async function summarizeSession(
+  sessionId: string,
+): Promise<TriageRecord> {
+  const { data } = await api.post<TriageRecord>(
+    `/v1/sessions/${sessionId}/summarize`,
+  );
+  return data;
 }
