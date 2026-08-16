@@ -6,6 +6,11 @@ Verified ground truth (2026-08-15):
   app is up reports investigate honestly). No venv — the repo ships a bundled
   runtime at `backend/runtime/python/python.exe`; the tester prefers it and
   falls back to PATH `python`.
+- v1.17.12.1: Sentinel's own run.py sets PYTHONPATH=<sentinel>/backend, and
+  the tester child inherits it — uvicorn then imports *Sentinel's* `app`
+  package (sqlmodel ModuleNotFoundError) instead of the WFT app. The launch
+  env overlay therefore forces PYTHONPATH="" so `app.main` resolves inside
+  the WFT checkout.
 - No auth and no UI needed — every step below is plain REST (verified against
   backend/app/api/{projects,datasets,payroll,reports,workflows}.py).
 - Fixture `backend/tests/fixtures/payroll_issues.csv` is engineered for the
@@ -50,7 +55,7 @@ def run(ctx: TesterContext) -> None:
     if not fixture.exists():
         raise TesterEnvError(f"Payroll fixture missing: {fixture}")
 
-    ctx.launch(_backend_command(root))
+    ctx.launch(_backend_command(root), env={"PYTHONPATH": ""})
     ctx.wait_log("Uvicorn running", 60)
     ctx.wait(3)
     ctx.http("GET", f"{PORT}/health", expect_body="healthy")
@@ -121,7 +126,7 @@ def run(ctx: TesterContext) -> None:
     ctx.checkpoint(f"payroll report generated: {file_path}")
 
     reports = httpx.get(
-        f"{PORT}/api/reports", params={"project_id": str(project_id)}, timeout=30
+        f"{PORT}/api/reports/", params={"project_id": str(project_id)}, timeout=30
     )
     if reports.status_code != 200:
         raise TesterAssertionError(

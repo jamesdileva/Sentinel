@@ -29,7 +29,8 @@ SOURCE_CONTEXT_BEFORE = 3
 SOURCE_CONTEXT_AFTER = 2
 
 ERROR_HINT_RE = re.compile(
-    r"(Traceback|ERROR|CRITICAL|FAILED|Exception|error:|failed to)"
+    r"(Traceback|ERROR|CRITICAL|FAILED|Exception|error:|failed to|"
+    r"Unhandled error|OperationalError)"
 )
 
 TRACEBACK_FRAME_RE = re.compile(r'^\s*File "([^"]+)", line (\d+)(?:, in (.+))?$')
@@ -53,6 +54,7 @@ KNOWN_PATTERNS = (
     "SyntaxError",
     "AssertionError",
     "HttpError",
+    "OperationalError",
 )
 
 
@@ -64,15 +66,18 @@ def error_lines(log_slice: str) -> list[str]:
 
 
 def traceback_frames(log_slice: str) -> list[tuple[str, int, str | None]]:
-    """`File "path", line N, in func` frames in order, capped."""
-    frames = []
-    for line in log_slice.splitlines():
-        match = TRACEBACK_FRAME_RE.match(line)
-        if match:
-            frames.append((match.group(1), int(match.group(2)), match.group(3)))
-            if len(frames) >= MAX_FRAMES:
-                break
-    return frames
+    """`File "path", line N, in func` frames in order (uncapped scan).
+
+    Capping here would cut real project frames: uvicorn tracebacks lead with
+    many site-packages frames (sqlalchemy, starlette, fastapi middleware),
+    so a pre-resolution cap of 8 grabs only dependency frames. The cap is
+    applied to the *resolved* list instead (see build_evidence).
+    """
+    return [
+        (match.group(1), int(match.group(2)), match.group(3))
+        for line in log_slice.splitlines()
+        if (match := TRACEBACK_FRAME_RE.match(line))
+    ]
 
 
 def _source_preview(file_path: Path, line: int) -> list[dict]:
@@ -96,7 +101,10 @@ def resolve_frames(
     root = Path(project_path).resolve()
     root_norm = str(root).casefold()
     resolved = []
+    seen = set()
     for file_path, line, function in frames:
+        if file_path.startswith("<") and file_path.endswith(">"):
+            continue  # pseudo frames: <string>, <frozen importlib...>
         candidate = Path(file_path)
         if not candidate.is_absolute():
             candidate = root / candidate
@@ -107,6 +115,10 @@ def resolve_frames(
             relative_path = candidate.relative_to(root)
         except ValueError:
             relative_path = candidate
+        key = (str(relative_path), line)
+        if key in seen:
+            continue
+        seen.add(key)
         resolved.append(
             {
                 "file": str(candidate),
@@ -127,7 +139,7 @@ def build_evidence(project: Project, app_session: AppSession) -> dict:
     """The deterministic packet — no AI anywhere in this path."""
     log_slice = app_session.log_slice or ""
     frames = traceback_frames(log_slice)
-    resolved = resolve_frames(frames, project.path)
+    resolved = resolve_frames(frames, project.path)[:MAX_FRAMES]
     evidence = {
         "status": getattr(app_session.status, "value", app_session.status),
         "actual_outcome": app_session.actual_outcome,

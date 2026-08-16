@@ -59,6 +59,29 @@ def test_traceback_frames_skip_plain_lines():
     assert traceback_frames("just a log line\nnothing here") == []
 
 
+def test_traceback_frames_not_capped_before_resolution(tmp_path):
+    """uvicorn tracebacks lead with site-packages frames; a pre-resolution
+    cap of 8 would starve the project frames that follow them (live bug
+    from the WFT 500). The scan must collect every frame."""
+    project = tmp_path / "demo-app"
+    target = project / "app" / "main.py"
+    target.parent.mkdir(parents=True)
+    target.write_text("\n".join(f"line {i}" for i in range(1, 20)), encoding="utf-8")
+    dep = [
+        rf'  File "C:\site-packages\pkg{i}.py", line {i}, in f{i}' for i in range(10)
+    ]
+    log_slice = (
+        "Traceback (most recent call last):\n"
+        + "\n".join(dep)
+        + (f'\n  File "{target}", line 7, in handler')
+    )
+    frames = traceback_frames(log_slice)
+    assert len(frames) == 11
+    resolved = resolve_frames(frames, str(project))
+    assert [f["line"] for f in resolved] == [7]
+    assert resolved[0]["source"][0]["text"] == "line 4"
+
+
 def test_resolve_frames_inside_project_with_source(tmp_path):
     project = tmp_path / "demo-app"
     target = project / "app" / "main.py"
@@ -86,6 +109,40 @@ def test_resolve_frames_relative_paths(tmp_path):
     frames = resolve_frames([(r"app\main.py", 1, None)], str(project))
     assert len(frames) == 1
     assert frames[0]["source"][0]["text"] == "x = 1"
+
+
+def test_resolve_frames_dedupes_chained_tracebacks(tmp_path):
+    """A chained exception prints the same project frames twice; the
+    evidence must not repeat them."""
+    project = tmp_path / "demo-app"
+    target = project / "app" / "main.py"
+    target.parent.mkdir(parents=True)
+    target.write_text("\n".join(f"line {i}" for i in range(1, 20)), encoding="utf-8")
+    frames = [
+        (str(target), 7, "handler"),
+        (r"C:\site-packages\pkg.py", 3, "f"),
+        (str(target), 7, "handler"),
+    ]
+    resolved = resolve_frames(frames, str(project))
+    assert len(resolved) == 1
+    assert resolved[0]["line"] == 7
+
+
+def test_resolve_frames_skips_pseudo_frames(tmp_path):
+    """`File "<string>"` / `<frozen ...>` frames are not files on disk —
+    resolve_frames must skip them instead of resolving them project-
+    relative."""
+    project = tmp_path / "demo-app"
+    target = project / "app" / "main.py"
+    target.parent.mkdir(parents=True)
+    target.write_text("\n".join(f"line {i}" for i in range(1, 20)), encoding="utf-8")
+    frames = [
+        (str(target), 7, "handler"),
+        ("<string>", 2, "commit"),
+        ("<frozen importlib._bootstrap>", 1406, "_gcd_import"),
+    ]
+    resolved = resolve_frames(frames, str(project))
+    assert [f["line"] for f in resolved] == [7]
 
 
 def test_resolve_frames_missing_file_no_crash(tmp_path):

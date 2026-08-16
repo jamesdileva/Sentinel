@@ -465,3 +465,22 @@ def test_wft_backend_command_prefers_runtime_python(tmp_path):
     assert wft._backend_command(tmp_path / "other") == (
         "cd backend && python -m uvicorn app.main:app"
     )
+
+
+def test_wft_launch_neutralizes_inherited_pythonpath(tmp_db, project, monkeypatch):
+    from app.testers import workflow_toolkit as wft
+    from app.testers._helpers import BuildRunner, TesterContext
+
+    launched = {}
+
+    def fake_launch(project, cmd, env=None):
+        launched["env"] = env
+        return True, cmd
+
+    monkeypatch.setattr(BuildRunner, "_launch_app", staticmethod(fake_launch))
+    with DbSession(get_engine()) as db:
+        service = AppSessionService(db)
+        app_session = service.start(project.id, "t")
+        ctx = TesterContext(project, app_session.id, service)
+        ctx.launch(wft._backend_command(Path(project.path)), env={"PYTHONPATH": ""})
+    assert launched.get("env") == {"PYTHONPATH": ""}
