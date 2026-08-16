@@ -49,15 +49,19 @@ def _mk_project(db, name="demo-app", path=None) -> Project:
 
 @pytest.fixture(autouse=True)
 def _fake_grabber(monkeypatch):
-    """Deterministic full-screen grab: a solid-color image."""
+    """Deterministic grab: a solid-color image; records bbox args."""
     image = Image.new("RGB", (320, 200), (10, 20, 30))
+    calls = []
 
     class Grabber:
         @staticmethod
-        def grab():
+        def grab(bbox=None):
+            calls.append(bbox)
             return image.copy()
 
     monkeypatch.setattr(svc, "ImageGrab", Grabber)
+    monkeypatch.setattr(svc, "find_project_window", lambda path: None)
+    return calls
 
 
 @pytest.fixture()
@@ -164,6 +168,37 @@ def test_capture_saves_png_and_thumbnail(tmp_db, project):
         with Image.open(thumb) as img:
             assert img.size[0] <= svc.THUMB_SIZE[0]
             assert img.size[1] <= svc.THUMB_SIZE[1]
+
+
+def test_capture_uses_window_bbox_when_project_window_exists(
+    tmp_db, project, monkeypatch, _fake_grabber
+):
+    """v1.17.12.3: a window owned by the app under test crops the grab."""
+    monkeypatch.setattr(svc, "find_project_window", lambda path: (10, 20, 210, 120))
+    monkeypatch.setattr(svc, "_virtual_screen", lambda: (0, 0, 320, 200))
+    with DbSession(get_engine()) as db:
+        app_session = _session(db, project.id)
+        AppSessionService(db).capture(app_session.id)
+        assert _fake_grabber[-1] == (10, 20, 210, 120)
+
+
+def test_capture_falls_back_to_full_screen_without_window(
+    tmp_db, project, _fake_grabber
+):
+    with DbSession(get_engine()) as db:
+        app_session = _session(db, project.id)
+        AppSessionService(db).capture(app_session.id)
+        assert _fake_grabber[-1] is None
+
+
+def test_window_bbox_clamps_to_virtual_screen(tmp_db, monkeypatch):
+    monkeypatch.setattr(svc, "_virtual_screen", lambda: (0, 0, 320, 200))
+    service = AppSessionService.__new__(AppSessionService)
+    assert service._window_bbox("C:\\projects\\demo-app") is None  # no window
+    monkeypatch.setattr(svc, "find_project_window", lambda path: (-50, -20, 100, 60))
+    assert service._window_bbox("C:\\projects\\demo-app") == (0, 0, 100, 60)
+    monkeypatch.setattr(svc, "find_project_window", lambda path: (400, 300, 500, 400))
+    assert service._window_bbox("C:\\projects\\demo-app") is None
 
 
 def test_end_auto_captures_screenshot(tmp_db, project):

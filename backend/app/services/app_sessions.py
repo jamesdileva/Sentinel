@@ -5,8 +5,11 @@ log (data/logs/apps/<slug>.log — the same file launched apps append their
 output to), so provenance is one deterministic file. The log slice between
 a session's own start and end markers is captured at `end()`.
 
-Screenshots are full-screen grabs (PIL.ImageGrab) stored under
-data/screenshots/<slug>/ with a 90x60 thumbnail next to each PNG. Capture
+Screenshots are grabs stored under data/screenshots/<slug>/ with a 90x60
+thumbnail next to each PNG. Since v1.17.12.3 the grab is window-targeted:
+when the app under test owns a visible window (matched by executable path
+under the project dir), only that window's rect is captured; headless apps
+and closed/minimized windows fall back to the full screen. Capture
 is user-initiated or auto on session end (Rule 2: Sentinel never presses
 buttons itself — the user drives the app, the recorder only watches).
 """
@@ -35,6 +38,7 @@ from app.repositories import (
     SessionScreenshotRepository,
     TriageAnalysisRepository,
 )
+from app.utils.window_capture import _virtual_screen, find_project_window
 
 logger = get_logger(__name__)
 
@@ -194,12 +198,20 @@ class AppSessionService:
     def capture(
         self, session_id: str, checkpoint_id: str | None = None
     ) -> SessionScreenshot:
-        """Full-screen grab → data/screenshots/<slug>/<iso>.png + thumb."""
+        """Window-targeted grab → data/screenshots/<slug>/<iso>.png + thumb.
+
+        v1.17.12.3: when the app under test owns a visible window (matched by
+        the window process's executable path under the project dir), the grab
+        is cropped to that window's rect, clamped to the virtual screen.
+        Headless apps, closed/minimized windows, or non-Windows hosts fall
+        back to the full-screen grab.
+        """
         app_session = self._get(session_id)
         project = ProjectRepository(self.session).get(app_session.project_id)
         shot_dir = _screenshots_dir() / _slug(project.name)
         shot_dir.mkdir(parents=True, exist_ok=True)
-        image = ImageGrab.grab()
+        bbox = self._window_bbox(project.path)
+        image = ImageGrab.grab(bbox=bbox) if bbox else ImageGrab.grab()
         stem = datetime.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
         full_path = shot_dir / f"{stem}.png"
         thumb_path = shot_dir / f"{stem}.thumb.png"
@@ -215,8 +227,29 @@ class AppSessionService:
         self.screenshot_repo.add(screenshot)
         self.session.commit()
         self.session.refresh(screenshot)
-        logger.info("Captured screenshot %s for session %s", full_path, session_id)
+        logger.info(
+            "Captured screenshot %s for session %s (%s)",
+            full_path,
+            session_id,
+            "window" if bbox else "full-screen",
+        )
         return screenshot
+
+    @staticmethod
+    def _window_bbox(project_path: str) -> tuple[int, int, int, int] | None:
+        """Project-window rect clamped to the virtual screen, or None."""
+        rect = find_project_window(project_path)
+        if rect is None:
+            return None
+        left, top, right, bottom = rect
+        virtual = _virtual_screen()
+        left = max(left, virtual[0])
+        top = max(top, virtual[1])
+        right = min(right, virtual[2])
+        bottom = min(bottom, virtual[3])
+        if right <= left or bottom <= top:
+            return None
+        return left, top, right, bottom
 
     # ---------------------------------------------------------------- queries
 
