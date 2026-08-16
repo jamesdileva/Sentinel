@@ -15,6 +15,7 @@ from app.db.connection import get_engine
 from app.db.models import AppSession, Project, SessionScreenshot, SessionStatus
 from app.services import app_sessions as svc
 from app.services.app_sessions import AppSessionService
+from app.testers._helpers import TesterContext
 from app.utils import window_capture
 
 
@@ -171,6 +172,55 @@ def test_capture_saves_png_and_thumbnail(tmp_db, project):
         with Image.open(thumb) as img:
             assert img.size[0] <= svc.THUMB_SIZE[0]
             assert img.size[1] <= svc.THUMB_SIZE[1]
+
+
+def test_register_screenshot_copies_png_and_thumbnail(tmp_db, project, tmp_path):
+    """v1.17.13.1: a pre-rendered PNG (headless browser render) registers as a
+    session screenshot — PNG + thumb copied into the slug dir, row created."""
+    source = tmp_path / "render.png"
+    Image.new("RGB", (200, 100), (9, 8, 7)).save(source, "PNG")
+    with DbSession(get_engine()) as db:
+        app_session = _session(db, project.id)
+        shot = AppSessionService(db).register_screenshot(app_session.id, source)
+        shot_dir = (
+            Path(settings.db_path).parent.parent
+            / "screenshots"
+            / svc._slug(project.name)
+        )
+        full = shot_dir / shot.path
+        thumb = shot_dir / f"{Path(shot.path).stem}.thumb.png"
+        assert full.exists()
+        assert thumb.exists()
+        with Image.open(full) as img:
+            assert img.size == (200, 100)
+        with Image.open(thumb) as img:
+            assert img.size[0] <= svc.THUMB_SIZE[0]
+            assert img.size[1] <= svc.THUMB_SIZE[1]
+
+
+def test_register_screenshot_missing_source_raises(tmp_db, project, tmp_path):
+    with DbSession(get_engine()) as db:
+        app_session = _session(db, project.id)
+        with pytest.raises(FileNotFoundError):
+            AppSessionService(db).register_screenshot(
+                app_session.id, tmp_path / "missing.png"
+            )
+
+
+def test_ctx_screenshot_file_registers_render(tmp_db, project, tmp_path):
+    """TesterContext.screenshot_file mirrors screenshot(): a checkpoint plus a
+    registered headless-render shot."""
+    source = tmp_path / "render.png"
+    Image.new("RGB", (320, 200), (5, 5, 5)).save(source, "PNG")
+    with DbSession(get_engine()) as db:
+        app_session = _session(db, project.id)
+        service = AppSessionService(db)
+        ctx = TesterContext(project, app_session.id, service)
+        ctx.screenshot_file(str(source), "headless game render")
+        checkpoints = service.checkpoint_repo.by_session(app_session.id)
+        shots = service.screenshot_repo.by_session(app_session.id)
+        assert [c.label for c in checkpoints] == ["headless game render"]
+        assert len(shots) == 1
 
 
 def test_capture_renders_window_content_when_window_exists(

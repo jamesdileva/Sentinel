@@ -19,7 +19,7 @@ import re
 from pathlib import Path
 from urllib.parse import quote
 
-from PIL import ImageGrab
+from PIL import Image, ImageGrab
 from sqlmodel import Session
 
 from app.core.config import settings
@@ -228,8 +228,6 @@ class AppSessionService:
         """
         app_session = self._get(session_id)
         project = ProjectRepository(self.session).get(app_session.project_id)
-        shot_dir = _screenshots_dir() / _slug(project.name)
-        shot_dir.mkdir(parents=True, exist_ok=True)
         method = "full-screen"
         window = find_project_window(project.path)
         if window is not None:
@@ -247,6 +245,19 @@ class AppSessionService:
                 image = ImageGrab.grab()
         else:
             image = ImageGrab.grab()
+        return self._save_image(image, project, session_id, checkpoint_id, method)
+
+    def _save_image(
+        self,
+        image: Image.Image,
+        project: Project,
+        session_id: str,
+        checkpoint_id: str | None,
+        method: str,
+    ) -> SessionScreenshot:
+        """Persist a PIL image as <slug>/<iso>.png + thumb and register it."""
+        shot_dir = _screenshots_dir() / _slug(project.name)
+        shot_dir.mkdir(parents=True, exist_ok=True)
         stem = datetime.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
         full_path = shot_dir / f"{stem}.png"
         thumb_path = shot_dir / f"{stem}.thumb.png"
@@ -269,6 +280,29 @@ class AppSessionService:
             method,
         )
         return screenshot
+
+    def register_screenshot(
+        self,
+        session_id: str,
+        png_path: str | Path,
+        checkpoint_id: str | None = None,
+    ) -> SessionScreenshot:
+        """Register a pre-rendered PNG (e.g. a headless browser render) as a
+        session screenshot — v1.17.13.1, for browser-served apps whose UI has
+        no window to capture. Copies the PNG into data/screenshots/<slug>/
+        with a thumbnail and adds the DB row; a missing source raises
+        FileNotFoundError (the tester's error mapping surfaces it as
+        investigate)."""
+        app_session = self._get(session_id)
+        project = ProjectRepository(self.session).get(app_session.project_id)
+        source = Path(png_path)
+        if not source.exists() or source.stat().st_size == 0:
+            raise FileNotFoundError(f"Screenshot source missing: {source}")
+        with Image.open(source) as im:
+            image = im.convert("RGB")
+        return self._save_image(
+            image, project, session_id, checkpoint_id, "headless-render"
+        )
 
     # ---------------------------------------------------------------- queries
 

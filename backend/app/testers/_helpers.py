@@ -69,6 +69,15 @@ class TesterContext:
         self.steps += 1
         self.service.capture(self.session_id, checkpoint.id)
 
+    def screenshot_file(self, path: str, label: str | None = None) -> None:
+        """Register a pre-rendered PNG (headless browser render) as a session
+        screenshot — for browser-served apps whose UI has no window."""
+        checkpoint = self.service.checkpoint(
+            self.session_id, label or f"screenshot {self.steps + 1}"
+        )
+        self.steps += 1
+        self.service.register_screenshot(self.session_id, path, checkpoint.id)
+
     def wait(self, seconds: float) -> None:
         time.sleep(seconds)
 
