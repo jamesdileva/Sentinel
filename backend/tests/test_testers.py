@@ -448,7 +448,7 @@ def test_workflow_toolkit_tester_registered():
     from app.testers import TESTERS
 
     tester = TESTERS["Workflow-Toolkit"]
-    assert tester.name == "WorkFlow-Toolkit payroll E2E"
+    assert tester.name == "WorkFlow-Toolkit E2E"
     assert tester.kind == "custom"
 
 
@@ -465,6 +465,57 @@ def test_wft_backend_command_prefers_runtime_python(tmp_path):
     assert wft._backend_command(tmp_path / "other") == (
         "cd backend && python -m uvicorn app.main:app"
     )
+
+
+def test_wft_pytest_command_prefers_runtime_python(tmp_path):
+    from app.testers import workflow_toolkit as wft
+
+    root = tmp_path / "WorkFlow-Toolkit"
+    runtime = root / "backend" / "runtime" / "python" / "python.exe"
+    runtime.parent.mkdir(parents=True)
+    runtime.write_text("", encoding="utf-8")
+    cmd = wft._pytest_command(root)
+    assert f'"{runtime}"' in cmd
+    assert "-m pytest tests -q" in cmd
+    assert wft._pytest_command(tmp_path / "other") == (
+        "cd backend && python -m pytest tests -q"
+    )
+
+
+def test_wft_completed_run_requires_output_report_id(tmp_path, monkeypatch):
+    from app.testers import workflow_toolkit as wft
+    from app.testers._helpers import TesterAssertionError, TesterContext
+
+    class FakeService:
+        def checkpoint(self, *a, **k):
+            pass
+
+    ctx = TesterContext(
+        type("P", (), {"path": str(tmp_path), "name": "t"})(), "s", FakeService()
+    )
+    with pytest.raises(TesterAssertionError, match="output_report_id"):
+        wft._assert_completed_with_report(ctx, {"status": "Completed"})
+
+
+def test_wft_pytest_step_neutralizes_inherited_pythonpath(tmp_db, project, monkeypatch):
+    from app.services.command_runner import CommandResult
+    from app.testers import _helpers
+    from app.testers import workflow_toolkit as wft
+    from app.testers._helpers import TesterContext
+
+    calls = {}
+
+    def fake_run_command(command, cwd=None, timeout=120, env=None):
+        calls["env"] = env
+        return CommandResult("", 0, "ok", "", 1.0)
+
+    monkeypatch.setattr(_helpers, "run_command", fake_run_command)
+    with DbSession(get_engine()) as db:
+        service = AppSessionService(db)
+        app_session = service.start(project.id, "t")
+        ctx = TesterContext(project, app_session.id, service)
+        ctx.pytest(wft._pytest_command(Path(project.path)), env={"PYTHONPATH": ""})
+    assert calls.get("env") == {"PYTHONPATH": ""}
 
 
 def test_wft_launch_neutralizes_inherited_pythonpath(tmp_db, project, monkeypatch):

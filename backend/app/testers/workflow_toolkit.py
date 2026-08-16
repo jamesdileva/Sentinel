@@ -1,6 +1,7 @@
-"""WorkFlow-Toolkit tester — deep payroll-audit E2E over the FastAPI backend.
+"""WorkFlow-Toolkit tester — deep E2E over the FastAPI backend covering all
+four workflow templates plus the repo's own pytest suite.
 
-Verified ground truth (2026-08-15):
+Verified ground truth (2026-08-15/16):
 - Backend: `cd backend && python -m uvicorn app.main:app` on :8000 (default;
   the same port CG and Demake use, so a tester run while another 8000-bound
   app is up reports investigate honestly). No venv — the repo ships a bundled
@@ -13,13 +14,19 @@ Verified ground truth (2026-08-15):
   the WFT checkout.
 - No auth and no UI needed — every step below is plain REST (verified against
   backend/app/api/{projects,datasets,payroll,reports,workflows}.py).
-- Fixture `backend/tests/fixtures/payroll_issues.csv` is engineered for the
-  audit: missing hours (E-106), negative hours (E-107), excessive hours
-  (E-108), below-minimum pay (E-112).
-- Workflow execution is async (BackgroundTasks): execute returns a "Running"
+- Fixtures `backend/tests/fixtures/*` are engineered per tool: payroll_issues.csv
+  (missing/negative/excessive hours), customers_dupes.csv (duplicates),
+  customers_v1/v2.csv (same records, different values), sales_orders.csv
+  (KPI/chart material).
+- Workflow execution is async (BackgroundTasks): execute returns a "Pending"
   run, so the tester polls GET /api/workflows/runs/{id} to a terminal state.
-- The direct payroll endpoints are synchronous — the report PDF is rendered
-  within the request.
+  `WorkflowExecuteRequest` carries `second_dataset_id` for Dataset Comparison;
+  every template ends with a report (PDF or Excel) recorded via
+  `output_report_id` (migration 4e6a9c2d8f31).
+- Report downloads serve by format: pdf -> application/pdf, excel ->
+  application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.
+- The repo's own suite (backend/tests, incl. the fixture-based data tests)
+  passes under the runtime python: 838 tests, ~12 s.
 """
 
 import time
@@ -40,20 +47,142 @@ PORT = "http://127.0.0.1:8000"
 POLL_STEP_S = 5
 MAX_WAIT_S = 180
 
-FIXTURE = Path("backend") / "tests" / "fixtures" / "payroll_issues.csv"
+FIXTURES = Path("backend") / "tests" / "fixtures"
+
+
+def _interpreter(project_root: Path) -> str:
+    runtime = project_root / "backend" / "runtime" / "python" / "python.exe"
+    return f'"{runtime}"' if runtime.exists() else "python"
 
 
 def _backend_command(project_root: Path) -> str:
-    runtime = project_root / "backend" / "runtime" / "python" / "python.exe"
-    interpreter = f'"{runtime}"' if runtime.exists() else "python"
-    return f"cd backend && {interpreter} -m uvicorn app.main:app"
+    return f"cd backend && {_interpreter(project_root)} -m uvicorn app.main:app"
+
+
+def _pytest_command(project_root: Path) -> str:
+    return f"cd backend && {_interpreter(project_root)} -m pytest tests -q"
+
+
+def _import_dataset(
+    ctx: TesterContext, headers: dict, project_id: int, name: str
+) -> int:
+    fixture = Path(ctx.project.path) / FIXTURES / name
+    if not fixture.exists():
+        raise TesterEnvError(f"Fixture missing: {fixture}")
+    with open(fixture, "rb") as fh:
+        upload = httpx.post(
+            f"{PORT}/api/datasets/import",
+            data={"project_id": str(project_id)},
+            files={"file": (name, fh, "text/csv")},
+            timeout=60,
+        )
+    if upload.status_code != 200:
+        raise TesterAssertionError(
+            f"dataset import ({name}) -> {upload.status_code}, expected 200"
+        )
+    dataset_id = upload.json().get("id")
+    if not dataset_id:
+        raise TesterAssertionError(f"import response for {name} lacks dataset id")
+    ctx.checkpoint(f"imported {name} -> dataset {dataset_id}")
+    return dataset_id
+
+
+def _resolve_template(ctx: TesterContext, category: str, name: str) -> int:
+    templates = httpx.get(
+        f"{PORT}/api/workflows/templates",
+        params={"category": category},
+        timeout=30,
+    )
+    if templates.status_code != 200:
+        raise TesterAssertionError(
+            f"workflow templates -> {templates.status_code}, expected 200"
+        )
+    template = next((t for t in templates.json() if t.get("name") == name), None)
+    if template is None:
+        raise TesterAssertionError(f"{name!r} template not found by name")
+    ctx.checkpoint(f"{name} template resolved")
+    return template["id"]
+
+
+def _execute_template(
+    ctx: TesterContext,
+    headers: dict,
+    project_id: int,
+    template_id: int,
+    dataset_id: int | None,
+    second_dataset_id: int | None = None,
+) -> dict:
+    execute = httpx.post(
+        f"{PORT}/api/workflows/templates/{template_id}/execute",
+        json={
+            "project_id": project_id,
+            "dataset_id": dataset_id,
+            "second_dataset_id": second_dataset_id,
+        },
+        headers=headers,
+        timeout=60,
+    )
+    if execute.status_code != 200:
+        raise TesterAssertionError(
+            f"workflow execute -> {execute.status_code}, expected 200"
+        )
+    run_id = execute.json().get("id") or execute.json().get("run_id")
+    if not run_id:
+        raise TesterAssertionError("workflow execute response lacks run id")
+    ctx.checkpoint(f"workflow run started: {run_id}")
+    return _poll_run(run_id)
+
+
+def _poll_run(run_id: int) -> dict:
+    run_status = None
+    deadline = time.time() + MAX_WAIT_S
+    while time.time() < deadline:
+        run_resp = httpx.get(f"{PORT}/api/workflows/runs/{run_id}", timeout=30)
+        if run_resp.status_code != 200:
+            raise TesterAssertionError(
+                f"workflow run poll -> {run_resp.status_code}, expected 200"
+            )
+        run_status = run_resp.json().get("status")
+        if run_status in ("Completed", "Failed"):
+            break
+        time.sleep(POLL_STEP_S)
+    if run_status == "Failed":
+        raise TesterAssertionError(
+            f"workflow run failed: {run_resp.json().get('error', 'see log')}"
+        )
+    if run_status != "Completed":
+        raise TesterTimeoutError(
+            f"workflow run not completed after {MAX_WAIT_S}s (status={run_status!r})"
+        )
+    return run_resp.json()
+
+
+def _assert_completed_with_report(ctx: TesterContext, run: dict) -> int:
+    output_report_id = run.get("output_report_id")
+    if not output_report_id:
+        raise TesterAssertionError("completed run lacks output_report_id")
+    ctx.checkpoint(f"workflow run completed with report {output_report_id}")
+    return output_report_id
+
+
+def _assert_report_download(
+    ctx: TesterContext, report_id: int, media_hint: str
+) -> None:
+    download = httpx.get(f"{PORT}/api/reports/{report_id}/download", timeout=60)
+    if download.status_code != 200:
+        raise TesterAssertionError(
+            f"report download -> {download.status_code}, expected 200"
+        )
+    content_type = download.headers.get("content-type", "")
+    if media_hint not in content_type:
+        raise TesterAssertionError(
+            f"report download content-type: {content_type!r} (wanted {media_hint!r})"
+        )
+    ctx.checkpoint(f"report download serves {media_hint}")
 
 
 def run(ctx: TesterContext) -> None:
     root = Path(ctx.project.path)
-    fixture = root / FIXTURE
-    if not fixture.exists():
-        raise TesterEnvError(f"Payroll fixture missing: {fixture}")
 
     ctx.launch(_backend_command(root), env={"PYTHONPATH": ""})
     ctx.wait_log("Uvicorn running", 60)
@@ -79,23 +208,10 @@ def run(ctx: TesterContext) -> None:
         raise TesterAssertionError("create project response lacks id")
     ctx.checkpoint(f"project created: {name}")
 
-    with open(fixture, "rb") as fh:
-        upload = httpx.post(
-            f"{PORT}/api/datasets/import",
-            data={"project_id": str(project_id)},
-            files={"file": (fixture.name, fh, "text/csv")},
-            timeout=60,
-        )
-    if upload.status_code != 200:
-        raise TesterAssertionError(
-            f"dataset import -> {upload.status_code}, expected 200"
-        )
-    dataset_id = upload.json().get("id")
-    if not dataset_id:
-        raise TesterAssertionError("import response lacks dataset id")
-    ctx.checkpoint(f"imported payroll_issues.csv -> dataset {dataset_id}")
+    # --------------------------------------------------------------- payroll
+    payroll_dataset = _import_dataset(ctx, headers, project_id, "payroll_issues.csv")
 
-    validate = httpx.get(f"{PORT}/api/payroll/validate/{dataset_id}", timeout=30)
+    validate = httpx.get(f"{PORT}/api/payroll/validate/{payroll_dataset}", timeout=30)
     if validate.status_code != 200:
         raise TesterAssertionError(
             f"payroll validate -> {validate.status_code}, expected 200"
@@ -112,7 +228,7 @@ def run(ctx: TesterContext) -> None:
     ctx.checkpoint("payroll validation caught engineered issues")
 
     report = httpx.post(
-        f"{PORT}/api/payroll/report/{dataset_id}",
+        f"{PORT}/api/payroll/report/{payroll_dataset}",
         params={"project_id": str(project_id)},
         timeout=120,
     )
@@ -137,80 +253,53 @@ def run(ctx: TesterContext) -> None:
     )
     if report_row is None:
         raise TesterAssertionError("reports list lacks the payroll report")
-    download = httpx.get(f"{PORT}/api/reports/{report_row['id']}/download", timeout=60)
-    if download.status_code != 200:
-        raise TesterAssertionError(
-            f"report download -> {download.status_code}, expected 200"
-        )
-    if "pdf" not in download.headers.get("content-type", ""):
-        raise TesterAssertionError(
-            f"report download content-type: {download.headers.get('content-type')!r}"
-        )
-    ctx.checkpoint("report download serves a PDF")
+    _assert_report_download(ctx, report_row["id"], "pdf")
 
-    templates = httpx.get(
-        f"{PORT}/api/workflows/templates",
-        params={"category": "Payroll"},
-        timeout=30,
+    payroll_template = _resolve_template(ctx, "Payroll", "Payroll Audit")
+    run_ = _execute_template(
+        ctx, headers, project_id, payroll_template, payroll_dataset
     )
-    if templates.status_code != 200:
-        raise TesterAssertionError(
-            f"workflow templates -> {templates.status_code}, expected 200"
-        )
-    template = next(
-        (t for t in templates.json() if t.get("name") == "Payroll Audit"), None
-    )
-    if template is None:
-        raise TesterAssertionError("Payroll Audit template not found by name")
-    ctx.checkpoint("Payroll Audit template resolved")
+    _assert_completed_with_report(ctx, run_)
 
-    execute = httpx.post(
-        f"{PORT}/api/workflows/templates/{template['id']}/execute",
-        json={"project_id": project_id, "dataset_id": dataset_id},
-        headers=headers,
-        timeout=60,
-    )
-    if execute.status_code != 200:
-        raise TesterAssertionError(
-            f"workflow execute -> {execute.status_code}, expected 200"
-        )
-    run_id = execute.json().get("id") or execute.json().get("run_id")
-    if not run_id:
-        raise TesterAssertionError("workflow execute response lacks run id")
-    ctx.checkpoint(f"workflow run started: {run_id}")
+    # -------------------------------------------------------- data quality
+    dq_dataset = _import_dataset(ctx, headers, project_id, "customers_dupes.csv")
+    dq_template = _resolve_template(ctx, "Data Quality", "Data Quality Review")
+    run_ = _execute_template(ctx, headers, project_id, dq_template, dq_dataset)
+    _assert_report_download(ctx, _assert_completed_with_report(ctx, run_), "pdf")
 
-    run_status = None
-    deadline = time.time() + MAX_WAIT_S
-    while time.time() < deadline:
-        run_resp = httpx.get(f"{PORT}/api/workflows/runs/{run_id}", timeout=30)
-        if run_resp.status_code != 200:
-            raise TesterAssertionError(
-                f"workflow run poll -> {run_resp.status_code}, expected 200"
-            )
-        run_status = run_resp.json().get("status")
-        if run_status in ("Completed", "Failed"):
-            break
-        time.sleep(POLL_STEP_S)
-    if run_status == "Failed":
-        raise TesterAssertionError(
-            f"workflow run failed: {run_resp.json().get('error', 'see log')}"
-        )
-    if run_status != "Completed":
-        raise TesterTimeoutError(
-            f"workflow run not completed after {MAX_WAIT_S}s (status={run_status!r})"
-        )
-    if not run_resp.json().get("output_report_id"):
-        raise TesterAssertionError("completed run lacks output_report_id")
-    ctx.checkpoint("workflow run completed with a report")
+    # ------------------------------------------------------------ comparison
+    cmp_a = _import_dataset(ctx, headers, project_id, "customers_v1.csv")
+    cmp_b = _import_dataset(ctx, headers, project_id, "customers_v2.csv")
+    cmp_template = _resolve_template(ctx, "Comparison", "Dataset Comparison")
+    run_ = _execute_template(
+        ctx, headers, project_id, cmp_template, cmp_a, second_dataset_id=cmp_b
+    )
+    _assert_report_download(ctx, _assert_completed_with_report(ctx, run_), "pdf")
+
+    # ------------------------------------------------------------- dashboard
+    dash_dataset = _import_dataset(ctx, headers, project_id, "sales_orders.csv")
+    dash_template = _resolve_template(ctx, "Analytics", "Dashboard Builder")
+    run_ = _execute_template(ctx, headers, project_id, dash_template, dash_dataset)
+    _assert_report_download(
+        ctx,
+        _assert_completed_with_report(ctx, run_),
+        "spreadsheetml.sheet",
+    )
+
+    # ------------------------------------------------------- own test suite
+    ctx.pytest(_pytest_command(root), env={"PYTHONPATH": ""})
 
 
 TESTER = Tester(
-    name="WorkFlow-Toolkit payroll E2E",
+    name="WorkFlow-Toolkit E2E",
     description=(
-        "Launch the FastAPI backend (bundled runtime python), import the "
-        "engineered payroll_issues.csv fixture, verify payroll validation "
-        "catches its issues, generate + download the PDF report, then execute "
-        "the Payroll Audit workflow template and poll it to completion. Port "
+        "Launch the FastAPI backend (bundled runtime python, PYTHONPATH "
+        "neutralized), then exercise all four workflow templates end to end "
+        "with engineered fixtures: Payroll Audit (validation + PDF), Data "
+        "Quality Review (duplicates), Dataset Comparison (two datasets -> "
+        "variance PDF), Dashboard Builder (KPIs/charts -> Excel download). "
+        "Each run is polled to Completed and its report is downloaded and "
+        "content-checked. Finally runs the repo's own pytest suite. Port "
         "8000 is shared with CG/Demake — a conflicting instance reports "
         "investigate."
     ),

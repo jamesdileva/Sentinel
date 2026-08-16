@@ -180,10 +180,14 @@ class TesterContext:
         self.checkpoint(f"cli {command}")
 
     def pytest(
-        self, command: str, cwd: str | None = None, timeout_s: int = 600
+        self,
+        command: str,
+        cwd: str | None = None,
+        timeout_s: int = 600,
+        env: dict[str, str] | None = None,
     ) -> None:
         """Long-timeout CLI variant for the app's own test suite."""
-        self.cli(command, cwd=cwd, timeout_s=timeout_s, expect_exit=0)
+        self.cli(command, cwd=cwd, timeout_s=timeout_s, expect_exit=0, env=env)
 
 
 # pytest would try to collect these (names start with "Test"); opt out.
