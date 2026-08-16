@@ -241,6 +241,73 @@ def test_query_returns_grounded_answer(tmp_db, tmp_path):
     assert isinstance(response.confidence, float)
 
 
+def test_overview_question_answered_from_stored_summary(tmp_db, tmp_path):
+    """v1.17.13: a project-scoped overview question returns the stored
+    architecture summary directly — provenance preserved, preamble
+    stripped, no embedding/retrieval/generation (Rule 3)."""
+    import datetime
+
+    from app.db.models import KnowledgeSummary
+
+    project_id = _index_project(tmp_db)
+    generated = datetime.datetime.now()
+    with Session(connection.get_engine()) as session:
+        session.add(
+            KnowledgeSummary(
+                project_id=project_id,
+                type="architecture",
+                content=(
+                    "Here is a concise architecture summary of the sample:\n\n"
+                    "**Overview**\nSample is a FastAPI service."
+                ),
+                model="llama3.1:8b",
+                generated_at=generated,
+            )
+        )
+        session.commit()
+    with Session(connection.get_engine()) as session:
+        response = _rag(session, tmp_path).query(
+            "what is this project about?", project_id=project_id
+        )
+
+    assert response.answer == "**Overview**\nSample is a FastAPI service."
+    assert response.sources[0].source == "project_summaries"
+    assert response.sources[0].project_id == project_id
+    assert response.sources[0].distance == 0.0
+    assert response.model == "llama3.1:8b"
+    assert response.generated_at == generated
+    assert response.confidence == 1.0
+
+
+def test_overview_question_falls_through_without_summary(tmp_db, tmp_path):
+    """v1.17.13: no stored summary → the overview question takes the normal
+    pipeline (here: the helpful no-knowledge answer), never a silent miss."""
+    with Session(connection.get_engine()) as session:
+        response = _rag(session, tmp_path).query(
+            "what is this project about?", project_id="p-missing"
+        )
+    assert "no matching knowledge" in response.answer.lower()
+
+
+def test_is_overview_question_gate():
+    """v1.17.13: the deterministic intent gate admits short overview
+    questions and lets specific how/where/why/detail questions through."""
+    from app.services.rag_service import _is_overview_question
+
+    assert _is_overview_question("what is this project about?")
+    assert _is_overview_question("What does this project do?")
+    assert _is_overview_question("tell me about this project")
+    assert _is_overview_question("summarize this project for me")
+    assert _is_overview_question("give me an overview")
+    assert not _is_overview_question("how do I build this project?")
+    assert not _is_overview_question("where is the config file?")
+    assert not _is_overview_question("what is this project's database schema")
+    assert not _is_overview_question("what does the build pipeline run?")
+    assert not _is_overview_question("what is this project about? how do I run it?")
+    assert not _is_overview_question("")
+    assert not _is_overview_question("x" * 121)
+
+
 def test_search_scoped_to_project_excludes_others(tmp_db, tmp_path):
     project_a = _index_project(tmp_db)
     with Session(connection.get_engine()) as session:

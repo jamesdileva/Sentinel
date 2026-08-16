@@ -12,6 +12,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -181,6 +182,25 @@ async def rag_index_error_handler(request: Request, exc: RagIndexError) -> JSONR
     gone (interrupted write / killed process); plumbing it through as a
     raw 500 hides the only recovery: drop collections and re-index."""
     return JSONResponse(status_code=503, content={"detail": str(exc)})
+
+
+@app.exception_handler(RequestValidationError)
+async def rag_payload_validation_handler(
+    request: Request, exc: RequestValidationError
+) -> JSONResponse:
+    """Log RAG payload rejections (v1.17.13): uvicorn's access log records
+    only the 422 status, so a failed chat save is invisible without the
+    body. Scoped to the RAG payload endpoints; every other 422 keeps the
+    standard response shape."""
+    if request.url.path.startswith(("/api/v1/rag/chat", "/api/v1/rag/query")):
+        body = (await request.body())[:2000].decode("utf-8", errors="replace")
+        logger.warning(
+            "RAG payload rejected on %s: %s body=%s",
+            request.url.path,
+            exc.errors(),
+            body,
+        )
+    return JSONResponse(status_code=422, content={"detail": exc.errors()})
 
 
 app.include_router(projects_router, prefix="/api/v1")

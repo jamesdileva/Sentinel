@@ -332,6 +332,76 @@ def test_chat_all_scope_room(tmp_db):
     assert client.get("/api/v1/rag/chat/other").status_code == 404
 
 
+# ── v1.17.13: server-persisted answers + deterministic summary tier ────
+
+
+def test_rag_query_persists_assistant_reply(indexed):
+    """v1.17.13: /rag/query persists the assistant reply into the project's
+    chat room before returning — a tab reload during the long local
+    generation can no longer lose the answer."""
+    client = TestClient(app)
+    resp = client.post(
+        "/api/v1/rag/query",
+        json={
+            "question": "what does the FastAPI service do?",
+            "project_id": indexed,
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    history = client.get(f"/api/v1/rag/chat/{indexed}").json()
+    assert len(history) == 1
+    row = history[0]
+    assert row["role"] == "assistant"
+    assert row["text"] == body["answer"]
+    assert row["model"] == body["model"]
+    assert row["confidence"] == body["confidence"]
+    assert row["sources"] == [s["file_path"] or s["source"] for s in body["sources"]]
+    assert row["error"] is None
+
+
+def test_rag_query_overview_answered_from_stored_summary(indexed):
+    """v1.17.13: an overview question returns the stored architecture
+    summary (no generation) and the reply is persisted like any other."""
+    from app.db.models import KnowledgeSummary
+
+    with Session(get_engine()) as session:
+        session.add(
+            KnowledgeSummary(
+                project_id=indexed,
+                type="architecture",
+                content="**Overview**\nSample is a FastAPI service.",
+                model="llama3.1:8b",
+            )
+        )
+        session.commit()
+    client = TestClient(app)
+    resp = client.post(
+        "/api/v1/rag/query",
+        json={"question": "what is this project about?", "project_id": indexed},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["answer"] == "**Overview**\nSample is a FastAPI service."
+    assert body["confidence"] == 1.0
+    assert body["sources"][0]["source"] == "project_summaries"
+    history = client.get(f"/api/v1/rag/chat/{indexed}").json()
+    assert history[-1]["role"] == "assistant"
+    assert history[-1]["text"] == body["answer"]
+
+
+def test_rag_chat_rejection_logs_request_body(indexed, caplog):
+    """v1.17.13: a rejected chat payload logs its body (uvicorn's access
+    log only records the 422 status)."""
+    client = TestClient(app)
+    resp = client.post(f"/api/v1/rag/chat/{indexed}", json={"role": "user", "text": 42})
+    assert resp.status_code == 422
+    assert any(
+        "RAG payload rejected" in record.message and "42" in record.message
+        for record in caplog.records
+    )
+
+
 # ── v1.17.6: damaged-index detection, health, reset ────────────────────
 
 

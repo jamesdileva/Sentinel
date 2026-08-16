@@ -20,7 +20,11 @@ from app.testers import Tester
 from app.testers._helpers import TesterAssertionError, TesterContext, TesterEnvError
 
 BACKEND_CMD = '"{}" -m uvicorn backend.main:app'
-ELECTRON_CMD = "cd renderer && npm run start"
+# v1.17.13 live-verify fix: `npm run start` also starts the repo's own
+# backend/run.py on :8000 — the tester's backend already holds that port, so
+# run.py exits and `concurrently -k` kills the whole tree (Electron included).
+# Launch only the renderer; the tester's own backend serves it.
+ELECTRON_CMD = "cd renderer && npm run electron-dev"
 PYTEST_CMD = 'cd backend && "{}" -m pytest'
 PORT = "http://127.0.0.1:8000"
 
@@ -42,7 +46,8 @@ def run(ctx: TesterContext) -> None:
     ctx.checkpoint("mock topic generation verified")
 
     ctx.launch(ELECTRON_CMD)
-    ctx.wait(15)
+    # Cold Electron boot: tsc electron build + vite dev server + wait-on + spawn.
+    ctx.wait(45)
     ctx.screenshot("Electron window after launch")
     # The renderer's `/api/pipeline/jobs/{id}` calls 404 against the server's
     # singular `/api/pipeline/job/{id}` route (known bug, client.ts:308).

@@ -8,6 +8,7 @@ every returned answer carries model + timestamp provenance.
 """
 
 import datetime
+import re
 from pathlib import Path
 from typing import Any, Callable
 
@@ -61,6 +62,58 @@ _SUMMARY_COMMITS = 25
 _ALL_PROJECT_CAP = 24
 _QUERY_CONTEXT_BUDGET = 48_000
 
+# Deterministic-first answers (v1.17.13, Rule 3): a project-scoped overview
+# question ("what is this project about?") is answered straight from the
+# stored architecture summary — no embedding, no retrieval, no fresh
+# generation (the summary was AI-generated once at index time with
+# provenance). `_SPECIFIC_MARKERS` excludes how/where/why/detail questions,
+# which still take the full pipeline.
+_OVERVIEW_MARKERS = (
+    "what is this project",
+    "what does this project do",
+    "what does this project",
+    "what is the project",
+    "about this project",
+    "project about",
+    "tell me about this project",
+    "summarize this project",
+    "overview of this project",
+    "summary of this project",
+    "give me an overview",
+    "what is it about",
+    "overview",
+)
+_SPECIFIC_MARKERS = (
+    "how do",
+    "how to",
+    "where is",
+    "where are",
+    "which file",
+    "which function",
+    "what function",
+    "why does",
+    "why is",
+    "error",
+    "bug",
+    "test",
+    "build",
+    "run",
+    "install",
+    "api endpoint",
+    "database",
+    "config",
+    "schema",
+)
+
+# Stored summaries may open with "Here is a concise architecture summary of
+# the X project...:" — a fine document, a strange chat answer. Stripped
+# deterministically; the rest is returned verbatim (transparency over
+# rewriting, Rule 3).
+_SUMMARY_PREAMBLE = re.compile(
+    r"^Here (?:is|'s|are) (?:a |the )?concise architecture summary[^:]*:\s*\n+",
+    re.IGNORECASE,
+)
+
 _PROMPTS_DIR = Path(__file__).resolve().parent.parent / "data" / "prompts"
 
 Embedder = Callable[[str], list[float]]
@@ -111,6 +164,21 @@ def _tokens_per_second(tokens: int, duration_ns: int) -> float | None:
     if not tokens or not duration_ns:
         return None
     return round(tokens / (duration_ns / 1_000_000_000), 1)
+
+
+def _is_overview_question(question: str) -> bool:
+    """Deterministic intent gate for the summary tier (v1.17.13).
+
+    True only for short, single-project overview questions; specific
+    how/where/why/detail questions fall through to the full pipeline. No AI
+    routing — plain substring rules (Rule 3).
+    """
+    text = (question or "").strip().lower()
+    if not text or len(text) > 120:
+        return False
+    if any(marker in text for marker in _SPECIFIC_MARKERS):
+        return False
+    return any(marker in text for marker in _OVERVIEW_MARKERS)
 
 
 class RagService:
@@ -563,7 +631,14 @@ class RagService:
         can contribute its summary ("what do these projects do?" no longer
         stops at 5), combined hits are ranked by true distance (no collection
         bias — chunked docs can outrank a generic summary), and the context
-        is budgeted to fit num_ctx."""
+        is budgeted to fit num_ctx.
+        v1.17.13: a project-scoped overview question is answered
+        deterministically from the stored architecture summary (provenance
+        preserved, no generation) when one exists."""
+        if project_id and _is_overview_question(question):
+            summary = self._stored_summary(project_id)
+            if summary is not None:
+                return self._summary_response(summary)
         if project_id:
             sources = self.search(question, project_id=project_id, top_k=top_k)
         else:
@@ -633,6 +708,35 @@ class RagService:
         return kept
 
     # --- internals -------------------------------------------------------
+
+    def _stored_summary(self, project_id: str) -> KnowledgeSummary | None:
+        """Newest architecture-summary row for a project, or None."""
+        rows = KnowledgeSummaryRepository(self.session).get_by_project(
+            project_id, summary_type="architecture"
+        )
+        return rows[0] if rows else None
+
+    def _summary_response(self, summary: KnowledgeSummary) -> RagResponse:
+        """Deterministic-first answer (v1.17.13): the stored architecture
+        summary returned as-is (preamble stripped) with its own provenance —
+        no embedding, no retrieval, no fresh generation (Rule 3)."""
+        answer = _SUMMARY_PREAMBLE.sub("", summary.content or "").strip()
+        return RagResponse(
+            answer=answer,
+            sources=[
+                RagResult(
+                    content=answer,
+                    source="project_summaries",
+                    project_id=summary.project_id,
+                    file_path=None,
+                    distance=0.0,
+                )
+            ],
+            model=summary.model or settings.ollama_model,
+            generated_at=summary.generated_at
+            or datetime.datetime.now(datetime.timezone.utc),
+            confidence=1.0,
+        )
 
     def _generate_with_metrics(
         self,

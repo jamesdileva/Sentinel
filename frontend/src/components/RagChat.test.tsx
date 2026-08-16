@@ -88,7 +88,7 @@ describe("RagChat", () => {
     ).toBeInTheDocument();
   });
 
-  it("persists all-scope exchanges into the __all__ room", async () => {
+  it("persists the user question into the __all__ room; the answer is saved server-side", async () => {
     mockRagQuery.mockResolvedValue(response());
 
     const user = userEvent.setup();
@@ -99,6 +99,7 @@ describe("RagChat", () => {
     await user.click(screen.getByRole("button", { name: "Ask" }));
     await screen.findByText("The project uses FastAPI.");
 
+    expect(mockSaveChatMessage).toHaveBeenCalledTimes(1);
     expect(mockSaveChatMessage).toHaveBeenCalledWith("__all__", {
       role: "user",
       text: "Hi",
@@ -107,17 +108,9 @@ describe("RagChat", () => {
       confidence: null,
       error: null,
     });
-    expect(mockSaveChatMessage).toHaveBeenCalledWith(
-      "__all__",
-      expect.objectContaining({
-        role: "assistant",
-        text: "The project uses FastAPI.",
-        sources: ["backend/app/main.py"],
-      }),
-    );
   });
 
-  it("persists each user question and assistant answer", async () => {
+  it("persists the user question; the answer is saved server-side", async () => {
     mockRagQuery.mockResolvedValue(response());
 
     const user = userEvent.setup();
@@ -131,6 +124,7 @@ describe("RagChat", () => {
     await user.click(screen.getByRole("button", { name: "Ask" }));
     await screen.findByText("The project uses FastAPI.");
 
+    expect(mockSaveChatMessage).toHaveBeenCalledTimes(1);
     expect(mockSaveChatMessage).toHaveBeenCalledWith("p1", {
       role: "user",
       text: "What does this do?",
@@ -139,16 +133,6 @@ describe("RagChat", () => {
       confidence: null,
       error: null,
     });
-    expect(mockSaveChatMessage).toHaveBeenCalledWith(
-      "p1",
-      expect.objectContaining({
-        role: "assistant",
-        text: "The project uses FastAPI.",
-        sources: ["backend/app/main.py"],
-        model: "gemma2",
-        confidence: 0.97,
-      }),
-    );
   });
 
   it("streams a question and answer exchange", async () => {

@@ -113,7 +113,9 @@ export default function RagChat({ projectId }: RagChatProps) {
           confidence: response.confidence,
         } as ChatMessageData;
         setMessages((current) => [...current, answer]);
-        persist("assistant", response.answer, answer);
+        // v1.17.13: the backend persists the grounded answer itself
+        // (/rag/query) — a tab reload during the long local generation
+        // can no longer lose it, so the client must not double-save.
       } catch (err) {
         const answer = {
           id,

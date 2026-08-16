@@ -59,11 +59,30 @@ def rag_search(
 def rag_query(
     payload: RagQueryRequest,
     rag: RagService = Depends(get_rag_service),
+    session: Session = Depends(get_session),
 ) -> RagResponse:
-    """Ask a question; answer is grounded in retrieved context with sources."""
-    return rag.query(
+    """Ask a question; answer is grounded in retrieved context with sources.
+
+    v1.17.13: the assistant reply is persisted server-side into the project's
+    chat room (`__all__` for the all-scope room) before the response is
+    returned — a tab reload during the long local generation can no longer
+    lose the answer. The client still saves the question itself."""
+    response = rag.query(
         payload.question, project_id=payload.project_id, top_k=payload.top_k
     )
+    session.add(
+        ChatMessage(
+            project_id=payload.project_id or "__all__",
+            role="assistant",
+            text=response.answer,
+            sources=[s.file_path or s.source for s in response.sources],
+            model=response.model,
+            confidence=response.confidence,
+            error=None,
+        )
+    )
+    session.commit()
+    return response
 
 
 @router.post("/rag/index", status_code=202, response_model=JobEnvelope)
@@ -192,8 +211,9 @@ def chat_save(
 ) -> ChatMessage:
     """Persist one exchange of the project chat room — or of the `__all__`
     all-projects room (v1.17.6.6). The client saves the question
-    (`role="user"`) and the grounded answer (`role="assistant"`) exactly as
-    produced by /rag/query."""
+    (`role="user"`) and error replies itself; the grounded answer
+    (`role="assistant"`) is persisted by /rag/query since v1.17.13 so a tab
+    reload during generation cannot lose it."""
     if project_id != "__all__":
         _project_or_404(project_id, session)
     message = ChatMessage(
