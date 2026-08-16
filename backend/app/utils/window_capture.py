@@ -13,10 +13,11 @@ is re-spawned by its venv python into the base interpreter, so the window
 process's own exe lives under AppData, not the project). The largest
 matching window wins (Electron apps can own several).
 
-Known honest limitation: the capture is a screen crop, so a window occluded
-by other windows captures whatever is stacked above it. PrintWindow would
-capture behind windows but frequently returns black frames for GPU-rendered
-windows (Electron), so it is intentionally not used.
+Window content is rendered with PrintWindow (PW_RENDERFULLCONTENT), so an
+occluded window is captured as its own content, not whatever is stacked
+above it — no focus stealing, no z-order changes (Rule 2). Known honest
+limitation: some GPU-composited windows render a blank black frame; the
+blank check rejects those and the caller falls back to a screen crop.
 """
 
 from __future__ import annotations
@@ -25,11 +26,17 @@ import ctypes
 import ctypes.wintypes
 from pathlib import Path
 
+from PIL import Image
+
 user32 = ctypes.windll.user32
 kernel32 = ctypes.windll.kernel32
+gdi32 = ctypes.windll.gdi32
 
 PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 MAX_ANCESTOR_DEPTH = 6
+PW_RENDERFULLCONTENT = 0x00000002
+DIB_RGB_COLORS = 0
+BLANK_FRAME_THRESHOLD = 0.99
 
 _WindowRect = tuple[int, int, int, int]
 
@@ -52,6 +59,29 @@ class _PROCESSENTRY32W(ctypes.Structure):
         ("pcPriClassBase", ctypes.c_long),
         ("dwFlags", ctypes.wintypes.DWORD),
         ("szExeFile", ctypes.c_wchar * 260),
+    ]
+
+
+class _BITMAPINFOHEADER(ctypes.Structure):
+    _fields_ = [
+        ("biSize", ctypes.wintypes.DWORD),
+        ("biWidth", ctypes.c_long),
+        ("biHeight", ctypes.c_long),
+        ("biPlanes", ctypes.wintypes.WORD),
+        ("biBitCount", ctypes.wintypes.WORD),
+        ("biCompression", ctypes.wintypes.DWORD),
+        ("biSizeImage", ctypes.wintypes.DWORD),
+        ("biXPelsPerMeter", ctypes.c_long),
+        ("biYPelsPerMeter", ctypes.c_long),
+        ("biClrUsed", ctypes.wintypes.DWORD),
+        ("biClrImportant", ctypes.wintypes.DWORD),
+    ]
+
+
+class _BITMAPINFO(ctypes.Structure):
+    _fields_ = [
+        ("bmiHeader", _BITMAPINFOHEADER),
+        ("bmiColors", ctypes.wintypes.DWORD * 3),
     ]
 
 
@@ -104,6 +134,42 @@ kernel32.Process32NextW.argtypes = [
     ctypes.POINTER(_PROCESSENTRY32W),
 ]
 kernel32.Process32NextW.restype = ctypes.c_bool
+
+user32.GetWindowDC.argtypes = [ctypes.wintypes.HWND]
+user32.GetWindowDC.restype = ctypes.wintypes.HDC
+user32.ReleaseDC.argtypes = [ctypes.wintypes.HWND, ctypes.wintypes.HDC]
+user32.ReleaseDC.restype = ctypes.c_int
+user32.PrintWindow.argtypes = [
+    ctypes.wintypes.HWND,
+    ctypes.wintypes.HDC,
+    ctypes.wintypes.UINT,
+]
+user32.PrintWindow.restype = ctypes.c_bool
+
+gdi32.CreateCompatibleDC.argtypes = [ctypes.wintypes.HDC]
+gdi32.CreateCompatibleDC.restype = ctypes.wintypes.HDC
+gdi32.DeleteDC.argtypes = [ctypes.wintypes.HDC]
+gdi32.DeleteDC.restype = ctypes.c_bool
+gdi32.CreateCompatibleBitmap.argtypes = [
+    ctypes.wintypes.HDC,
+    ctypes.c_int,
+    ctypes.c_int,
+]
+gdi32.CreateCompatibleBitmap.restype = ctypes.wintypes.HBITMAP
+gdi32.SelectObject.argtypes = [ctypes.wintypes.HDC, ctypes.wintypes.HGDIOBJ]
+gdi32.SelectObject.restype = ctypes.wintypes.HGDIOBJ
+gdi32.DeleteObject.argtypes = [ctypes.wintypes.HGDIOBJ]
+gdi32.DeleteObject.restype = ctypes.c_bool
+gdi32.GetDIBits.argtypes = [
+    ctypes.wintypes.HDC,
+    ctypes.wintypes.HBITMAP,
+    ctypes.wintypes.UINT,
+    ctypes.wintypes.UINT,
+    ctypes.c_void_p,
+    ctypes.POINTER(_BITMAPINFO),
+    ctypes.wintypes.UINT,
+]
+gdi32.GetDIBits.restype = ctypes.c_int
 
 
 def _process_exe_path(pid: int) -> str | None:
@@ -183,14 +249,70 @@ def _descends_from(
     return False
 
 
-def find_project_window(project_path: str) -> _WindowRect | None:
-    """Bounding rect of the largest visible, non-minimized top-level window
+def _is_blank(image: Image.Image) -> bool:
+    """True when the render is effectively all black (blank-frame failure)."""
+    histogram = image.convert("L").histogram()
+    total = sum(histogram)
+    if total == 0:
+        return True
+    return histogram[0] / total > BLANK_FRAME_THRESHOLD
+
+
+def capture_window_content(hwnd: int, rect: _WindowRect) -> Image.Image | None:
+    """Render the window's own content via PrintWindow (PW_RENDERFULLCONTENT),
+    even when the window is occluded. Returns None when the render fails or
+    comes back blank (some GPU-composited windows) — the caller then falls
+    back to a screen crop of the rect."""
+    left, top, right, bottom = rect
+    width = max(1, right - left)
+    height = max(1, bottom - top)
+    hdc = user32.GetWindowDC(hwnd)
+    if not hdc:
+        return None
+    mem_dc = gdi32.CreateCompatibleDC(hdc)
+    hbitmap = gdi32.CreateCompatibleBitmap(hdc, width, height)
+    old_bitmap = gdi32.SelectObject(mem_dc, hbitmap)
+    try:
+        if not user32.PrintWindow(hwnd, mem_dc, PW_RENDERFULLCONTENT):
+            return None
+        info = _BITMAPINFO()
+        info.bmiHeader.biSize = ctypes.sizeof(_BITMAPINFOHEADER)
+        info.bmiHeader.biWidth = width
+        info.bmiHeader.biHeight = -height  # top-down rows
+        info.bmiHeader.biPlanes = 1
+        info.bmiHeader.biBitCount = 32
+        info.bmiHeader.biCompression = 0  # BI_RGB
+        buffer = ctypes.create_string_buffer(width * height * 4)
+        got = gdi32.GetDIBits(
+            mem_dc,
+            hbitmap,
+            0,
+            height,
+            buffer,
+            ctypes.byref(info),
+            DIB_RGB_COLORS,
+        )
+        if not got:
+            return None
+        image = Image.frombytes("RGB", (width, height), buffer.raw, "raw", "BGRX")
+        if _is_blank(image):
+            return None
+        return image
+    finally:
+        gdi32.SelectObject(mem_dc, old_bitmap)
+        gdi32.DeleteObject(hbitmap)
+        gdi32.DeleteDC(mem_dc)
+        user32.ReleaseDC(hwnd, hdc)
+
+
+def find_project_window(project_path: str) -> tuple[int, _WindowRect] | None:
+    """(hwnd, rect) of the largest visible, non-minimized top-level window
     whose process (or bounded ancestor chain) executable lives under
     `project_path` (casefold prefix). Returns None when no such window exists
     (headless app, app closed)."""
     root = str(Path(project_path).resolve()).casefold()
     tree = _process_snapshot()
-    windows: list[tuple[int, _WindowRect]] = []
+    windows: list[tuple[int, int, _WindowRect]] = []
 
     @_WNDENUMPROC
     def _enum(hwnd: int, _lparam: int) -> bool:
@@ -201,11 +323,11 @@ def find_project_window(project_path: str) -> _WindowRect | None:
         if _descends_from(pid.value, root, tree):
             rect = _window_rect(hwnd)
             if rect and _area(rect) > 0:
-                windows.append((_area(rect), rect))
+                windows.append((_area(rect), hwnd, rect))
         return True
 
     user32.EnumWindows(_enum, 0)
     if not windows:
         return None
     windows.sort(reverse=True)
-    return windows[0][1]
+    return windows[0][1], windows[0][2]

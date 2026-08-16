@@ -38,7 +38,11 @@ from app.repositories import (
     SessionScreenshotRepository,
     TriageAnalysisRepository,
 )
-from app.utils.window_capture import _virtual_screen, find_project_window
+from app.utils.window_capture import (
+    _virtual_screen,
+    capture_window_content,
+    find_project_window,
+)
 
 logger = get_logger(__name__)
 
@@ -47,6 +51,19 @@ MARKER_CHECKPOINT = "[sentinel] checkpoint:"
 MARKER_END = "[sentinel] Session ended"
 
 THUMB_SIZE = (90, 60)
+
+
+def _clamp_rect(rect: tuple[int, int, int, int]) -> tuple[int, int, int, int] | None:
+    """Window rect clamped to the virtual screen, or None when disjoint."""
+    left, top, right, bottom = rect
+    virtual = _virtual_screen()
+    left = max(left, virtual[0])
+    top = max(top, virtual[1])
+    right = min(right, virtual[2])
+    bottom = min(bottom, virtual[3])
+    if right <= left or bottom <= top:
+        return None
+    return left, top, right, bottom
 
 
 def _slug(name: str) -> str:
@@ -201,17 +218,35 @@ class AppSessionService:
         """Window-targeted grab → data/screenshots/<slug>/<iso>.png + thumb.
 
         v1.17.12.3: when the app under test owns a visible window (matched by
-        the window process's executable path under the project dir), the grab
-        is cropped to that window's rect, clamped to the virtual screen.
-        Headless apps, closed/minimized windows, or non-Windows hosts fall
-        back to the full-screen grab.
+        the window process's executable path under the project dir), the
+        window's own content is rendered via PrintWindow (PW_RENDERFULLCONTENT)
+        — occluded windows capture their own content, not what's stacked above
+        them. Blank frames (some GPU-composited windows) and rects outside the
+        virtual screen fall back to a screen crop of the clamped rect; headless
+        apps, closed/minimized windows, or non-Windows hosts fall back to the
+        full-screen grab.
         """
         app_session = self._get(session_id)
         project = ProjectRepository(self.session).get(app_session.project_id)
         shot_dir = _screenshots_dir() / _slug(project.name)
         shot_dir.mkdir(parents=True, exist_ok=True)
-        bbox = self._window_bbox(project.path)
-        image = ImageGrab.grab(bbox=bbox) if bbox else ImageGrab.grab()
+        method = "full-screen"
+        window = find_project_window(project.path)
+        if window is not None:
+            hwnd, rect = window
+            bbox = _clamp_rect(rect)
+            if bbox is not None:
+                rendered = capture_window_content(hwnd, bbox)
+                if rendered is not None:
+                    image = rendered
+                    method = "window-render"
+                else:
+                    image = ImageGrab.grab(bbox=bbox)
+                    method = "window-crop"
+            else:
+                image = ImageGrab.grab()
+        else:
+            image = ImageGrab.grab()
         stem = datetime.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
         full_path = shot_dir / f"{stem}.png"
         thumb_path = shot_dir / f"{stem}.thumb.png"
@@ -231,25 +266,9 @@ class AppSessionService:
             "Captured screenshot %s for session %s (%s)",
             full_path,
             session_id,
-            "window" if bbox else "full-screen",
+            method,
         )
         return screenshot
-
-    @staticmethod
-    def _window_bbox(project_path: str) -> tuple[int, int, int, int] | None:
-        """Project-window rect clamped to the virtual screen, or None."""
-        rect = find_project_window(project_path)
-        if rect is None:
-            return None
-        left, top, right, bottom = rect
-        virtual = _virtual_screen()
-        left = max(left, virtual[0])
-        top = max(top, virtual[1])
-        right = min(right, virtual[2])
-        bottom = min(bottom, virtual[3])
-        if right <= left or bottom <= top:
-            return None
-        return left, top, right, bottom
 
     # ---------------------------------------------------------------- queries
 

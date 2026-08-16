@@ -1,6 +1,8 @@
 """Session recorder tests (later.md Tier 1 + Tier 4)."""
 
+import ctypes
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from PIL import Image
@@ -171,12 +173,36 @@ def test_capture_saves_png_and_thumbnail(tmp_db, project):
             assert img.size[1] <= svc.THUMB_SIZE[1]
 
 
-def test_capture_uses_window_bbox_when_project_window_exists(
+def test_capture_renders_window_content_when_window_exists(
     tmp_db, project, monkeypatch, _fake_grabber
 ):
-    """v1.17.12.3: a window owned by the app under test crops the grab."""
-    monkeypatch.setattr(svc, "find_project_window", lambda path: (10, 20, 210, 120))
+    """v1.17.12.3: a window owned by the app under test is rendered via
+    PrintWindow — the screen grab is never taken."""
+    monkeypatch.setattr(
+        svc, "find_project_window", lambda path: (12345, (10, 20, 210, 120))
+    )
     monkeypatch.setattr(svc, "_virtual_screen", lambda: (0, 0, 320, 200))
+    monkeypatch.setattr(
+        svc,
+        "capture_window_content",
+        lambda hwnd, rect: Image.new("RGB", (200, 100), (9, 8, 7)),
+    )
+    with DbSession(get_engine()) as db:
+        app_session = _session(db, project.id)
+        AppSessionService(db).capture(app_session.id)
+        assert _fake_grabber == []
+
+
+def test_capture_crops_when_window_render_blank(
+    tmp_db, project, monkeypatch, _fake_grabber
+):
+    """A blank PrintWindow frame (GPU-composited window) falls back to a
+    screen crop of the clamped rect."""
+    monkeypatch.setattr(
+        svc, "find_project_window", lambda path: (12345, (10, 20, 210, 120))
+    )
+    monkeypatch.setattr(svc, "_virtual_screen", lambda: (0, 0, 320, 200))
+    monkeypatch.setattr(svc, "capture_window_content", lambda hwnd, rect: None)
     with DbSession(get_engine()) as db:
         app_session = _session(db, project.id)
         AppSessionService(db).capture(app_session.id)
@@ -192,14 +218,122 @@ def test_capture_falls_back_to_full_screen_without_window(
         assert _fake_grabber[-1] is None
 
 
-def test_window_bbox_clamps_to_virtual_screen(tmp_db, monkeypatch):
+def test_clamp_rect_limits_to_virtual_screen(tmp_db, monkeypatch):
     monkeypatch.setattr(svc, "_virtual_screen", lambda: (0, 0, 320, 200))
-    service = AppSessionService.__new__(AppSessionService)
-    assert service._window_bbox("C:\\projects\\demo-app") is None  # no window
-    monkeypatch.setattr(svc, "find_project_window", lambda path: (-50, -20, 100, 60))
-    assert service._window_bbox("C:\\projects\\demo-app") == (0, 0, 100, 60)
-    monkeypatch.setattr(svc, "find_project_window", lambda path: (400, 300, 500, 400))
-    assert service._window_bbox("C:\\projects\\demo-app") is None
+    assert svc._clamp_rect((10, 20, 210, 120)) == (10, 20, 210, 120)
+    assert svc._clamp_rect((-50, -20, 100, 60)) == (0, 0, 100, 60)
+    assert svc._clamp_rect((400, 300, 500, 400)) is None
+
+
+def test_is_blank_detects_black_frame():
+    black = Image.new("RGB", (100, 80), (0, 0, 0))
+    assert window_capture._is_blank(black)
+    nearly_black = Image.new("RGB", (100, 80), (0, 0, 0))
+    for x in range(0, 100, 10):
+        for y in range(0, 80, 10):
+            nearly_black.putpixel((x, y), (255, 255, 255))
+    assert not window_capture._is_blank(nearly_black)
+    bright = Image.new("RGB", (100, 80), (200, 200, 200))
+    assert not window_capture._is_blank(bright)
+
+
+def test_capture_window_content_returns_none_when_dc_fails(monkeypatch):
+    """GetWindowDC failure -> None (caller crops instead)."""
+    monkeypatch.setattr(
+        window_capture,
+        "user32",
+        SimpleNamespace(GetWindowDC=lambda hwnd: 0, ReleaseDC=lambda h, d: 1),
+    )
+    assert window_capture.capture_window_content(1, (0, 0, 10, 10)) is None
+
+
+def test_capture_window_content_returns_none_when_print_fails(monkeypatch):
+    """PrintWindow failure -> None (caller crops instead)."""
+    monkeypatch.setattr(
+        window_capture,
+        "user32",
+        SimpleNamespace(
+            GetWindowDC=lambda hwnd: 100,
+            PrintWindow=lambda h, d, f: 0,
+            ReleaseDC=lambda h, d: 1,
+        ),
+    )
+    monkeypatch.setattr(
+        window_capture,
+        "gdi32",
+        SimpleNamespace(
+            CreateCompatibleDC=lambda dc: 200,
+            CreateCompatibleBitmap=lambda dc, w, h: 300,
+            SelectObject=lambda dc, obj: 400,
+            DeleteObject=lambda obj: True,
+            DeleteDC=lambda dc: True,
+        ),
+    )
+    assert window_capture.capture_window_content(1, (0, 0, 10, 10)) is None
+
+
+def _fake_gdi_render(monkeypatch, fill):
+    """Fake user32/gdi32 where GetDIBits fills the pixel buffer with `fill`."""
+
+    def get_dibits(mem_dc, hbitmap, start, height, buf, info, usage):
+        header = ctypes.cast(
+            info, ctypes.POINTER(window_capture._BITMAPINFOHEADER)
+        ).contents
+        width, height = header.biWidth, -header.biHeight
+        ctypes.memset(buf, fill, width * height * 4)
+        return height
+
+    monkeypatch.setattr(
+        window_capture,
+        "user32",
+        SimpleNamespace(
+            GetWindowDC=lambda hwnd: 100,
+            PrintWindow=lambda h, d, f: 1,
+            ReleaseDC=lambda h, d: 1,
+        ),
+    )
+    monkeypatch.setattr(
+        window_capture,
+        "gdi32",
+        SimpleNamespace(
+            CreateCompatibleDC=lambda dc: 200,
+            CreateCompatibleBitmap=lambda dc, w, h: 300,
+            SelectObject=lambda dc, obj: 400,
+            DeleteObject=lambda obj: True,
+            DeleteDC=lambda dc: True,
+            GetDIBits=get_dibits,
+        ),
+    )
+
+
+def test_capture_window_content_rejects_blank_frame(monkeypatch):
+    _fake_gdi_render(monkeypatch, fill=0x00)
+    assert window_capture.capture_window_content(1, (0, 0, 10, 10)) is None
+
+
+def test_capture_window_content_renders_non_blank(monkeypatch):
+    _fake_gdi_render(monkeypatch, fill=0x7F)
+    image = window_capture.capture_window_content(1, (0, 0, 10, 10))
+    assert image is not None
+    assert image.size == (10, 10)
+
+
+def test_find_project_window_handles_snapshot_failure(monkeypatch):
+    """Invalid Toolhelp handle -> empty tree -> no window (full-screen)."""
+    monkeypatch.setattr(
+        window_capture,
+        "kernel32",
+        SimpleNamespace(
+            CreateToolhelp32Snapshot=lambda a, b: ctypes.c_void_p(-1).value
+        ),
+    )
+    assert window_capture.find_project_window(r"C:\projects\demo-app") is None
+
+
+def test_virtual_screen_returns_bounds():
+    left, top, right, bottom = window_capture._virtual_screen()
+    assert right > left
+    assert bottom > top
 
 
 def test_descends_from_matches_direct_process(tmp_db, monkeypatch):

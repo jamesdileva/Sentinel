@@ -73,6 +73,8 @@ def _fake_grabber(monkeypatch):
             return image.copy()
 
     monkeypatch.setattr(svc, "ImageGrab", Grabber)
+    # Hermetic: never resolve real windows on the host machine.
+    monkeypatch.setattr(svc, "find_project_window", lambda path: None)
 
 
 def _log_path(project_name: str) -> Path:
