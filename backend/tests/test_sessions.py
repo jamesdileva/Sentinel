@@ -13,6 +13,7 @@ from app.db.connection import get_engine
 from app.db.models import AppSession, Project, SessionScreenshot, SessionStatus
 from app.services import app_sessions as svc
 from app.services.app_sessions import AppSessionService
+from app.utils import window_capture
 
 
 @pytest.fixture()
@@ -199,6 +200,40 @@ def test_window_bbox_clamps_to_virtual_screen(tmp_db, monkeypatch):
     assert service._window_bbox("C:\\projects\\demo-app") == (0, 0, 100, 60)
     monkeypatch.setattr(svc, "find_project_window", lambda path: (400, 300, 500, 400))
     assert service._window_bbox("C:\\projects\\demo-app") is None
+
+
+def test_descends_from_matches_direct_process(tmp_db, monkeypatch):
+    """v1.17.12.3: the window's own process under the project dir matches."""
+    tree = {42: (41, r"C:\projects\demo-app\.venv\Scripts\python.exe")}
+    assert window_capture._descends_from(42, r"C:\projects\demo-app", tree)
+    assert not window_capture._descends_from(42, r"C:\projects\other", tree)
+
+
+def test_descends_from_matches_re_executed_ancestor(tmp_db, monkeypatch):
+    """AG GUI is re-spawned by its venv python into the base interpreter, so
+    the window's process exe lives outside the project — the ancestor chain
+    (venv python under the project) must still match."""
+    tree = {
+        5: (6, r"C:\Users\j\AppData\Local\Programs\Python\Python311\python.exe"),
+        6: (7, r"C:\projects\demo-app\.venv_sf3d\Scripts\python.exe"),
+        7: (8, r"C:\Windows\system32\cmd.exe"),
+        8: (0, r"C:\Windows\explorer.exe"),
+    }
+    assert window_capture._descends_from(5, r"C:\projects\demo-app", tree)
+    assert not window_capture._descends_from(5, r"C:\projects\other-app", tree)
+
+
+def test_descends_from_bounded_depth(tmp_db, monkeypatch):
+    """An unrelated chain (python -> cmd -> explorer -> ...) must not match."""
+    tree = {
+        5: (4, r"C:\Users\j\AppData\Local\Programs\Python\Python311\python.exe"),
+        4: (3, r"C:\Windows\system32\cmd.exe"),
+        3: (2, r"C:\Windows\explorer.exe"),
+        2: (1, r"C:\Windows\System32\svchost.exe"),
+        1: (0, r"C:\Windows\System32\wininit.exe"),
+        0: (-1, r"C:\Windows\System32\ntoskrnl.exe"),
+    }
+    assert not window_capture._descends_from(5, r"C:\projects\demo-app", tree)
 
 
 def test_end_auto_captures_screenshot(tmp_db, project):
