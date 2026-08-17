@@ -13,11 +13,23 @@ A run auto-creates an AppSession ("Tester: <name>"), executes the steps
 - investigate: TesterEnvError / TesterTimeoutError (launch, port, env)
 Screenshots: the auto-capture at end always fires; testers may capture
 more. Runs are always user-initiated (Rule 2) and never call AI (Rule 3).
+
+v1.17.13.5: generic app presence. Before the tester runs, the packaged
+desktop app (win-unpacked/tauri launcher under the project dir) is
+auto-launched when one exists and `Tester.auto_launch` allows it — the
+window (when it appears) is captured with a labeled checkpoint, so desktop
+apps record their real UI with no per-tester code; a missing launcher or
+window is an honest skip, never a failure. After the tester runs, a
+browser-served app that declared `web_url` but registered no screenshots
+gets one headless render of it auto-registered.
 """
+
+import time
 
 from app.core.logging import get_logger
 from app.services.app_sessions import AppSessionService, _slug
 from app.services.build_runner import BuildRunner
+from app.services.launcher_detect import find_packaged_launcher
 from app.testers import DEFAULT_SMOKE, TESTERS, Tester
 from app.testers._helpers import (
     TesterAssertionError,
@@ -25,8 +37,11 @@ from app.testers._helpers import (
     TesterEnvError,
     TesterTimeoutError,
 )
+from app.utils.window_capture import find_project_window
 
 logger = get_logger(__name__)
+
+WINDOW_WAIT_S = 20
 
 
 class TesterUnavailableError(Exception):
@@ -72,7 +87,9 @@ class TesterRunner:
         )
         ctx = TesterContext(project, app_session.id, service)
         try:
+            self._auto_launch(project, tester, ctx, service, app_session.id)
             tester.run(ctx)
+            self._auto_render(project, tester, ctx, service, app_session.id)
             outcome = f"All {ctx.steps} step(s) passed"
             status = "passed"
         except TesterAssertionError as exc:
@@ -88,3 +105,56 @@ class TesterRunner:
         service.end(app_session.id, outcome, status)
         logger.info("Tester %r for %s -> %s", tester.name, project.name, status)
         return app_session
+
+    def _auto_launch(
+        self, project, tester: Tester, ctx: TesterContext, service, session_id: str
+    ) -> None:
+        """v1.17.13.5: launch the project's packaged desktop app (when one
+        exists) before the tester runs, and capture its window once it
+        appears — desktop apps record their real UI with no per-tester code.
+        Non-fatal by design: no launcher or no window is an honest skip."""
+        if not tester.auto_launch:
+            return
+        launcher = find_packaged_launcher(project.path)
+        if launcher is None:
+            logger.info("Auto-launch for %s: no packaged app found", project.name)
+            return
+        launched, detail = BuildRunner._launch_app(project, f'"{launcher}"')
+        if not launched:
+            logger.warning("Auto-launch for %s failed: %s", project.name, detail)
+            return
+        ctx.checkpoint(f"auto-launched packaged app: {launcher.name}")
+        window = None
+        deadline = time.time() + WINDOW_WAIT_S
+        while time.time() < deadline:
+            window = find_project_window(project.path)
+            if window is not None:
+                break
+            time.sleep(1)
+        if window is None:
+            logger.info(
+                "Auto-launch for %s: no window within %ss (app may be "
+                "headless or failed to open)",
+                project.name,
+                WINDOW_WAIT_S,
+            )
+            return
+        checkpoint = service.checkpoint(session_id, "app window after auto-launch")
+        service.capture(session_id, checkpoint.id)
+
+    def _auto_render(
+        self, project, tester: Tester, ctx: TesterContext, service, session_id: str
+    ) -> None:
+        """v1.17.13.5: a browser-served app that declared `web_url` but
+        registered no screenshots gets one headless render of it — every run
+        records a visual, zero per-tester code (testers that render
+        themselves, like card-game and demake, are deduped)."""
+        if not tester.web_url:
+            return
+        if service.screenshot_repo.by_session(session_id):
+            logger.info(
+                "Auto-render for %s: tester already registered screenshots",
+                project.name,
+            )
+            return
+        ctx.render_and_register(tester.web_url, "headless dashboard render")

@@ -26,6 +26,9 @@ class Tester:
     in the default browser, the servers the stored startup does not cover
     (each launched detached after it), and the ports to free first so the
     fresh instance binds them (restart semantics, no drift orphans).
+    v1.17.13.5: `auto_launch` — the tester runner launches the project's
+    packaged desktop app (win-unpacked/tauri layouts) before the run and
+    captures its window, with no per-tester code; set False to opt out.
     """
 
     name: str
@@ -36,6 +39,7 @@ class Tester:
     web_url: str | None = None  # browser-served app: opened after launch
     extra_launch: tuple[str, ...] = ()  # non-stored servers to start too
     ports: tuple[int, ...] = ()  # app ports freed before launching
+    auto_launch: bool = True  # runner auto-launches the packaged app
 
 
 # Submodules import `Tester` back from this package, so they load only after

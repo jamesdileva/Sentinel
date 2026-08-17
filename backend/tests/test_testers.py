@@ -593,3 +593,285 @@ def test_wft_launch_neutralizes_inherited_pythonpath(tmp_db, project, monkeypatc
         ctx = TesterContext(project, app_session.id, service)
         ctx.launch(wft._backend_command(Path(project.path)), env={"PYTHONPATH": ""})
     assert launched.get("env") == {"PYTHONPATH": ""}
+
+
+# ------------------------------------------------- auto-launch / auto-render
+
+
+def _mk_project_at(db, name, root: Path, startup=""):
+    return _mk_project(db, name=name, path=str(root), startup=startup)
+
+
+def _packaged_app(root: Path, exe_name: str = "WorkFlow Toolkit.exe") -> Path:
+    path = root / "release" / "win-unpacked" / exe_name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"")
+    return path
+
+
+def _fake_launch_recorder():
+    calls = []
+
+    def fake_launch(project, cmd, env=None):
+        calls.append((project.name, cmd))
+        return True, cmd
+
+    return calls, fake_launch
+
+
+def _window_stub():
+    return (12345, (10, 10, 300, 200))
+
+
+def test_runner_auto_launch_launches_and_captures_window(tmp_db, tmp_path, monkeypatch):
+    """v1.17.13.5: a packaged app (release/win-unpacked) is auto-launched
+    before the tester runs; when its window appears, a labeled capture is
+    registered — no per-tester code."""
+    import app.services.app_sessions as svc_mod
+    import app.services.tester_runner as runner_mod
+
+    root = tmp_path / "wft"
+    _packaged_app(root)
+    calls, fake_launch = _fake_launch_recorder()
+    monkeypatch.setattr(
+        runner_mod.BuildRunner, "_launch_app", staticmethod(fake_launch)
+    )
+    # the runner's window poll and the capture's window lookup both resolve
+    monkeypatch.setattr(runner_mod, "find_project_window", lambda path: _window_stub())
+    monkeypatch.setattr(svc_mod, "find_project_window", lambda path: _window_stub())
+
+    class Grabber:
+        @staticmethod
+        def grab(bbox=None):
+            return Image.new("RGB", (320, 200), (10, 20, 30))
+
+    monkeypatch.setattr(svc_mod, "ImageGrab", Grabber)
+
+    tester = Tester(name="Fake wft", description="d", run=_fake_ok, project_slug="x")
+    _register(tester)
+    try:
+        with DbSession(get_engine()) as db:
+            project = _mk_project_at(db, "demo-app", root, startup="npm start")
+            app_session = TesterRunner(db).run(project)
+            db.refresh(app_session)
+            assert app_session.status == SessionStatus.PASSED
+            labels = [
+                c.label
+                for c in db.exec(
+                    select(svc.SessionCheckpoint).where(
+                        svc.SessionCheckpoint.session_id == app_session.id
+                    )
+                ).all()
+            ]
+            shots = db.exec(
+                select(svc.SessionScreenshot).where(
+                    svc.SessionScreenshot.session_id == app_session.id
+                )
+            ).all()
+    finally:
+        _unregister()
+    assert calls == [
+        ("demo-app", f'"{root / "release" / "win-unpacked" / "WorkFlow Toolkit.exe"}"')
+    ]
+    assert "auto-launched packaged app: WorkFlow Toolkit.exe" in labels
+    assert "app window after auto-launch" in labels
+    # the labeled launch capture + the end-of-session auto-capture
+    assert len(shots) == 2
+
+
+def test_runner_auto_launch_no_window_is_honest_skip(tmp_db, tmp_path, monkeypatch):
+    """The app launches but no window appears within the bound — the run
+    still passes and records nothing (never a failure)."""
+    import app.services.tester_runner as runner_mod
+
+    root = tmp_path / "headless"
+    _packaged_app(root, "Headless.exe")
+    calls, fake_launch = _fake_launch_recorder()
+    monkeypatch.setattr(
+        runner_mod.BuildRunner, "_launch_app", staticmethod(fake_launch)
+    )
+    monkeypatch.setattr(runner_mod, "find_project_window", lambda path: None)
+    monkeypatch.setattr(runner_mod, "WINDOW_WAIT_S", 1)
+
+    tester = Tester(
+        name="Fake headless", description="d", run=_fake_ok, project_slug="x"
+    )
+    _register(tester)
+    try:
+        with DbSession(get_engine()) as db:
+            project = _mk_project_at(db, "demo-app", root)
+            app_session = TesterRunner(db).run(project)
+            db.refresh(app_session)
+            assert app_session.status == SessionStatus.PASSED
+    finally:
+        _unregister()
+    assert calls == [
+        ("demo-app", f'"{root / "release" / "win-unpacked" / "Headless.exe"}"')
+    ]
+
+
+def test_runner_auto_launch_opt_out(tmp_db, tmp_path, monkeypatch):
+    import app.services.tester_runner as runner_mod
+
+    root = tmp_path / "optout"
+    _packaged_app(root)
+    calls, fake_launch = _fake_launch_recorder()
+    monkeypatch.setattr(
+        runner_mod.BuildRunner, "_launch_app", staticmethod(fake_launch)
+    )
+    tester = Tester(
+        name="Fake optout",
+        description="d",
+        run=_fake_ok,
+        project_slug="x",
+        auto_launch=False,
+    )
+    _register(tester)
+    try:
+        with DbSession(get_engine()) as db:
+            project = _mk_project_at(db, "demo-app", root)
+            app_session = TesterRunner(db).run(project)
+            db.refresh(app_session)
+            assert app_session.status == SessionStatus.PASSED
+    finally:
+        _unregister()
+    assert calls == []
+
+
+def test_runner_auto_launch_failure_is_not_a_failure(tmp_db, tmp_path, monkeypatch):
+    import app.services.tester_runner as runner_mod
+
+    root = tmp_path / "fail"
+    _packaged_app(root)
+    monkeypatch.setattr(
+        runner_mod.BuildRunner,
+        "_launch_app",
+        staticmethod(lambda project, cmd, env=None: (False, "boom")),
+    )
+    tester = Tester(name="Fake fail", description="d", run=_fake_ok, project_slug="x")
+    _register(tester)
+    try:
+        with DbSession(get_engine()) as db:
+            project = _mk_project_at(db, "demo-app", root)
+            app_session = TesterRunner(db).run(project)
+            db.refresh(app_session)
+            assert app_session.status == SessionStatus.PASSED
+    finally:
+        _unregister()
+
+
+def _fake_render_url(url, tmp_name):
+    """Non-blank frame (distinct gray levels > 8) written to tmp_name."""
+    from PIL import Image
+
+    image = Image.new("L", (64, 64))
+    for x in range(64):
+        for y in range(64):
+            image.putpixel((x, y), (x + y) % 255)
+    image.save(tmp_name, "PNG")
+
+
+def test_runner_auto_render_web_url_when_no_screenshots(tmp_db, project, monkeypatch):
+    """v1.17.13.5: a browser-served tester with web_url that registered no
+    screenshots gets one headless render auto-registered."""
+    from app.testers import _helpers as helpers_mod
+
+    monkeypatch.setattr(
+        helpers_mod, "render_url", lambda url, tmp: _fake_render_url(url, tmp)
+    )
+    tester = Tester(
+        name="Fake browser",
+        description="d",
+        run=_fake_ok,
+        project_slug="x",
+        web_url="http://127.0.0.1:5173",
+    )
+    _register(tester)
+    try:
+        with DbSession(get_engine()) as db:
+            app_session = TesterRunner(db).run(project)
+            db.refresh(app_session)
+            assert app_session.status == SessionStatus.PASSED
+            labels = [
+                c.label
+                for c in db.exec(
+                    select(svc.SessionCheckpoint).where(
+                        svc.SessionCheckpoint.session_id == app_session.id
+                    )
+                ).all()
+            ]
+            shots = db.exec(
+                select(svc.SessionScreenshot).where(
+                    svc.SessionScreenshot.session_id == app_session.id
+                )
+            ).all()
+    finally:
+        _unregister()
+    assert "headless dashboard render" in labels
+    assert len(shots) == 1
+
+
+def test_runner_auto_render_skips_when_tester_rendered(
+    tmp_db, project, tmp_path, monkeypatch
+):
+    """Testers that register their own frames (card-game, demake) are
+    deduped — no second render is forced."""
+    from app.testers import _helpers as helpers_mod
+
+    rendered = []
+    monkeypatch.setattr(
+        helpers_mod,
+        "render_url",
+        lambda url, tmp: rendered.append(url) or _fake_render_url(url, tmp),
+    )
+    selfie = tmp_path / "selfie.png"
+
+    def _tester_renders(ctx):
+        _fake_render_url("", str(selfie))
+        ctx.screenshot_file(str(selfie), "tester's own render")
+
+    tester = Tester(
+        name="Fake selfie",
+        description="d",
+        run=_tester_renders,
+        project_slug="x",
+        web_url="http://127.0.0.1:5173",
+    )
+    _register(tester)
+    try:
+        with DbSession(get_engine()) as db:
+            app_session = TesterRunner(db).run(project)
+            db.refresh(app_session)
+            assert app_session.status == SessionStatus.PASSED
+            shots = db.exec(
+                select(svc.SessionScreenshot).where(
+                    svc.SessionScreenshot.session_id == app_session.id
+                )
+            ).all()
+    finally:
+        _unregister()
+    assert len(shots) == 1
+    assert rendered == []
+
+
+def test_runner_auto_render_without_web_url_does_nothing(tmp_db, project, monkeypatch):
+    from app.testers import _helpers as helpers_mod
+
+    called = []
+    monkeypatch.setattr(
+        helpers_mod,
+        "render_url",
+        lambda url, tmp: called.append(url) or _fake_render_url(url, tmp),
+    )
+    tester = Tester(
+        name="Fake desktop", description="d", run=_fake_ok, project_slug="x"
+    )
+    _register(tester)
+    try:
+        with DbSession(get_engine()) as db:
+            app_session = TesterRunner(db).run(project)
+            db.refresh(app_session)
+            assert app_session.status == SessionStatus.PASSED
+    finally:
+        _unregister()
+    assert called == []
