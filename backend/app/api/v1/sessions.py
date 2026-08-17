@@ -188,9 +188,18 @@ def capture_screenshot(
 ):
     checkpoint_id = body.checkpoint_id if body else None
     try:
-        return _service(db).capture(session_id, checkpoint_id)
+        shot = _service(db).capture(session_id, checkpoint_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if shot is None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "No window to capture — this app is browser-served; its "
+                "tester registers headless-render screenshots instead."
+            ),
+        )
+    return shot
 
 
 @router.post(

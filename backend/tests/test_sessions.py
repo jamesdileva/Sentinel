@@ -15,8 +15,13 @@ from app.db.connection import get_engine
 from app.db.models import AppSession, Project, SessionScreenshot, SessionStatus
 from app.services import app_sessions as svc
 from app.services.app_sessions import AppSessionService
-from app.testers._helpers import TesterContext
+from app.testers._helpers import (
+    TesterAssertionError,
+    TesterContext,
+    TesterEnvError,
+)
 from app.utils import window_capture
+from app.utils.headless_render import HeadlessRenderError
 
 
 @pytest.fixture()
@@ -88,6 +93,19 @@ def _session(db, project_id, title="Test session"):
     return service.start(project_id, title)
 
 
+def _mock_window(monkeypatch):
+    """Window owned by the app under test: PrintWindow renders a solid frame."""
+    monkeypatch.setattr(
+        svc, "find_project_window", lambda path: (12345, (10, 20, 210, 120))
+    )
+    monkeypatch.setattr(svc, "_virtual_screen", lambda: (0, 0, 320, 200))
+    monkeypatch.setattr(
+        svc,
+        "capture_window_content",
+        lambda hwnd, rect: Image.new("RGB", (200, 100), (9, 8, 7)),
+    )
+
+
 # ------------------------------------------------------------------ lifecycle
 
 
@@ -156,7 +174,8 @@ def test_unfinished_session_slices_to_eof(tmp_db, project):
 # ---------------------------------------------------------------- screenshots
 
 
-def test_capture_saves_png_and_thumbnail(tmp_db, project):
+def test_capture_saves_png_and_thumbnail(tmp_db, project, monkeypatch):
+    _mock_window(monkeypatch)
     with DbSession(get_engine()) as db:
         app_session = _session(db, project.id)
         shot = AppSessionService(db).capture(app_session.id)
@@ -223,6 +242,81 @@ def test_ctx_screenshot_file_registers_render(tmp_db, project, tmp_path):
         assert len(shots) == 1
 
 
+def _render_png_fake(url, out_path):
+    img = Image.new("RGB", (320, 200), (9, 8, 7))
+    for x in range(0, 320, 4):
+        for y in range(0, 200, 4):
+            img.putpixel((x, y), (x % 256, y % 256, 128))
+    img.save(out_path, "PNG")
+
+
+def test_ctx_render_and_register_renders_and_registers(tmp_db, project, monkeypatch):
+    """v1.17.13.2: TesterContext.render_and_register drives a headless render
+    of a URL, registers the frame as a session screenshot, and cleans up the
+    temp file — the capture path for browser-served apps."""
+    import app.testers._helpers as helpers
+
+    seen = {}
+
+    def fake_render(url, out_path):
+        seen["url"] = url
+        seen["out"] = out_path
+        _render_png_fake(url, out_path)
+
+    monkeypatch.setattr(helpers, "render_url", fake_render)
+    with DbSession(get_engine()) as db:
+        app_session = _session(db, project.id)
+        service = AppSessionService(db)
+        ctx = TesterContext(project, app_session.id, service)
+        ctx.render_and_register("http://127.0.0.1:1/", "headless dashboard render")
+        checkpoints = service.checkpoint_repo.by_session(app_session.id)
+        shots = service.screenshot_repo.by_session(app_session.id)
+        assert seen["url"] == "http://127.0.0.1:1/"
+        assert [c.label for c in checkpoints] == ["headless dashboard render"]
+        assert len(shots) == 1
+        assert not Path(seen["out"]).exists()
+
+
+def test_ctx_render_and_register_blank_raises(tmp_db, project, monkeypatch):
+    """A blank frame (WebGL failing under SwiftShader, e.g.) is a deterministic
+    TesterAssertionError — nothing registered."""
+    import app.testers._helpers as helpers
+
+    monkeypatch.setattr(
+        helpers,
+        "render_url",
+        lambda url, out_path: Image.new("RGB", (320, 200), (0, 0, 0)).save(
+            out_path, "PNG"
+        ),
+    )
+    with DbSession(get_engine()) as db:
+        app_session = _session(db, project.id)
+        service = AppSessionService(db)
+        ctx = TesterContext(project, app_session.id, service)
+        with pytest.raises(TesterAssertionError, match="blank"):
+            ctx.render_and_register("http://x", "label")
+        assert service.screenshot_repo.by_session(app_session.id) == []
+
+
+def test_ctx_render_and_register_render_failure_raises(tmp_db, project, monkeypatch):
+    """Edge failing to launch/capture is an environment problem, not an app
+    failure — TesterEnvError."""
+    import app.testers._helpers as helpers
+
+    monkeypatch.setattr(
+        helpers,
+        "render_url",
+        lambda url, out_path: (_ for _ in ()).throw(
+            HeadlessRenderError("edge crashed")
+        ),
+    )
+    with DbSession(get_engine()) as db:
+        app_session = _session(db, project.id)
+        ctx = TesterContext(project, app_session.id, AppSessionService(db))
+        with pytest.raises(TesterEnvError, match="edge crashed"):
+            ctx.render_and_register("http://x", "label")
+
+
 def test_capture_renders_window_content_when_window_exists(
     tmp_db, project, monkeypatch, _fake_grabber
 ):
@@ -259,13 +353,20 @@ def test_capture_crops_when_window_render_blank(
         assert _fake_grabber[-1] == (10, 20, 210, 120)
 
 
-def test_capture_falls_back_to_full_screen_without_window(
-    tmp_db, project, _fake_grabber
-):
+def test_capture_skips_without_window(tmp_db, project, _fake_grabber):
+    """v1.17.13.2: no desktop-grab fallback — a session with no window owned
+    by the app records nothing (browser-served apps register headless-render
+    frames from their tester instead)."""
     with DbSession(get_engine()) as db:
         app_session = _session(db, project.id)
-        AppSessionService(db).capture(app_session.id)
-        assert _fake_grabber[-1] is None
+        shot = AppSessionService(db).capture(app_session.id)
+        assert shot is None
+        assert _fake_grabber == []
+        assert not (
+            Path(settings.db_path).parent.parent
+            / "screenshots"
+            / svc._slug(project.name)
+        ).exists()
 
 
 def test_clamp_rect_limits_to_virtual_screen(tmp_db, monkeypatch):
@@ -420,7 +521,20 @@ def test_descends_from_bounded_depth(tmp_db, monkeypatch):
     assert not window_capture._descends_from(5, r"C:\projects\demo-app", tree)
 
 
-def test_end_auto_captures_screenshot(tmp_db, project):
+def test_end_auto_capture_skips_without_window(tmp_db, project):
+    with DbSession(get_engine()) as db:
+        app_session = _session(db, project.id)
+        AppSessionService(db).end(app_session.id, "ok", "passed")
+        shots = db.exec(
+            select(SessionScreenshot).where(
+                SessionScreenshot.session_id == app_session.id
+            )
+        ).all()
+    assert shots == []
+
+
+def test_end_auto_captures_window_shot(tmp_db, project, monkeypatch):
+    _mock_window(monkeypatch)
     with DbSession(get_engine()) as db:
         app_session = _session(db, project.id)
         AppSessionService(db).end(app_session.id, "ok", "passed")
@@ -449,7 +563,8 @@ def test_end_survives_non_utf8_app_log_bytes(tmp_db, project):
         assert "\ufffd engine ready\ufffd" in app_session.log_slice
 
 
-def test_capture_with_checkpoint_link(tmp_db, project):
+def test_capture_with_checkpoint_link(tmp_db, project, monkeypatch):
+    _mock_window(monkeypatch)
     with DbSession(get_engine()) as db:
         app_session = _session(db, project.id)
         checkpoint = AppSessionService(db).checkpoint(app_session.id, "hud visible")
@@ -460,12 +575,14 @@ def test_capture_with_checkpoint_link(tmp_db, project):
 # ------------------------------------------------------------------- delete
 
 
-def test_delete_removes_rows_and_files(tmp_db, project):
+def test_delete_removes_rows_and_files(tmp_db, project, tmp_path):
+    source = tmp_path / "render.png"
+    Image.new("RGB", (200, 100), (9, 8, 7)).save(source, "PNG")
     with DbSession(get_engine()) as db:
         app_session = _session(db, project.id)
         service = AppSessionService(db)
         service.checkpoint(app_session.id, "c")
-        shot = service.capture(app_session.id)
+        shot = service.register_screenshot(app_session.id, source)
         shot_dir = (
             Path(settings.db_path).parent.parent
             / "screenshots"
@@ -482,9 +599,11 @@ def test_delete_removes_rows_and_files(tmp_db, project):
 
 def test_export_copies_and_builds_snippet(tmp_db, project, monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "portfolio_dir", tmp_path / "portfolio")
+    source = tmp_path / "render.png"
+    Image.new("RGB", (200, 100), (9, 8, 7)).save(source, "PNG")
     with DbSession(get_engine()) as db:
         app_session = _session(db, project.id, title="Ship the demo")
-        shot = AppSessionService(db).capture(app_session.id)
+        shot = AppSessionService(db).register_screenshot(app_session.id, source)
         result = AppSessionService(db).export_to_portfolio(app_session.id, shot.id)
     assert len(result["copied"]) == 2
     assert (tmp_path / "portfolio" / "images" / "sessions").exists()
@@ -509,12 +628,14 @@ def test_slice_for_unstarted_session_is_empty(tmp_db, project):
         assert AppSessionService(db)._slice_for(project, "zzz") == ""
 
 
-def test_resolve_screenshot_blocks_traversal(tmp_db, project):
+def test_resolve_screenshot_blocks_traversal(tmp_db, project, tmp_path):
+    source = tmp_path / "render.png"
+    Image.new("RGB", (200, 100), (9, 8, 7)).save(source, "PNG")
     with DbSession(get_engine()) as db:
         app_session = _session(db, project.id)
         assert svc.resolve_screenshot(db, app_session.id, "..\\sentinel.db") is None
         assert svc.resolve_screenshot(db, app_session.id, "..\\..\\x.png") is None
-        shot = AppSessionService(db).capture(app_session.id)
+        shot = AppSessionService(db).register_screenshot(app_session.id, source)
         resolved = svc.resolve_screenshot(db, app_session.id, shot.path)
     assert resolved is not None and resolved.exists()
 
@@ -522,7 +643,8 @@ def test_resolve_screenshot_blocks_traversal(tmp_db, project):
 # --------------------------------------------------------------------- API
 
 
-def test_api_full_flow(client, project):
+def test_api_full_flow(client, project, monkeypatch):
+    _mock_window(monkeypatch)
     project_id = project.id
     response = client.post(
         "/api/v1/sessions",
@@ -587,6 +709,19 @@ def test_api_full_flow(client, project):
     response = client.delete(f"/api/v1/sessions/{session_id}")
     assert response.status_code == 204
     assert client.get(f"/api/v1/sessions/{session_id}").status_code == 404
+
+
+def test_api_capture_windowless_409(client, project):
+    """v1.17.13.2: browser-served/headless apps have no window — capture 409s
+    with a pointer at the tester-render path instead of grabbing the desktop."""
+    response = client.post(
+        "/api/v1/sessions",
+        json={"project_id": project.id, "title": "API session"},
+    )
+    session_id = response.json()["id"]
+    response = client.post(f"/api/v1/sessions/{session_id}/screenshots", json={})
+    assert response.status_code == 409
+    assert "headless-render" in response.json()["detail"]
 
 
 def test_api_missing_session_404s(client, project):

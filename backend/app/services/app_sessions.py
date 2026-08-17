@@ -8,8 +8,9 @@ a session's own start and end markers is captured at `end()`.
 Screenshots are grabs stored under data/screenshots/<slug>/ with a 90x60
 thumbnail next to each PNG. Since v1.17.12.3 the grab is window-targeted:
 when the app under test owns a visible window (matched by executable path
-under the project dir), only that window's rect is captured; headless apps
-and closed/minimized windows fall back to the full screen. Capture
+under the project dir), only that window's rect is captured; since v1.17.13.2
+a session with no window records nothing (browser-served apps register
+headless-render frames from their tester instead of a desktop grab). Capture
 is user-initiated or auto on session end (Rule 2: Sentinel never presses
 buttons itself — the user drives the app, the recorder only watches).
 """
@@ -214,7 +215,7 @@ class AppSessionService:
 
     def capture(
         self, session_id: str, checkpoint_id: str | None = None
-    ) -> SessionScreenshot:
+    ) -> SessionScreenshot | None:
         """Window-targeted grab → data/screenshots/<slug>/<iso>.png + thumb.
 
         v1.17.12.3: when the app under test owns a visible window (matched by
@@ -222,29 +223,39 @@ class AppSessionService:
         window's own content is rendered via PrintWindow (PW_RENDERFULLCONTENT)
         — occluded windows capture their own content, not what's stacked above
         them. Blank frames (some GPU-composited windows) and rects outside the
-        virtual screen fall back to a screen crop of the clamped rect; headless
-        apps, closed/minimized windows, or non-Windows hosts fall back to the
-        full-screen grab.
+        virtual screen fall back to a screen crop of the clamped rect.
+
+        v1.17.13.2: the full-screen fallback is gone. A real app is either
+        window-capturable (Electron, tkinter, native) or browser-served and
+        registered by its tester via a headless render — grabbing whatever the
+        user happens to have on screen is noise (it caught Reddit and VS Code
+        during live demake runs), so a session with no project window returns
+        None and records nothing.
         """
         app_session = self._get(session_id)
         project = ProjectRepository(self.session).get(app_session.project_id)
-        method = "full-screen"
         window = find_project_window(project.path)
-        if window is not None:
-            hwnd, rect = window
-            bbox = _clamp_rect(rect)
-            if bbox is not None:
-                rendered = capture_window_content(hwnd, bbox)
-                if rendered is not None:
-                    image = rendered
-                    method = "window-render"
-                else:
-                    image = ImageGrab.grab(bbox=bbox)
-                    method = "window-crop"
-            else:
-                image = ImageGrab.grab()
+        if window is None:
+            logger.info(
+                "Skipping screenshot for session %s: no window owned by %s",
+                session_id,
+                project.name,
+            )
+            return None
+        hwnd, rect = window
+        bbox = _clamp_rect(rect)
+        if bbox is None:
+            logger.info(
+                "Skipping screenshot for session %s: window off-screen", session_id
+            )
+            return None
+        rendered = capture_window_content(hwnd, bbox)
+        if rendered is not None:
+            image = rendered
+            method = "window-render"
         else:
-            image = ImageGrab.grab()
+            image = ImageGrab.grab(bbox=bbox)
+            method = "window-crop"
         return self._save_image(image, project, session_id, checkpoint_id, method)
 
     def _save_image(

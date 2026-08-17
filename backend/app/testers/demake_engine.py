@@ -13,13 +13,10 @@ Verified ground truth (2026-08-15):
 - `backend/test_game_trailer.mp4` ships in the repo (upload fixture).
 """
 
-import tempfile
 import time
-import uuid
 from pathlib import Path
 
 import httpx
-from PIL import Image
 
 from app.testers import Tester
 from app.testers._helpers import (
@@ -28,7 +25,6 @@ from app.testers._helpers import (
     TesterEnvError,
     TesterTimeoutError,
 )
-from app.utils.headless_render import HeadlessRenderError, render_url
 
 BACKEND_CMD = "cd backend && uvicorn main:app"
 PORT = "http://127.0.0.1:8000"
@@ -112,28 +108,13 @@ def run(ctx: TesterContext) -> None:
         )
     ctx.checkpoint(f"asset served: {sprite_path}")
 
-    # v1.17.13.1: browser-served apps have no window, so the auto end-of-session
-    # capture would grab the user's desktop. Render the actual game headlessly
-    # (Edge --headless=new) and register the frame as a session screenshot.
-    game_url = f"{PORT}/game.html?id={demake_id}&api={PORT}"
-    tmp_name = str(
-        Path(tempfile.gettempdir()) / f"sentinel-render-{uuid.uuid4().hex}.png"
+    # v1.17.13.1/2: browser-served apps have no window, so the auto end-of-
+    # session capture skips them. Capture the app itself: the upload dashboard
+    # (/) and the generated game (game.html?id=...) via headless Edge renders.
+    ctx.render_and_register(f"{PORT}/", "headless dashboard render")
+    ctx.render_and_register(
+        f"{PORT}/game.html?id={demake_id}&api={PORT}", "headless game render"
     )
-    try:
-        try:
-            render_url(game_url, tmp_name)
-        except HeadlessRenderError as exc:
-            raise TesterEnvError(f"headless game render failed: {exc}") from exc
-        with Image.open(tmp_name) as im:
-            histogram = im.convert("L").histogram()
-            distinct = sum(1 for count in histogram if count)
-        if distinct < 8:
-            raise TesterAssertionError(
-                f"headless game render looks blank ({distinct} gray levels)"
-            )
-        ctx.screenshot_file(tmp_name, "headless game render")
-    finally:
-        Path(tmp_name).unlink(missing_ok=True)
 
 
 TESTER = Tester(
@@ -142,11 +123,11 @@ TESTER = Tester(
         "Launch the FastAPI backend, upload the repo's test_game_trailer.mp4, "
         "poll the pipeline to ready (max 7 min — sprite generation can use the "
         "slow SD/ONNX path), then verify the manifest and serve a generated "
-        "sprite asset. Finally, render the game headlessly in Edge "
-        "(`game.html?id=<id>`) and register the frame as a session screenshot "
-        "— browser-served apps have no window for the window matcher. "
-        "Structural asserts only — tilemap and audio use unseeded "
-        "random, so nothing byte-exact is compared."
+        "sprite asset. Finally, render the app headlessly in Edge — the "
+        "upload dashboard (/) and the generated game (`game.html?id=<id>`) — "
+        "and register both frames as session screenshots. Structural asserts "
+        "only — tilemap and audio use unseeded random, so nothing byte-exact "
+        "is compared."
     ),
     run=run,
     project_slug="Demake-Engine",

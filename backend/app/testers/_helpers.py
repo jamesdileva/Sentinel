@@ -13,15 +13,19 @@ Secrets rule: testers never carry credentials, and `cli()` never writes the
 `env` values into the app log — only the command line and captured output.
 """
 
+import tempfile
 import time
+import uuid
 from pathlib import Path
 
 import httpx
+from PIL import Image
 
 from app.core.logging import get_logger
 from app.services.app_sessions import _apps_dir, _slug
 from app.services.build_runner import BuildRunner
 from app.services.command_runner import run_command
+from app.utils.headless_render import HeadlessRenderError, render_url
 
 logger = get_logger(__name__)
 
@@ -77,6 +81,31 @@ class TesterContext:
         )
         self.steps += 1
         self.service.register_screenshot(self.session_id, path, checkpoint.id)
+
+    def render_and_register(self, url: str, label: str | None = None) -> None:
+        """Headless-render a URL (invisible Edge, no window, desktop
+        untouched) and register the frame as a session screenshot — v1.17.13.2,
+        the capture path for browser-served apps. A blank frame (e.g. WebGL
+        failing under SwiftShader) raises TesterAssertionError; a render
+        failure raises TesterEnvError."""
+        tmp_name = str(
+            Path(tempfile.gettempdir()) / f"sentinel-render-{uuid.uuid4().hex}.png"
+        )
+        try:
+            try:
+                render_url(url, tmp_name)
+            except HeadlessRenderError as exc:
+                raise TesterEnvError(f"headless render failed ({url}): {exc}") from exc
+            with Image.open(tmp_name) as im:
+                histogram = im.convert("L").histogram()
+                distinct = sum(1 for count in histogram if count)
+            if distinct < 8:
+                raise TesterAssertionError(
+                    f"headless render looks blank ({url}, {distinct} gray levels)"
+                )
+            self.screenshot_file(tmp_name, label)
+        finally:
+            Path(tmp_name).unlink(missing_ok=True)
 
     def wait(self, seconds: float) -> None:
         time.sleep(seconds)
@@ -137,11 +166,23 @@ class TesterContext:
         expect: int = 200,
         expect_body: str | None = None,
         timeout_s: int = 20,
+        retries: int = 0,
+        retry_delay_s: float = 3.0,
     ) -> None:
-        try:
-            response = httpx.request(method, url, timeout=timeout_s)
-        except httpx.HTTPError as exc:
-            raise TesterEnvError(f"HTTP {method} {url} unreachable: {exc}") from exc
+        """Single HTTP assertion; `retries` re-attempts after unreachable
+        errors (dev servers can take ~10 s to bind after launch — the
+        v1.17.13.2 Card-Game first run raced Vite's cold re-optimization).
+        Only the successful attempt records a checkpoint."""
+        for attempt in range(retries + 1):
+            try:
+                response = httpx.request(method, url, timeout=timeout_s)
+                break
+            except httpx.HTTPError as exc:
+                if attempt == retries:
+                    raise TesterEnvError(
+                        f"HTTP {method} {url} unreachable: {exc}"
+                    ) from exc
+                time.sleep(retry_delay_s)
         if response.status_code != expect:
             raise TesterAssertionError(
                 f"HTTP {method} {url} -> {response.status_code}, expected {expect}"

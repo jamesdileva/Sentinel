@@ -179,6 +179,53 @@ def test_http_success_and_assert(tmp_db, project, http_server):
             ctx.http("GET", "http://127.0.0.1:9/health", timeout_s=2)
 
 
+def test_http_retries_unreachable_then_succeeds(tmp_db, project, monkeypatch):
+    """v1.17.13.2: dev servers can take ~10 s to bind after launch — retries
+    re-attempt unreachable errors; only the successful attempt checkpoints."""
+    import httpx as httpx_mod
+
+    calls = {"n": 0}
+
+    class FakeResp:
+        status_code = 200
+        text = "healthy"
+
+    def flaky(method, url, timeout=None):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise httpx_mod.ConnectError("refused")
+        return FakeResp()
+
+    monkeypatch.setattr(httpx_mod, "request", flaky)
+    with DbSession(get_engine()) as db:
+        service = AppSessionService(db)
+        app_session = service.start(project.id, "t")
+        ctx = TesterContext(project, app_session.id, service)
+        ctx.http("GET", "http://127.0.0.1:1/x", retries=2, retry_delay_s=0)
+        checkpoints = db.exec(
+            select(svc.SessionCheckpoint).where(
+                svc.SessionCheckpoint.session_id == app_session.id
+            )
+        ).all()
+    assert calls["n"] == 3
+    assert len(checkpoints) == 1
+
+
+def test_http_retries_exhausted_raises(tmp_db, project, monkeypatch):
+    import httpx as httpx_mod
+
+    def always_fail(method, url, timeout=None):
+        raise httpx_mod.ConnectError("refused")
+
+    monkeypatch.setattr(httpx_mod, "request", always_fail)
+    with DbSession(get_engine()) as db:
+        service = AppSessionService(db)
+        app_session = service.start(project.id, "t")
+        ctx = TesterContext(project, app_session.id, service)
+        with pytest.raises(TesterEnvError):
+            ctx.http("GET", "http://127.0.0.1:1/x", retries=2, retry_delay_s=0)
+
+
 def test_cli_appends_output_and_checks(tmp_db, project, monkeypatch):
     from app.services.command_runner import CommandResult
 
@@ -289,7 +336,16 @@ def test_launch_failure_is_env_error(tmp_db, project, monkeypatch):
             ctx.launch("probe")
 
 
-def test_screenshot_records_checkpoint_and_file(tmp_db, project):
+def test_screenshot_records_checkpoint_and_file(tmp_db, project, monkeypatch):
+    monkeypatch.setattr(
+        svc, "find_project_window", lambda path: (12345, (10, 20, 210, 120))
+    )
+    monkeypatch.setattr(svc, "_virtual_screen", lambda: (0, 0, 320, 200))
+    monkeypatch.setattr(
+        svc,
+        "capture_window_content",
+        lambda hwnd, rect: Image.new("RGB", (200, 100), (9, 8, 7)),
+    )
     with DbSession(get_engine()) as db:
         service = AppSessionService(db)
         app_session = service.start(project.id, "t")
