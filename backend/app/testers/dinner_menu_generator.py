@@ -4,6 +4,10 @@ Verified ground truth (2026-08-15): backend/app.py runs Flask on :5000
 (global python; no repo venv); stored startup only runs the Vite frontend
 (:5173), so the tester launches the Flask backend explicitly. The app
 auto-opens a browser tab on start — expected, harmless.
+
+v1.17.13.7: vite 8 binds loopback as IPv6-only (::1) — 127.0.0.1 is refused;
+the frontend must be probed via `localhost` (Card-Game's tester already
+uses it; dinner menu's first live run failed with WinError 10061).
 """
 
 from app.testers import Tester
@@ -11,7 +15,7 @@ from app.testers._helpers import TesterContext
 
 FRONTEND_CMD = "cd frontend && npm run dev"
 BACKEND_CMD = "cd backend && python app.py"
-VITE_PORT = "http://127.0.0.1:5173"
+VITE_PORT = "http://localhost:5173"
 FLASK_PORT = "http://127.0.0.1:5000"
 
 
