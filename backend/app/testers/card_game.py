@@ -1,21 +1,23 @@
-"""Card-Game tester — Vite frontend + Express backend (PG session store).
+"""Card-Game tester — Vite frontend + Express backend (SQLite storage).
 
-Verified ground truth (2026-08-15): backend/server.js listens on :3000 and
-GET / answers "Backend is running ✅" — but only while its PostgreSQL
-connection survives. First live runs (2026-08-16, v1.17.13.2) exposed two
-real issues, both caught honestly by the tester: (1) Vite v8 binds
-`localhost` on IPv6 (`::1`) here, so the hardcoded `127.0.0.1` refused — the
-tester now targets `http://localhost:5173`, which resolves to whatever the
-dev server actually binds. (2) The backend's `DATABASE_URL` (dotenvx, in
-backend/.env) points at a cloud Postgres host that no longer resolves
-(ENOTFOUND postgres.fkrujiganyahxadezqdz… — dead/expired endpoint): the
-Express server prints "Server running on 3000" then dies on the first pool
-query (Node ≥22 exits on unhandled rejection), so the backend check fails
-with connection refused. Local PG on :5432 is NOT what the app uses — fixing
-the app's DATABASE_URL (or provisioning its schema on local PG) is app-side
-work, not tester work. Stored startup only runs the Vite frontend (:5173);
-the tester launches the backend explicitly too. Browser-served — the tester
-registers a headless render of the frontend as the session screenshot.
+Verified ground truth (2026-08-16, v1.17.13.3): the backend was migrated from
+PostgreSQL to local better-sqlite3 (backend/cardgame.db, gitignored, schema
+self-provisions from schema.sql on first open; sessions live in the same
+file via a custom SQLite express-session store). backend/server.js listens on
+:3000 and GET / answers "Backend is running ✅". First live runs (2026-08-16,
+v1.17.13.2) exposed two real issues, both caught honestly by the tester:
+(1) Vite v8 binds `localhost` on IPv6 (`::1`) here, so the hardcoded
+`127.0.0.1` refused — the tester now targets `http://localhost:5173`, which
+resolves to whatever the dev server actually binds. (2) The backend's
+`DATABASE_URL` (dotenvx, in backend/.env) pointed at a cloud Postgres host
+that no longer resolved (ENOTFOUND postgres.fkrujiganyahxadezqdz… —
+dead/expired endpoint): the Express server printed "Server running on 3000"
+then died on the first pool query (Node ≥22 exits on unhandled rejection),
+so the backend check failed with connection refused. Fixed app-side by the
+SQLite migration (DATABASE_URL deleted; local PG is unrelated to the app).
+Stored startup only runs the Vite frontend (:5173); the tester launches the
+backend explicitly too. Browser-served — the tester registers a headless
+render of the frontend as the session screenshot.
 """
 
 from app.testers import Tester
@@ -42,10 +44,10 @@ TESTER = Tester(
     name="Card-Game smoke",
     description=(
         "Launch the Vite frontend, verify it serves on :5173; launch the "
-        "Express backend and verify GET / answers (proves the PostgreSQL "
-        "session store is reachable — PG must be up for this to pass); "
-        "render the frontend headlessly and register the frame as a session "
-        "screenshot."
+        "Express backend and verify GET / answers (proves the local SQLite "
+        "storage — backend/cardgame.db — is up; the app needs no external "
+        "database); render the frontend headlessly and register the frame as "
+        "a session screenshot."
     ),
     run=run,
     project_slug="Card-Game",
