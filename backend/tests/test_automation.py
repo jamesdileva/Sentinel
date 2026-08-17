@@ -2,6 +2,7 @@
 
 import sys
 import time
+import types
 from pathlib import Path
 
 import pytest
@@ -342,6 +343,128 @@ def test_build_runner_launch_failure_recorded(tmp_db, tmp_path, fake_popen):
         assert log.success is True
         assert log.launch_command is None
         assert "App launch failed" in (log.stdout or "")
+
+
+class _FakeSubprocess:
+    """Replaces subprocess inside build_runner: records Popen/run calls and
+    feeds a fixed netstat body — nothing real is ever spawned."""
+
+    DEVNULL = None
+    STDOUT = None
+    calls = []
+    netstat_out = ""
+    startfile_calls = []
+
+    @classmethod
+    def Popen(cls, *args, **kwargs):  # noqa: U100
+        cls.calls.append(("popen", args[0], kwargs.get("cwd")))
+        return object()
+
+    @classmethod
+    def run(cls, args, **kwargs):  # noqa: U100
+        cls.calls.append(("run", args))
+        return types.SimpleNamespace(stdout=cls.netstat_out)
+
+
+@pytest.fixture()
+def fake_subprocess(monkeypatch):
+    monkeypatch.setattr("app.services.build_runner.subprocess", _FakeSubprocess)
+    _FakeSubprocess.calls = []
+    _FakeSubprocess.netstat_out = ""
+    _FakeSubprocess.startfile_calls = []
+    monkeypatch.setattr(
+        "app.services.build_runner.os.startfile",
+        _FakeSubprocess.startfile_calls.append,
+    )
+    yield _FakeSubprocess
+
+
+def _project_named(session, name: str, startup: str, root) -> Project:
+    project = Project(
+        id=f"p-{name.lower()}",
+        name=name,
+        path=str(root),
+        language="javascript",
+        stack={"commands": {"startup": startup}},
+    )
+    session.add(project)
+    session.commit()
+    return project
+
+
+def test_build_runner_open_frees_ports_launches_extras_and_opens_browser(
+    tmp_db, tmp_path, fake_subprocess
+):
+    """v1.17.13.4: build->open for a browser-served app (Card-Game) kills
+    listeners on its declared ports, launches the stored startup plus the
+    extra backend server, and opens the default browser at the web_url."""
+    fake_subprocess.netstat_out = (
+        "TCP    0.0.0.0:5173    0.0.0.0:0    LISTENING    11111\n"
+        "TCP    [::1]:3000      [::]:0       LISTENING    22222\n"
+        "TCP    0.0.0.0:5174    0.0.0.0:0    LISTENING    33333\n"
+        "UDP    0.0.0.0:3000    0.0.0.0:0                44444\n"
+    )
+    root = tmp_path / "card-game-open"
+    root.mkdir()
+    with Session(connection.get_engine()) as session:
+        project = _project_named(
+            session, "Card-Game", "cd frontend && npm run dev", root
+        )
+        log = BuildRunner(session).run_build(project)
+        session.refresh(log)
+        assert log.success is True
+        assert log.launch_command == "cd frontend && npm run dev"
+        assert "Freed ports for restart: 11111, 22222" in (log.stdout or "")
+        assert "App opened: http://localhost:5173" in (log.stdout or "")
+    commands = [c[1] for c in _FakeSubprocess.calls if c[0] == "run"]
+    assert ["netstat", "-ano"] in commands
+    assert ["taskkill", "/F", "/PID", "11111"] in commands
+    assert ["taskkill", "/F", "/PID", "22222"] in commands
+    # a drift port (5174) is not the app's — never killed
+    assert all(c != ["taskkill", "/F", "/PID", "33333"] for c in commands)
+    popens = [c[1] for c in _FakeSubprocess.calls if c[0] == "popen"]
+    assert popens == ["cd frontend && npm run dev", "cd backend && node server.js"]
+    assert _FakeSubprocess.startfile_calls == ["http://localhost:5173"]
+
+
+def test_build_runner_open_no_listeners_still_launches_and_opens(
+    tmp_db, tmp_path, fake_subprocess
+):
+    """No listener on the app's ports -> nothing to kill; the launch and the
+    browser open still happen."""
+    root = tmp_path / "card-game-cold"
+    root.mkdir()
+    with Session(connection.get_engine()) as session:
+        project = _project_named(
+            session, "Card-Game", "cd frontend && npm run dev", root
+        )
+        log = BuildRunner(session).run_build(project)
+        assert log.success is True
+        assert "none listening" in (log.stdout or "")
+        assert "App opened: http://localhost:5173" in (log.stdout or "")
+    runs = [c[1] for c in _FakeSubprocess.calls if c[0] == "run"]
+    assert all(c[0] != "taskkill" for c in runs)
+
+
+def test_build_runner_open_desktop_app_opens_no_browser(
+    tmp_db, tmp_path, fake_subprocess
+):
+    """v1.17.13.4: a desktop app (Cg — Electron, no web_url) is launched
+    exactly as before: no ports freed, no browser opened."""
+    root = tmp_path / "cg-open"
+    root.mkdir()
+    with Session(connection.get_engine()) as session:
+        project = _project_named(
+            session, "Cg", "cd renderer && npm run electron-dev", root
+        )
+        log = BuildRunner(session).run_build(project)
+        assert log.success is True
+        assert log.launch_command == "cd renderer && npm run electron-dev"
+        assert "App opened" not in (log.stdout or "")
+        assert "Freed ports" not in (log.stdout or "")
+    assert _FakeSubprocess.startfile_calls == []
+    popens = [c[1] for c in _FakeSubprocess.calls if c[0] == "popen"]
+    assert popens == ["cd renderer && npm run electron-dev"]
 
 
 # --- TestRunner unit tests ---

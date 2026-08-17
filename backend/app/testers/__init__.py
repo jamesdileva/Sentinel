@@ -19,13 +19,23 @@ __all__ = ["DEFAULT_SMOKE", "TESTERS", "Tester", "TesterContext"]
 
 @dataclass(frozen=True)
 class Tester:
-    """A named runnable tester for one project (or the default smoke)."""
+    """A named runnable tester for one project (or the default smoke).
+
+    v1.17.13.4: `web_url` / `extra_launch` / `ports` — the app facts
+    build->open needs to actually open a browser-served app: the URL to open
+    in the default browser, the servers the stored startup does not cover
+    (each launched detached after it), and the ports to free first so the
+    fresh instance binds them (restart semantics, no drift orphans).
+    """
 
     name: str
     description: str
     run: Callable[[TesterContext], None]
     project_slug: str | None = None  # None = default smoke (any launchable app)
     kind: str = "custom"
+    web_url: str | None = None  # browser-served app: opened after launch
+    extra_launch: tuple[str, ...] = ()  # non-stored servers to start too
+    ports: tuple[int, ...] = ()  # app ports freed before launching
 
 
 # Submodules import `Tester` back from this package, so they load only after

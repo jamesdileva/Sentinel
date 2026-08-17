@@ -51,4 +51,7 @@ TESTER = Tester(
     ),
     run=run,
     project_slug="Card-Game",
+    web_url=VITE_PORT,
+    extra_launch=(BACKEND_CMD,),
+    ports=(5173, 3000),
 )

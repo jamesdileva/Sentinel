@@ -5,6 +5,12 @@ needed) the project's startup command is launched detached, so a build run
 both compiles *and* opens the app — the dev-machine workflow, not a fresh-PC
 test. The launch is always user-initiated (the Run Build click); beats never
 launch anything (Rule 2).
+v1.17.13.4: browser-served apps actually open. The project's tester declares
+`web_url` / `extra_launch` / `ports` (app.testers.Tester); before launching,
+listeners on the declared ports are killed (restart semantics — the open
+instance is the current code, no drift orphans), the stored startup plus
+each extra server is launched detached, and the default browser opens the
+web_url. Desktop apps (no web_url) are unchanged.
 """
 
 import datetime
@@ -58,6 +64,13 @@ class BuildRunner:
             commands = self.discover_commands(project.path)
         command = (commands or {}).get("build") or ""
         startup = (commands or {}).get("startup") or ""
+        # v1.17.13.4: the project's tester carries the app facts build->open
+        # needs (web_url, extra servers, ports) — None for projects without
+        # a custom tester (desktop apps open their own window). Local import:
+        # app.testers._helpers imports BuildRunner at module level.
+        from app.testers import TESTERS  # noqa: PLC0415
+
+        facts = TESTERS.get(_slug(project.name))
 
         if log is None:
             log = BuildLog(project_id=project.id)
@@ -67,7 +80,7 @@ class BuildRunner:
         log = self.session.get(BuildLog, log.id)
 
         if not command:
-            self._finish_without_build(log, project, startup)
+            self._finish_without_build(log, project, startup, facts)
             return log
 
         result = executor(command, cwd=project.path)
@@ -80,7 +93,7 @@ class BuildRunner:
                 f"{result.stderr}\n[timed out after {result.duration_seconds}s]"
             )
         if log.success and startup:
-            self._launch_into_log(log, project, startup)
+            self._launch_into_log(log, project, startup, facts)
         log.completed_at = datetime.datetime.now(datetime.timezone.utc)
         self.session.add(log)
         self.session.commit()
@@ -95,7 +108,7 @@ class BuildRunner:
         return log
 
     def _finish_without_build(
-        self, log: BuildLog, project: Project, startup: str
+        self, log: BuildLog, project: Project, startup: str, facts=None
     ) -> None:
         """v1.17.7.5 semantics, extended for build->open: with no compile
         step the run is a success *only* when an app was actually launched;
@@ -113,18 +126,39 @@ class BuildRunner:
         log.success = True
         log.exit_code = None
         log.stdout = "Build not needed — this project has no compile step."
-        self._launch_into_log(log, project, startup)
+        self._launch_into_log(log, project, startup, facts)
         self.session.add(log)
         self.session.commit()
 
-    def _launch_into_log(self, log: BuildLog, project: Project, startup: str) -> None:
-        """Launch the startup command detached and record the outcome."""
-        launched, detail = self._launch_app(project, startup)
-        if launched:
-            log.launch_command = detail
-            log.stdout = f"{log.stdout or ''}\nApp launched: {detail}"
-        else:
-            log.stdout = f"{log.stdout or ''}\nApp launch failed: {detail}"
+    def _launch_into_log(
+        self, log: BuildLog, project: Project, startup: str, facts=None
+    ) -> None:
+        """Launch the startup command + the tester's extra servers detached,
+        then open the browser at the tester's web_url (v1.17.13.4)."""
+        ports = tuple(facts.ports) if facts else ()
+        if ports:
+            killed = self._free_ports(ports)
+            log.stdout = (
+                f"{log.stdout or ''}\nFreed ports for restart: "
+                f"{', '.join(map(str, killed)) if killed else 'none listening'}"
+            )
+        details = []
+        for cmd in (startup, *((facts.extra_launch) if facts else ())):
+            if not cmd:
+                continue
+            launched, detail = self._launch_app(project, cmd)
+            if launched:
+                details.append(detail)
+                log.stdout = f"{log.stdout or ''}\nApp launched: {detail}"
+            else:
+                log.stdout = f"{log.stdout or ''}\nApp launch failed: {detail}"
+        web_url = facts.web_url if facts else None
+        if web_url and details:
+            if self._open_browser(web_url):
+                log.stdout = f"{log.stdout or ''}\nApp opened: {web_url}"
+            else:
+                log.stdout = f"{log.stdout or ''}\nApp open failed: {web_url}"
+        log.launch_command = details[0] if details else None
 
     @staticmethod
     def _launch_app(
@@ -199,6 +233,56 @@ class BuildRunner:
         except OSError as exc:
             log_file.close()
             return False, str(exc)
+
+    @staticmethod
+    def _free_ports(ports: tuple[int, ...]) -> list[int]:
+        """Kill every listener on the app's ports so the fresh launch binds
+        them (v1.17.13.4 restart semantics — build->open means the current
+        code, not an orphan instance that drifted to another port).
+        Windows: `netstat -ano` to find the PIDs, `taskkill /F` to stop
+        them. Returns the PIDs actually killed (empty on no listeners or
+        tool failure — a busy port then simply makes the app bind another)."""
+        if not ports:
+            return []
+        try:
+            out = (
+                subprocess.run(
+                    ["netstat", "-ano"], capture_output=True, text=True, timeout=15
+                ).stdout
+                or ""
+            )
+        except (OSError, subprocess.SubprocessError):
+            return []
+        listeners = {}
+        for line in out.splitlines():
+            parts = line.split()
+            if len(parts) >= 5 and parts[0] == "TCP" and parts[3] == "LISTENING":
+                local = parts[1].rsplit(":", 1)
+                if len(local) == 2 and local[1].isdigit():
+                    if int(local[1]) in ports and parts[4].isdigit():
+                        listeners[int(local[1])] = parts[4]
+        killed = []
+        for pid in sorted({p for p in listeners.values()}):
+            try:
+                subprocess.run(
+                    ["taskkill", "/F", "/PID", pid],
+                    capture_output=True,
+                    timeout=15,
+                )
+                killed.append(int(pid))
+            except (OSError, subprocess.SubprocessError):
+                continue
+        return killed
+
+    @staticmethod
+    def _open_browser(url: str) -> bool:
+        """Open `url` in the user's default browser (Windows startfile —
+        no shell, no window of ours). Never called for desktop apps."""
+        try:
+            os.startfile(url)
+            return True
+        except (OSError, AttributeError):
+            return False
 
     @staticmethod
     def get_project(session: Session, project_id: str) -> Project:

@@ -33,4 +33,7 @@ TESTER = Tester(
     ),
     run=run,
     project_slug="Dinner-Menu-Generator",
+    web_url=VITE_PORT,
+    extra_launch=(BACKEND_CMD,),
+    ports=(5173, 5000),
 )

@@ -131,4 +131,6 @@ TESTER = Tester(
     ),
     run=run,
     project_slug="Demake-Engine",
+    web_url=PORT,
+    ports=(8000,),
 )
