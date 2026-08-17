@@ -1,24 +1,24 @@
-"""TV-Scheduler tester — Electron app + Express backend (:3050).
+"""TV-Scheduler tester — packaged Electron app + Express backend (:3050).
 
-Verified ground truth (2026-08-15): backend/server.js listens on :3050 and
-logs "Local backend running at http://localhost:3050" on start. The startup
-command launches backend + frontend + Electron concurrently.
+The packaged app (dist/win-unpacked/TV Scheduler.exe) is the system under
+test: the runner auto-launches it (auto_launch) and it runs its own Express
+backend on :3050. The backend serves the API + /health only — the frontend
+is loaded by Electron from app.asar (loadFile), so there is no static root
+route (GET / is 404 by design).
+
+v1.17.13.6: replaced the old dev-stack launch (concurrently is not on PATH
+and would collide with the packaged app on :3050) and the GET / assertion
+(no such route) with a /health probe of the auto-launched app.
 """
 
 from app.testers import Tester
 from app.testers._helpers import TesterContext
 
-STARTUP_CMD = (
-    'concurrently "npm run backend" "npm run frontend" '
-    '"wait-on http://localhost:5173 && npm run electron"'
-)
-PORT = "http://127.0.0.1:3050"
+HEALTH_URL = "http://127.0.0.1:3050/health"
 
 
 def run(ctx: TesterContext) -> None:
-    ctx.launch(STARTUP_CMD)
-    ctx.wait(15)
-    ctx.http("GET", PORT)
+    ctx.http("GET", HEALTH_URL, retries=2)
     ctx.wait(8)
     ctx.screenshot("Electron window with scheduler UI")
 
@@ -26,8 +26,8 @@ def run(ctx: TesterContext) -> None:
 TESTER = Tester(
     name="TV-Scheduler smoke",
     description=(
-        "Launch the full app (backend + frontend + Electron), verify the "
-        "Express backend responds on :3050, and screenshot the window."
+        "Verify the packaged app's Express backend responds on :3050 "
+        "(/health) and screenshot the Electron window."
     ),
     run=run,
     project_slug="Tv-Scheduler",
