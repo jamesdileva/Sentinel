@@ -78,6 +78,11 @@ def _studio_round_trip(ctx: FeatureContext) -> None:
     ctx.shot("research in progress (topics page)")
 
     page.get_by_role("link", name="Research", exact=True).click()
+    page.wait_for_function(
+        "() => { const sel = document.getElementById('topic-select'); "
+        "return sel && sel.options.length > 1; }",
+        timeout=15000,
+    )
     found = page.evaluate(
         "(t) => { const sel = document.getElementById('topic-select'); "
         "return sel && Array.from(sel.options).some(o => o.textContent === t); }",
