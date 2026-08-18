@@ -8,7 +8,14 @@ the `Search saved shows...` box, and watchlist rows — each row is a div
 with a direct-child `<strong>{showName}</strong>` and per-row `Expand` /
 `Delete` buttons. Below it: `Popular Shows` (flex row, `overflowX: auto`,
 140px cards with a `Save` button) and the 3-day `Episode Schedule`
-(yesterday / today / tomorrow h3 day sections) at the bottom.
+(yesterday / today / tomorrow h3 day sections) at the bottom. The schedule
+grid (`gridTemplateColumns: 1fr 1fr 1fr`) only renders once the TVMaze
+fetch settles (`!loading && !error`); each day section holds episode rows
+— divs with a `Save to My Shows` button — so a loaded day is detectable by
+that row (a 2026-08-18 live run scrolled before the fetch resolved: the
+page was short, `scrollTo` did nothing, and the screenshot showed an
+unloaded schedule — the feature now waits for a loaded episode row and
+proves `scrollY > 0`).
 
 The app resolves names against TVMaze by design (latest episode + details)
 and blocks duplicate adds — the feature therefore adds a REAL show from a
@@ -71,12 +78,22 @@ def _add_and_remove_real_show(ctx: FeatureContext) -> None:
 def _dashboard_scroll_exploration(ctx: FeatureContext) -> None:
     page = ctx.page
     ctx.go(APP_URL)
-    page.evaluate("() => window.scrollTo(0, document.body.scrollHeight)")
-    schedule = page.get_by_role("heading", name=re.compile("Episode Schedule")).first
-    schedule.wait_for(state="visible", timeout=15000)
+    episode_row = page.locator(
+        "xpath=//section[.//h3]//div"
+        "[.//button[normalize-space()='Save to My Shows']]"
+    ).first
+    episode_row.wait_for(state="visible", timeout=45000)
+    ctx.step("3-day episode schedule loaded (TVMaze fetch settled)")
+
+    scrolled = page.evaluate(
+        "() => { window.scrollTo(0, document.body.scrollHeight); "
+        "return window.scrollY > 0; }"
+    )
+    if not scrolled:
+        raise TesterTimeoutError("page content fits without scrolling")
     day = page.locator("h3").first
     day.wait_for(state="visible", timeout=15000)
-    ctx.step("3-day episode schedule at the bottom of the page")
+    ctx.step("scrolled to the bottom — episode schedule in view")
     ctx.shot("episode schedule (3-day)")
 
     popular = page.get_by_role("heading", name=re.compile("Popular Shows")).first
