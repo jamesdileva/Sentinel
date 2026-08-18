@@ -303,7 +303,7 @@ class _GenericPage:
     def get_by_text(self, text, exact=False):
         return _GenericLocator(self)
 
-    def locator(self, selector, has_text=None):
+    def locator(self, selector, has_text=None, has=None):
         return _GenericLocator(self)
 
     def set_input_files(self, selector, files):
@@ -318,6 +318,12 @@ class _GenericPage:
 
     def wait_for_timeout(self, ms):
         return None
+
+    def wait_for_function(self, expr, timeout=30000):
+        return None
+
+    def evaluate(self, expr, arg=None):
+        return True
 
     def on(self, event, handler):
         if event == "dialog":
@@ -348,6 +354,9 @@ class _GenericLocator:
     def get_by_text(self, text, exact=False):
         return _GenericLocator(self.page)
 
+    def locator(self, selector, has_text=None, has=None):
+        return _GenericLocator(self.page)
+
     def click(self, **kw):
         return None
 
@@ -359,6 +368,15 @@ class _GenericLocator:
 
     def inner_text(self):
         return self.page._next_text()
+
+    def all_inner_texts(self):
+        return []
+
+    def evaluate(self, expr, arg=None):
+        return True
+
+    def get_attribute(self, name):
+        return "dark"
 
     def count(self):
         return 0

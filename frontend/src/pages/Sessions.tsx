@@ -174,7 +174,7 @@ export default function Sessions() {
           <span className="text-xs font-medium text-slate-500 dark:text-slate-400">
             Status
           </span>
-          <div className="flex gap-1">
+          <div className="flex flex-wrap gap-1">
             <button
               type="button"
               onClick={() => setStatusFilter("")}
@@ -226,7 +226,7 @@ export default function Sessions() {
                 onClick={() =>
                   setExpandedId(expandedId === session.id ? null : session.id)
                 }
-                className="flex w-full items-center gap-3 px-4 py-3 text-left"
+                className="flex w-full flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3 text-left"
                 aria-expanded={expandedId === session.id}
               >
                 <span
@@ -283,7 +283,7 @@ export default function Sessions() {
           <img
             src={zoomImage}
             alt="Screenshot preview"
-            className="max-h-full max-w-full rounded-lg shadow-2xl"
+            className="max-h-full max-w-full rounded-lg object-contain shadow-2xl"
           />
         </div>
       )}
@@ -425,13 +425,13 @@ function SessionDetail({
   return (
     <div className="border-t border-slate-100 px-4 py-4 dark:border-slate-800">
       <div className="grid gap-4 lg:grid-cols-2">
-        <div className="flex flex-col gap-4">
+        <div className="flex min-w-0 flex-col gap-4">
           {session.expected_output && (
             <div>
               <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
                 Expected output
               </h4>
-              <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
+              <p className="mt-1 break-words text-sm text-slate-600 dark:text-slate-300">
                 {session.expected_output}
               </p>
             </div>
@@ -441,7 +441,7 @@ function SessionDetail({
               <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
                 Actual outcome
               </h4>
-              <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
+              <p className="mt-1 break-words text-sm text-slate-600 dark:text-slate-300">
                 {session.actual_outcome}
               </p>
             </div>
@@ -455,10 +455,12 @@ function SessionDetail({
                 {session.checkpoints.map((checkpoint) => (
                   <li
                     key={checkpoint.id}
-                    className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300"
+                    className="flex min-w-0 items-center gap-2 text-sm text-slate-600 dark:text-slate-300"
                   >
                     <span className="text-indigo-500">◆</span>
-                    <span className="flex-1">{checkpoint.label}</span>
+                    <span className="min-w-0 flex-1 break-words">
+                      {checkpoint.label}
+                    </span>
                     <span className="text-xs text-slate-400">
                       {formatWhen(checkpoint.at)}
                     </span>
@@ -580,7 +582,7 @@ function SessionDetail({
           )}
         </div>
 
-        <div className="flex flex-col gap-4">
+        <div className="flex min-w-0 flex-col gap-4">
           {sliceLines.length > 0 && (
             <div>
               <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
@@ -607,9 +609,9 @@ function SessionDetail({
               <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
                 Screenshots ({session.screenshots.length})
               </h4>
-              <ul className="mt-2 grid grid-cols-3 gap-2 sm:grid-cols-4">
+              <ul className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
                 {session.screenshots.map((shot) => (
-                  <li key={shot.id} className="flex flex-col gap-1">
+                  <li key={shot.id} className="flex min-w-0 flex-col gap-1">
                     <button
                       type="button"
                       onClick={() =>
