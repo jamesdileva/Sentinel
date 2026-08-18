@@ -24,8 +24,7 @@ def run(ctx: TesterContext) -> None:
     ctx.wait(10)
     ctx.http("GET", VITE_PORT)
     ctx.launch(BACKEND_CMD)
-    ctx.wait(8)
-    ctx.http("GET", FLASK_PORT)
+    ctx.http("GET", FLASK_PORT, retries=4)
 
 
 TESTER = Tester(

@@ -1,9 +1,11 @@
 """Card-Game click-through features (docs/clickthrough_plan.md).
 
-Locator ground truth (2026-08-17, UI scan): Login screen
-(`placeholder="Username"` / `placeholder="Password"`, `Login` /
-`Register` buttons), SlotMachine shows the balance as
-`💵 ${balance.toLocaleString()}` in a `div.font-bold.mb-2`, the spin
+Locator ground truth (2026-08-17 UI scan, corrected 2026-08-18 live run):
+Login screen (`placeholder="Username"` / `placeholder="Password"`,
+`Login` / `Register` buttons), SlotMachine shows the balance as
+`💰 ${balance.toLocaleString()}` in `div.text-xl.font-bold.mb-2` (the
+live run proved the class is `text-xl font-bold mb-2` — the scan's
+`font-bold mb-2` was wrong, and the glyph is 💰, not 💵), the spin
 button reads `🎰 ${bet * multiplier}` ("🎰 $100" at default x1), and the
 `Daily Login` popup (with a `Collect` button) overlays after login.
 
@@ -55,7 +57,7 @@ def _register_and_spin(ctx: FeatureContext) -> None:
     ctx.step("registration completed (alert confirmed)")
 
     page.get_by_role("button", name="Login").click()
-    balance = page.locator("div.font-bold.mb-2", has_text="💵")
+    balance = page.locator("div.text-xl.font-bold.mb-2", has_text="💰")
     balance.first.wait_for(state="visible", timeout=20000)
     ctx.step("logged in — balance display visible")
 

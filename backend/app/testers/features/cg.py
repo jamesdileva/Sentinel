@@ -1,12 +1,15 @@
 """Cg click-through features (docs/clickthrough_plan.md).
 
-Locator ground truth (2026-08-17, UI scan): the renderer (Vite dev on
-:5173 via the tester's `electron-dev` launch) has a Dashboard with the
-topic-count input (`id="topic-count"`, `htmlFor="topic-count"` label) and
-four style buttons (`Standard` / `Weird History` / `True Crime` /
-`Mysteries`); after generating, a `Pipeline Status` card shows a
-`Total Topics` stat. The backend runs with `LLM_PROVIDER=mock` (pinned by
-the tester) so topic generation is deterministic (fixed MOCK_TOPICS list).
+Locator ground truth (2026-08-17 UI scan, corrected 2026-08-18 live run):
+the renderer (Vite dev on :5173 via the tester's `electron-dev` launch)
+has a Dashboard with the topic-count input (`id="topic-count"`,
+`htmlFor="topic-count"` label) and four style buttons (`Standard` /
+`Weird History` / `True Crime` / `Mysteries`); after generating, a
+`Pipeline Status` card shows the `Total Topics` stat. The stats render as
+`<span className="stat-value">` — the live run proved the scan's
+`div.stat-value` was wrong (span, not div). The backend runs with
+`LLM_PROVIDER=mock` (pinned by the tester) so topic generation is
+deterministic (fixed MOCK_TOPICS list).
 
 The tester already generates mock topics on every run, so the residue of
 one more deterministic topic is the status quo — no cleanup needed.
@@ -29,7 +32,7 @@ def _generate_topics(ctx: FeatureContext) -> None:
 
     status_card = page.get_by_text("Pipeline Status", exact=True)
     status_card.first.wait_for(state="visible", timeout=30000)
-    stat = page.locator("div.stat-value", has_text=re.compile(r"^\s*\d"))
+    stat = page.locator("span.stat-value", has_text=re.compile(r"^\s*\d"))
     stat.first.wait_for(state="visible", timeout=15000)
     count = int(re.sub(r"\D", "", stat.first.inner_text()))
     if count < 1:

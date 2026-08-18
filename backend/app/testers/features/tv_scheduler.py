@@ -34,7 +34,7 @@ def _add_and_remove_show(ctx: FeatureContext) -> None:
     ctx.step("show row appears in My Shows")
     ctx.shot("show added to watchlist")
 
-    row = page.locator(f"xpath=//div[.//strong[normalize-space()='{name}']]").first
+    row = page.locator(f"xpath=//div[./strong[normalize-space()='{name}']]").first
     row.get_by_role("button", name="Delete").click()
     page.get_by_text(name, exact=True).first.wait_for(state="hidden", timeout=15000)
     ctx.step("self-created show deleted")
