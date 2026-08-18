@@ -29,6 +29,7 @@ import time
 from app.core.logging import get_logger
 from app.services.app_sessions import AppSessionService, _slug
 from app.services.build_runner import BuildRunner
+from app.services.feature_runner import FeatureRunner
 from app.services.launcher_detect import find_packaged_launcher
 from app.testers import DEFAULT_SMOKE, TESTERS, Tester
 from app.testers._helpers import (
@@ -75,6 +76,7 @@ class TesterRunner:
             "name": tester.name,
             "description": tester.description,
             "kind": tester.kind,
+            "features": FeatureRunner(self.session).describe(project),
         }
 
     def run(self, project) -> object:
@@ -89,6 +91,7 @@ class TesterRunner:
         try:
             self._auto_launch(project, tester, ctx, service, app_session.id)
             tester.run(ctx)
+            self._features(project, ctx, service, app_session.id)
             self._auto_render(project, tester, ctx, service, app_session.id)
             outcome = f"All {ctx.steps} step(s) passed"
             status = "passed"
@@ -158,3 +161,9 @@ class TesterRunner:
             )
             return
         ctx.render_and_register(tester.web_url, "headless dashboard render")
+
+    def _features(self, project, ctx: TesterContext, service, session_id: str) -> None:
+        """v1.17.14.0: after the smoke tester passes, drive the project's
+        UI click-through features (Playwright, loopback-only). Failures map
+        through the same Tester*Error semantics as the tester itself."""
+        FeatureRunner(self.session).run(project, ctx, service, session_id)

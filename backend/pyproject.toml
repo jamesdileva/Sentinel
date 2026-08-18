@@ -17,6 +17,10 @@ dependencies = [
     # v1.17.10: session screenshots (later.md Tier 4) — full-screen grab via
     # PIL.ImageGrab + 90x60 thumbnail generation.
     "pillow>=10.0",
+    # v1.17.14: UI click-through features (docs/clickthrough_plan.md) —
+    # drives the installed system Edge via the msedge channel (no browser
+    # download); loopback-only navigation is enforced in the feature layer.
+    "playwright>=1.45",
 ]
 
 [project.optional-dependencies]
