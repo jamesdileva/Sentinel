@@ -24,7 +24,9 @@ browser-served app that declared `web_url` but registered no screenshots
 gets one headless render of it auto-registered.
 """
 
+import subprocess
 import time
+from pathlib import Path
 
 from app.core.logging import get_logger
 from app.services.app_sessions import AppSessionService, _slug
@@ -43,6 +45,21 @@ from app.utils.window_capture import find_project_window
 logger = get_logger(__name__)
 
 WINDOW_WAIT_S = 20
+
+
+def _kill_tree_best_effort(launcher: Path) -> None:
+    """Session-end cleanup (v1.17.14.4 live-fix): the packaged app spawns
+    its backend as a separate process tree (WFT's runtime python), so
+    killing just the exe leaves an orphan backend holding ports/state for
+    the next run — taskkill /T takes the whole tree down."""
+    try:
+        subprocess.run(
+            ["taskkill", "/T", "/IM", launcher.name, "/F"],
+            capture_output=True,
+            timeout=15,
+        )
+    except (OSError, subprocess.SubprocessError):
+        logger.warning("Session-end cleanup failed for %s", launcher.name)
 
 
 class TesterUnavailableError(Exception):
@@ -88,8 +105,9 @@ class TesterRunner:
             project.id, f"Tester: {tester.name}", tester.description
         )
         ctx = TesterContext(project, app_session.id, service)
+        launcher: Path | None = None
         try:
-            self._auto_launch(project, tester, ctx, service, app_session.id)
+            launcher = self._auto_launch(project, tester, ctx, service, app_session.id)
             tester.run(ctx)
             self._features(project, ctx, service, app_session.id)
             self._auto_render(project, tester, ctx, service, app_session.id)
@@ -106,26 +124,30 @@ class TesterRunner:
             outcome = f"Tester crashed: {exc!r}"
             status = "failed"
         service.end(app_session.id, outcome, status)
+        if launcher is not None:
+            _kill_tree_best_effort(launcher)
         logger.info("Tester %r for %s -> %s", tester.name, project.name, status)
         return app_session
 
     def _auto_launch(
         self, project, tester: Tester, ctx: TesterContext, service, session_id: str
-    ) -> None:
+    ) -> Path | None:
         """v1.17.13.5: launch the project's packaged desktop app (when one
         exists) before the tester runs, and capture its window once it
         appears — desktop apps record their real UI with no per-tester code.
-        Non-fatal by design: no launcher or no window is an honest skip."""
+        Non-fatal by design: no launcher or no window is an honest skip.
+        Returns the launched launcher (for session-end tree cleanup) or
+        None when nothing was launched."""
         if not tester.auto_launch:
-            return
+            return None
         launcher = find_packaged_launcher(project.path)
         if launcher is None:
             logger.info("Auto-launch for %s: no packaged app found", project.name)
-            return
+            return None
         launched, detail = BuildRunner._launch_app(project, f'"{launcher}"')
         if not launched:
             logger.warning("Auto-launch for %s failed: %s", project.name, detail)
-            return
+            return None
         ctx.checkpoint(f"auto-launched packaged app: {launcher.name}")
         window = None
         deadline = time.time() + WINDOW_WAIT_S
@@ -141,9 +163,10 @@ class TesterRunner:
                 project.name,
                 WINDOW_WAIT_S,
             )
-            return
+            return launcher
         checkpoint = service.checkpoint(session_id, "app window after auto-launch")
         service.capture(session_id, checkpoint.id)
+        return launcher
 
     def _auto_render(
         self, project, tester: Tester, ctx: TesterContext, service, session_id: str

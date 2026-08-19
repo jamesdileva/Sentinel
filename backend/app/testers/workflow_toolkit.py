@@ -185,9 +185,18 @@ def run(ctx: TesterContext) -> None:
     root = Path(ctx.project.path)
 
     ctx.launch(_backend_command(root), env={"PYTHONPATH": ""})
-    ctx.wait_log("Uvicorn running", 60)
-    ctx.wait(3)
-    ctx.http("GET", f"{PORT}/health", expect_body="healthy")
+    # Deterministic readiness (live-fix 2026-08-18): the app log is shared
+    # with the auto-launched window's stdout and uvicorn's file output is
+    # block-buffered — a log wait can time out on a healthy backend. The
+    # health endpoint is the contract (Rule 3: determinism over generation).
+    ctx.http(
+        "GET",
+        f"{PORT}/health",
+        expect_body="healthy",
+        timeout_s=5,
+        retries=20,
+        retry_delay_s=3,
+    )
     ctx.checkpoint("backend up on :8000")
 
     headers = {"Content-Type": "application/json"}

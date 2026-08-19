@@ -113,8 +113,11 @@ def _reclaim_packaged(launcher: Path) -> None:
         try:
             subprocess.run(
                 # image name raw (no embedded quotes — list-form argv is not
-                # shell-parsed; quoting the name made taskkill match nothing)
-                ["taskkill", "/IM", launcher.name, "/F"],
+                # shell-parsed; quoting the name made taskkill match nothing).
+                # /T kills the spawned backend tree (WFT spawns a separate
+                # runtime python) — without it the orphan held the app's
+                # ports/state for the next run (live-fix 2026-08-18).
+                ["taskkill", "/IM", launcher.name, "/T", "/F"],
                 capture_output=True,
                 timeout=15,
             )
