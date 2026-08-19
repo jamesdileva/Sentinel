@@ -61,6 +61,7 @@ VIEWPORT = {"width": 1280, "height": 800}
 
 # Electron engine (v1.17.14.4)
 ELECTRON_CONNECT_MAX_S = 30  # wait for the CDP endpoint + window target
+ELECTRON_RECLAIM_MAX_S = 20  # wait for a reclaimed instance to actually die
 ELECTRON_SANDBOX_BOOTSTRAP_S = 20  # wait for the sandbox to gain any file
 ELECTRON_SANDBOX_STATE_S = 20  # wait for the app's own state artifact
 
@@ -80,18 +81,48 @@ def _free_port() -> int:
 
 
 def _reclaim_packaged(launcher: Path) -> None:
-    """Best-effort taskkill of a previously auto-launched packaged instance
-    (tester phase) so its ports/state do not collide with the sandboxed
+    """Best-effort taskkill of previously auto-launched packaged instances
+    (tester phase) so their ports/state do not collide with the sandboxed
     launch. The instance was launched by this session — reclaiming it is
-    cleanup of self-created entities (plan: port strategy)."""
-    try:
-        subprocess.run(
-            ["taskkill", "/IM", f'"{launcher.name}"', "/F"],
-            capture_output=True,
-            timeout=15,
+    cleanup of self-created entities (plan: port strategy).
+
+    A single taskkill can miss a mid-startup instance (live-fix 2026-08-18:
+    the auto-launched TV-Scheduler instance survived the first kill and
+    kept :3050, so the sandboxed backend hit EADDRINUSE and the app quit),
+    so the image is re-checked via tasklist and the kill is retried within
+    a bounded window; an instance that outlives it is a TesterEnvError —
+    the run fails honestly instead of colliding on the port."""
+    deadline = time.monotonic() + ELECTRON_RECLAIM_MAX_S
+    while time.monotonic() < deadline:
+        try:
+            result = subprocess.run(
+                ["tasklist", "/FI", f"IMAGENAME eq {launcher.name}", "/NH"],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+        except (OSError, subprocess.SubprocessError):
+            result = None
+        still_alive = bool(
+            result
+            and result.returncode == 0
+            and launcher.name.lower() in result.stdout.lower()
         )
-    except (OSError, subprocess.SubprocessError):
-        logger.warning("Reclaim taskkill failed for %s", launcher.name)
+        if not still_alive:
+            return
+        try:
+            subprocess.run(
+                ["taskkill", "/IM", f'"{launcher.name}"', "/F"],
+                capture_output=True,
+                timeout=15,
+            )
+        except (OSError, subprocess.SubprocessError):
+            logger.warning("Reclaim taskkill failed for %s", launcher.name)
+        time.sleep(2)
+    raise TesterEnvError(
+        f"packaged app {launcher.name!r} still running after reclaim "
+        f"({ELECTRON_RECLAIM_MAX_S}s) — cannot launch the sandboxed instance"
+    )
 
 
 def _spawn_packaged(launcher: Path, port: int, sandbox: Path) -> subprocess.Popen:

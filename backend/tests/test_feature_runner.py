@@ -7,6 +7,7 @@ registration. The Playwright browser is stubbed via a fake page — no real
 browser, no real network.
 """
 
+import types
 from pathlib import Path
 
 import pytest
@@ -364,6 +365,49 @@ def test_electron_sandbox_violation_maps_to_investigate(tmp_db):
         db.refresh(app_session)
         assert app_session.status.value == "investigate"
         assert "Sandbox" in app_session.actual_outcome
+
+
+def test_reclaim_retries_until_the_image_is_gone(monkeypatch):
+    """A single taskkill can miss a mid-startup instance — reclaim re-checks
+    via tasklist and keeps killing until the image is gone (live-fix
+    2026-08-18)."""
+    calls = []
+
+    def fake_run(cmd, **kw):
+        calls.append(cmd)
+        if cmd[0] == "tasklist":
+            kills = len([c for c in calls if c[0] == "taskkill"])
+            if kills == 0:
+                return types.SimpleNamespace(
+                    returncode=0, stdout="TV Scheduler.exe 1234 Console"
+                )
+            return types.SimpleNamespace(returncode=0, stdout="INFO: No tasks")
+        return types.SimpleNamespace(returncode=0, stdout="")
+
+    monkeypatch.setattr(fr_mod.subprocess, "run", fake_run)
+    monkeypatch.setattr(fr_mod.time, "sleep", lambda s: None)
+    fr_mod._reclaim_packaged(Path(r"C:\apps\TV Scheduler.exe"))
+    assert any(c[0] == "taskkill" for c in calls)
+    assert len([c for c in calls if c[0] == "tasklist"]) == 2
+
+
+def test_reclaim_timeout_maps_to_env_error(monkeypatch):
+    """An instance that outlives the reclaim window is a TesterEnvError —
+    the run fails honestly instead of colliding on the port."""
+    now = [0.0]
+
+    def fake_run(cmd, **kw):
+        if cmd[0] == "tasklist":
+            return types.SimpleNamespace(
+                returncode=0, stdout="TV Scheduler.exe 1234 Console"
+            )
+        return types.SimpleNamespace(returncode=0, stdout="")
+
+    monkeypatch.setattr(fr_mod.subprocess, "run", fake_run)
+    monkeypatch.setattr(fr_mod.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(fr_mod.time, "sleep", lambda s: now.__setitem__(0, now[0] + s))
+    with pytest.raises(TesterEnvError, match="reclaim"):
+        fr_mod._reclaim_packaged(Path(r"C:\apps\TV Scheduler.exe"))
 
 
 def test_assertion_error_passes_through(tmp_db):
