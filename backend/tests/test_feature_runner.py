@@ -387,7 +387,9 @@ def test_reclaim_retries_until_the_image_is_gone(monkeypatch):
     monkeypatch.setattr(fr_mod.subprocess, "run", fake_run)
     monkeypatch.setattr(fr_mod.time, "sleep", lambda s: None)
     fr_mod._reclaim_packaged(Path(r"C:\apps\TV Scheduler.exe"))
-    assert any(c[0] == "taskkill" for c in calls)
+    kills = [c for c in calls if c[0] == "taskkill"]
+    assert kills, "taskkill must have been issued"
+    assert kills[0][2] == "TV Scheduler.exe", "image name must be raw (no quotes)"
     assert len([c for c in calls if c[0] == "tasklist"]) == 2
 
 

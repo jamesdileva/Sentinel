@@ -112,7 +112,9 @@ def _reclaim_packaged(launcher: Path) -> None:
             return
         try:
             subprocess.run(
-                ["taskkill", "/IM", f'"{launcher.name}"', "/F"],
+                # image name raw (no embedded quotes — list-form argv is not
+                # shell-parsed; quoting the name made taskkill match nothing)
+                ["taskkill", "/IM", launcher.name, "/F"],
                 capture_output=True,
                 timeout=15,
             )
