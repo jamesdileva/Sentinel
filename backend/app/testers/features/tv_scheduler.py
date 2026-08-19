@@ -1,5 +1,11 @@
 """TV-Scheduler click-through features (docs/clickthrough_plan.md).
 
+Phase 2 (v1.17.14.4): the features drive the PACKAGED app's real window —
+the FeatureRunner relaunches the sandboxed exe (CDP-attached) and the
+window is already on the app, so there is no `ctx.go()` (electron features
+are refused navigation). The packaged asar still ships the same App.jsx
+DOM as the dev stack did, so the locator ground truth below is unchanged.
+
 Locator ground truth (2026-08-17 UI scan; corrected 2026-08-18 live runs):
 the SPA (frontend/src/App.jsx) is a single component. The `My Shows`
 section (cardStyle, maxHeight 40vh) holds the add-show form
@@ -22,17 +28,15 @@ and blocks duplicate adds — the feature therefore adds a REAL show from a
 candidate list, skipping any already in the watchlist, then deletes it
 again (plan: destructive actions only against self-created entities).
 Popular shows and the schedule proxy TVMaze, so the exploration feature
-fails honestly when TVMaze is down. The tester phase drives the dev stack
-(it taskkills the auto-launched packaged app first), so the current
-server.js/App.jsx code is exercised.
+fails honestly when TVMaze is down. The sandboxed instance starts with a
+fresh userData DB, so the watchlist is empty and the add/delete round trip
+is self-contained.
 """
 
 import re
 
 from app.testers._helpers import TesterAssertionError, TesterTimeoutError
 from app.testers.features import Feature, FeatureContext
-
-APP_URL = "http://localhost:5173"  # vite 8 binds ::1 — localhost, not 127.0.0.1
 
 CANDIDATES = [
     "Chicago Fire",
@@ -45,7 +49,6 @@ CANDIDATES = [
 
 def _add_and_remove_real_show(ctx: FeatureContext) -> None:
     page = ctx.page
-    ctx.go(APP_URL)
     my_shows = page.locator(
         "xpath=//section[.//button[normalize-space()='+ Add Show']]"
     )
@@ -77,7 +80,6 @@ def _add_and_remove_real_show(ctx: FeatureContext) -> None:
 
 def _dashboard_scroll_exploration(ctx: FeatureContext) -> None:
     page = ctx.page
-    ctx.go(APP_URL)
     episode_row = page.locator(
         "xpath=//section[.//h3]//div"
         "[.//button[normalize-space()='Save to My Shows']]"
@@ -111,7 +113,6 @@ def _dashboard_scroll_exploration(ctx: FeatureContext) -> None:
 
 def _search_filters_watchlist(ctx: FeatureContext) -> None:
     page = ctx.page
-    ctx.go(APP_URL)
     page.get_by_placeholder("Search saved shows...").fill("Fire")
     ctx.step("search filter applied (matches 'Chicago Fire' when saved)")
     page.wait_for_timeout(1000)
@@ -125,16 +126,19 @@ FEATURES = [
         "its row in My Shows, then delete it again (self-created entity "
         "only; duplicates are skipped honestly).",
         _add_and_remove_real_show,
+        electron=True,
     ),
     Feature(
         "dashboard scroll exploration",
         "Scroll the dashboard to the bottom (3-day episode schedule), then "
         "side-scroll the Popular Shows row and capture both.",
         _dashboard_scroll_exploration,
+        electron=True,
     ),
     Feature(
         "search filters saved shows",
         "Type into the saved-shows search box and capture the filtered list.",
         _search_filters_watchlist,
+        electron=True,
     ),
 ]

@@ -33,8 +33,8 @@ backend/app/api/v1/testers.py            descriptor gains features list
   `Tester`. Registry `FEATURES: dict[slug, list[Feature]]`, built like TESTERS.
 - **`FeatureContext`** wraps the existing `TesterContext` (same session /
   checkpoint plumbing):
-  - `ctx.page` — Playwright `Page` (browser features; phase 2 adds `ctx.app`
-    for Electron)
+  - `ctx.page` — Playwright `Page` (browser tab or the packaged app's
+    window for electron features, v1.17.14.4)
   - `ctx.go(url)` — loopback-validated navigation (the only sanctioned way to
     move the page)
   - `ctx.step(label)` — checkpoint
@@ -79,19 +79,32 @@ and refined in live E2E. External-API dependency risk (TV-Scheduler show
 lookup, demake pipeline runtime ~30 s) is accepted: assertions are about the
 UI's own response to the action, not external data correctness.
 
-## Phase 2 (v1.17.14.1) — Electron desktop features
+## Phase 2 (v1.17.14.4) — Electron desktop features (CDP engine)
 
-`playwright._electron.launch(exe)` on the packaged launcher (reuse
-`find_packaged_launcher`) for WorkFlow-Toolkit (Templates → run Payroll
-Audit → report row) and TV-Scheduler (add show via the real window).
+Drives the packaged launcher (reuse `find_packaged_launcher`) for
+WorkFlow-Toolkit (Templates → run Payroll Audit → report row) and
+TV-Scheduler (add show via the real window). **Engine amendment
+(v1.17.14.4): Playwright 1.62's python package ships no `p.electron`
+wrapper** (the node driver has electron support, the wrapper does not —
+verified `hasattr(p, 'electron')` → False), so the engine launches the
+packaged exe with `--remote-debugging-port=<free>` +
+`--user-data-dir=<temp sandbox>` and attaches via `connect_over_cdp` —
+same Page API for features, zero new dependencies.
 
-- **Data sandbox**: always launch with `--user-data-dir=<temp>` — the user's
-  real app state is never touched.
-- **Port strategy**: TV-Scheduler's packaged backend hard-codes :3050 — kill
-  the auto-launched instance before launching the Playwright-managed one;
-  WFT uses pickFreePort (no conflict). Tester runner passes
-  `auto_launch` control to the feature phase.
-- `ctx.app` fixture + window helpers (first window, per-window locators).
+- **Data sandbox**: always launch with `--user-data-dir=<temp>` — the
+  user's real app state is never touched. Verified, not assumed: the
+  temp dir must gain Chromium profile files and the app's own state
+  artifact (`tv_scheduler.db`, `data/` dir or `backend.log`) or the run
+  is a TesterEnvError (Rule 1). Window URL must be file:// or loopback.
+- **Port strategy**: TV-Scheduler's packaged backend hard-codes :3050 —
+  the runner reclaims the tester-phase auto-launched instance
+  (taskkill) before launching the sandboxed one; WFT uses pickFreePort
+  (no conflict). The spawned tree is taskkilled on exit (self-created).
+- **Feature model**: `Feature.electron=True` picks the electron engine;
+  `budget_s` overrides the 120 s deadline (WFT feature: 180 s).
+  `ctx.go()` is refused for electron features — the window is already on
+  the app. TV-Scheduler's interim dev-stack fallback is removed: real
+  TVMaze names never hit the stale asar's broken manual-add path.
 
 ## Explicit exclusions
 
@@ -120,6 +133,9 @@ Audit → report row) and TV-Scheduler (add show via the real window).
 
 - v1.17.14.0: engine + phase 1 (all 5 apps), changelog rows, later.md
   "UI automation remains future" line updated.
-- v1.17.14.1: phase 2 Electron features + `later.md` tier-2 refinement line.
+- v1.17.14.1–3: live-fix rounds (locator ground truth, real-name adds,
+  scroll exploration, Session responsive polish).
+- v1.17.14.4: phase 2 Electron features (CDP engine, sandbox, WFT Payroll
+  Audit, TV real window) + this plan's Phase 2 header updated.
 - Docs updated at implementation: `docs/02_Implementation_Guide.md` §14.8
   (tester section gains the feature layer), `docs/03_Sprint_Plan.md`.

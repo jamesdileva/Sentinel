@@ -60,10 +60,26 @@ def _mk_project(db, name, startup="npm start") -> Project:
     return project
 
 
-def _run_features(db, project, features, slug="Cg", stub_page=None):
+class _FakeProc:
+    pid = 1234
+
+
+def _run_features(
+    db,
+    project,
+    features,
+    slug="Cg",
+    stub_page=None,
+    launcher=Path(r"C:\packaged\App.exe"),
+    stub_reclaim=None,
+    stub_terminate=None,
+    stub_verify=None,
+):
     """Run a feature list end-to-end against a stubbed page, replicating
     the tester_runner status mapping (the feature runner raises;
-    TesterRunner maps)."""
+    TesterRunner maps). Electron features additionally stub the packaged-
+    launch helpers (reclaim / spawn / CDP attach / sandbox verify /
+    terminate)."""
     service = AppSessionService(db)
     app_session = service.start(project.id, "Tester: x", "")
     ctx = TesterContext(project, app_session.id, service)
@@ -89,6 +105,21 @@ def _run_features(db, project, features, slug="Cg", stub_page=None):
     monkey.setattr(fr_mod, "sync_playwright", _fake_playwright)
     monkey.setattr(fr_mod, "_headed", lambda: False)
     monkey.setitem(fr_mod.FEATURES, slug, features)
+    if any(f.electron for f in features):
+        monkey.setattr(fr_mod, "find_packaged_launcher", lambda path: launcher)
+        monkey.setattr(
+            fr_mod, "_reclaim_packaged", stub_reclaim or (lambda launcher: None)
+        )
+        monkey.setattr(
+            fr_mod, "_spawn_packaged", lambda launcher, port, sandbox: _FakeProc()
+        )
+        monkey.setattr(fr_mod, "_connect_cdp", lambda p, port, launcher: stub_page)
+        monkey.setattr(
+            fr_mod, "_verify_sandbox", stub_verify or (lambda sandbox, launcher: None)
+        )
+        monkey.setattr(
+            fr_mod, "_terminate_packaged", stub_terminate or (lambda proc: None)
+        )
     try:
         try:
             fr_mod.FeatureRunner(db).run(project, ctx, service, app_session.id)
@@ -112,12 +143,14 @@ def test_registry_has_expected_slugs():
         "Demake-Engine",
         "Dinner-Menu-Generator",
         "Tv-Scheduler",
+        "Workflow-Toolkit",
     }
     for slug, features in FEATURES.items():
         assert features, slug
         for feature in features:
             assert feature.name
             assert callable(feature.run)
+            assert feature.budget_s > 0
 
 
 def test_resolve_no_features_for_unknown_project(tmp_db):
@@ -153,6 +186,51 @@ def test_loopback_guard_refuses_remote_host(tmp_db):
             fctx.go("https://example.com")
         with pytest.raises(TesterEnvError, match="not loopback"):
             fctx.go("http://192.168.1.10:8000")
+
+
+def test_electron_go_refused(tmp_db):
+    """Electron features never navigate: their window is already on the
+    packaged app (v1.17.14.4)."""
+    with DbSession(get_engine()) as db:
+        project = _mk_project(db, "Cg")
+        service = AppSessionService(db)
+        session = service.start(project.id, "Tester: x", "")
+        ctx = TesterContext(project, session.id, service)
+        fctx = FeatureContext(
+            project, session.id, service, ctx, _GenericPage(), electron=True
+        )
+        with pytest.raises(TesterEnvError, match="electron windows"):
+            fctx.go("http://127.0.0.1:5173")
+
+
+def test_window_target_matching():
+    """Rule 1 for electron windows: only file:// and loopback targets are
+    ever matched by the CDP attach (v1.17.14.4)."""
+    from app.services import feature_runner as fr
+
+    assert (
+        fr._match_window_target(
+            [
+                {"type": "page", "url": "file:///C:/x/index.html"},
+                {"type": "other", "url": "http://127.0.0.1:9/x"},
+            ]
+        )
+        == "file:///C:/x/index.html"
+    )
+    assert (
+        fr._match_window_target([{"type": "page", "url": "http://127.0.0.1:51234/"}])
+        == "http://127.0.0.1:51234/"
+    )
+    assert (
+        fr._match_window_target(
+            [
+                {"type": "page", "url": "https://evil.example/"},
+                {"type": "page", "url": "devtools://devtools/bundled"},
+            ]
+        )
+        is None
+    )
+    assert fr._match_window_target([]) is None
 
 
 # ------------------------------------------------------------- error mapping
@@ -197,6 +275,95 @@ def test_budget_exhaustion_maps_to_timeout(tmp_db, monkeypatch):
         db.refresh(app_session)
         assert app_session.status.value == "investigate"
         assert "budget" in app_session.actual_outcome
+
+
+def test_feature_budget_override_maps_to_timeout(tmp_db):
+    """A feature's own budget_s replaces the 120 s default (v1.17.14.4)."""
+
+    def _feature(ctx):
+        ctx.deadline = 0
+        ctx.step("too late")
+
+    feature = Feature("slow2", "blows a short budget", _feature, budget_s=5)
+    with DbSession(get_engine()) as db:
+        project = _mk_project(db, "Cg")
+        service, app_session = _run_features(db, project, [feature])
+        db.refresh(app_session)
+        assert app_session.status.value == "investigate"
+        assert "5s budget" in app_session.actual_outcome
+
+
+# --------------------------------------------------------------- electron
+
+
+def test_electron_feature_without_launcher_maps_to_investigate(tmp_db):
+    feature = Feature(
+        "no-launcher",
+        "electron feature, no packaged exe",
+        lambda ctx: None,
+        electron=True,
+    )
+    with DbSession(get_engine()) as db:
+        project = _mk_project(db, "Cg")
+        service, app_session = _run_features(db, project, [feature], launcher=None)
+        db.refresh(app_session)
+        assert app_session.status.value == "investigate"
+        assert "no packaged launcher" in app_session.actual_outcome
+
+
+def test_electron_feature_runs_against_packaged_window(tmp_db):
+    """The electron engine reclaims the presence instance, launches the
+    sandboxed packaged app, attaches over CDP and drives the window page —
+    then terminates the spawned tree (v1.17.14.4)."""
+    reclaimed, terminated = [], []
+
+    def _reclaim(launcher):
+        reclaimed.append(launcher)
+
+    def _terminate(proc):
+        terminated.append(proc)
+
+    def _feature(ctx):
+        ctx.step("window driven")
+
+    feature = Feature(
+        "electron-ok", "runs in the packaged window", _feature, electron=True
+    )
+    with DbSession(get_engine()) as db:
+        project = _mk_project(db, "Cg")
+        service, app_session = _run_features(
+            db,
+            project,
+            [feature],
+            stub_reclaim=_reclaim,
+            stub_terminate=_terminate,
+        )
+        db.refresh(app_session)
+        assert app_session.status.value == "passed"
+        assert len(reclaimed) == 1
+        assert len(terminated) == 1
+        labels = [c.label for c in app_session.checkpoints]
+        assert "feature pass: electron-ok" in labels
+
+
+def test_electron_sandbox_violation_maps_to_investigate(tmp_db):
+    """The packaged app ignoring --user-data-dir is a Rule 1 violation —
+    TesterEnvError, never a silent pass (v1.17.14.4)."""
+
+    def _violate(sandbox, launcher):
+        raise TesterEnvError("Sandbox stayed empty after launch")
+
+    feature = Feature(
+        "sandbox", "sandbox must be honored", lambda ctx: None, electron=True
+    )
+    with DbSession(get_engine()) as db:
+        project = _mk_project(db, "Cg")
+        service, app_session = _run_features(
+            db, project, [feature], stub_verify=_violate
+        )
+        db.refresh(app_session)
+        assert app_session.status.value == "investigate"
+        assert "Sandbox" in app_session.actual_outcome
 
 
 def test_assertion_error_passes_through(tmp_db):
@@ -264,6 +431,16 @@ def test_all_registered_features_pass_against_fake_page(tmp_db):
                 fixture_dir = Path(project.path) / "backend"
                 fixture_dir.mkdir(parents=True, exist_ok=True)
                 (fixture_dir / "test_game_trailer.mp4").write_bytes(b"fixture")
+            if slug == "Workflow-Toolkit":
+                fixture = (
+                    Path(project.path)
+                    / "backend"
+                    / "tests"
+                    / "fixtures"
+                    / "payroll_issues.csv"
+                )
+                fixture.parent.mkdir(parents=True, exist_ok=True)
+                fixture.write_text("name,hours\n", encoding="utf-8")
             service, app_session = _run_features(
                 db, project, features, slug=slug, stub_page=_GenericPage()
             )
@@ -379,7 +556,10 @@ class _GenericLocator:
         return "dark"
 
     def count(self):
-        return 0
+        return 2
+
+    def select_option(self, index=None, label=None, value=None):
+        return None
 
     def is_enabled(self):
         return self.page._file_chosen
