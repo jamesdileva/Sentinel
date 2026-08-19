@@ -214,6 +214,23 @@ def _verify_sandbox(sandbox: Path, launcher: Path) -> None:
     )
 
 
+def _remove_sandbox(sandbox: Path) -> None:
+    """Bounded retry of the sandbox cleanup (live-fix 2026-08-18): taskkill
+    terminates the tree, but the killed Chromium processes release their
+    leveldb/handle locks a beat later — a single immediate rmtree can leave
+    the userData dir behind. Retrying within a short window removes it."""
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        try:
+            shutil.rmtree(sandbox, ignore_errors=True)
+        except OSError:
+            pass
+        if not sandbox.exists():
+            return
+        time.sleep(1)
+    logger.warning("Sandbox cleanup failed for %s", sandbox)
+
+
 def _terminate_packaged(proc) -> None:
     """Taskkill the spawned process tree (self-created; the CDP attach is
     non-owning, so closing the browser does not stop the app)."""
@@ -293,7 +310,7 @@ class FeatureRunner:
             self._run_features(features, ctx, service, session_id, page)
         finally:
             _terminate_packaged(proc)
-            shutil.rmtree(sandbox, ignore_errors=True)
+            _remove_sandbox(sandbox)
 
     # ------------------------------------------------------------- common
 

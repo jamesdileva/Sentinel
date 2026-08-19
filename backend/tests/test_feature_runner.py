@@ -412,6 +412,46 @@ def test_reclaim_timeout_maps_to_env_error(monkeypatch):
         fr_mod._reclaim_packaged(Path(r"C:\apps\TV Scheduler.exe"))
 
 
+def test_sandbox_removal_retries_until_gone(tmp_path, monkeypatch):
+    """The killed Chromium processes release their leveldb locks a beat
+    after taskkill — the sandbox removal retries within a bounded window
+    (live-fix 2026-08-18) and only warns if it still lingers."""
+    sandbox = tmp_path / "sandbox"
+    sandbox.mkdir()
+    (sandbox / "LOCK").write_text("x")
+
+    attempts = []
+    real_rmtree = fr_mod.shutil.rmtree
+
+    def fake_rmtree(path, **kw):
+        attempts.append(1)
+        if len(attempts) == 1:
+            raise OSError("locked")
+        real_rmtree(path)
+
+    monkeypatch.setattr(fr_mod.shutil, "rmtree", fake_rmtree)
+    monkeypatch.setattr(fr_mod.time, "sleep", lambda s: None)
+    fr_mod._remove_sandbox(sandbox)
+    assert not sandbox.exists()
+    assert len(attempts) == 2
+
+
+def test_sandbox_removal_warns_when_locked_out(tmp_path, monkeypatch):
+    """A sandbox that outlives the retry window is logged, never raised —
+    the feature outcome already happened; the leftover is temp junk."""
+    sandbox = tmp_path / "stubborn"
+    sandbox.mkdir()
+    monkeypatch.setattr(fr_mod.shutil, "rmtree", lambda path, **kw: None)
+    monkeypatch.setattr(fr_mod.time, "sleep", lambda s: None)
+    warnings = []
+    monkeypatch.setattr(
+        fr_mod.logger, "warning", lambda msg, *a: warnings.append(str(msg))
+    )
+    fr_mod._remove_sandbox(sandbox)
+    assert sandbox.exists()
+    assert warnings and "Sandbox cleanup failed" in warnings[0]
+
+
 def test_assertion_error_passes_through(tmp_db):
     def _feature(ctx):
         raise TesterAssertionError("expected value did not match")
