@@ -105,6 +105,11 @@ def _run_payroll_audit(ctx: FeatureContext) -> None:
     ctx.step(f"{TEMPLATE_NAME} run completed")
     ctx.shot("workflow history: completed run")
 
+    # The run modal stays open (with the completed status) and its
+    # modal-overlay blocks the sidebar — close it before navigating.
+    page.locator(".run-modal").get_by_role("button", name="Close", exact=True).click()
+    ctx.step("run modal closed")
+
     # 5. Reports page shows the run's report row (report_type "Workflow").
     page.get_by_role("link", name="Reports").click()
     report = page.locator(".report-type-badge", has_text="Workflow")
