@@ -106,10 +106,102 @@ same Page API for features, zero new dependencies.
   the app. TV-Scheduler's interim dev-stack fallback is removed: real
   TVMaze names never hit the stale asar's broken manual-add path.
 
+## Round 3 (v1.17.15) — remaining app coverage: Algo Trader + HFT
+
+Two indexed projects still have no tester (their startup commands are empty,
+so even default smoke cannot launch them). Both get custom testers + (for
+Algo Trader) a browser feature. No new engine.
+
+### Algo Trader
+
+Two surfaces, both fit existing infrastructure:
+
+| Surface | Type | Coverage |
+|---|---|---|
+| `web/app.py` | Flask dashboard on **:5000** (reads `data/algo_trader.db`, read-only views: positions reconstructed from orders, recent orders) | Tester `ctx.launch` → `ctx.http` on `/`, `/api/positions`, `/api/orders/recent` (200 + body markers) → one browser **feature**: dashboard renders, tables populate — read-only, no Alpaca writes |
+| `build/backtester.exe`, `build/trader.exe` | CLI (no UI — console output only) | Real backtest `ctx.cli` (`backtester.exe 2026-07-01 2026-07-24` — bars confirmed in backtest.db, fully local; asserted on the `=== BACKTEST COMPLETE ===` marker + exit 0); output lands in the app log, so the "console screenshot" is the log itself. `trader.exe` excluded (live loop, not deterministic). |
+
+Notes:
+- Flask needs an interpreter with Flask installed — no venv in the repo;
+  the launch command's `python` passes through to the system Python
+  (Flask 3.1.3 on this machine).
+- The real backtest wipes + repopulates only `data/backtest.db` (the
+  app's own backtest copy; `data/algo_trader.db` — the dashboard's DB —
+  is untouched).
+
+### HFT Order Book — presence tester
+
+- `build/hft.exe` (4.37 MB, native C++ SDL2 + OpenGL + Dear ImGui) — **not**
+  Chromium, no DOM, no accessibility tree. Playwright/CDP cannot drive it;
+  pywinauto element-driving cannot see it (ImGui draws its own controls).
+- Coverage: tester `ctx.launch` the exe → window capture via
+  `find_project_window` (matches by **exe path under the project** — works
+  for `build/hft.exe` out of the box) + gray-level check → in-tester
+  session-end tree kill (taskkill /T /IM hft.exe — the launch shell has no
+  tracked pid, so the tester cleans up its own exe). Honest caveat:
+  SDL2/OpenGL windows can render blank through `PrintWindow` (GPU
+  compositing) — the existing screen-crop fallback covers that; live E2E
+  confirmed real captures.
+- `launcher_detect.py` is **not** extended for native `build/` exes — the
+  launch stays in the tester (minimal change; re-visit if more native apps
+  appear).
+- Real click-through is Phase 3 chunk 2 (input scripting, gated).
+
+## Phase 3 (v1.17.16) — native desktop UIA (chunked)
+
+Ground truth (verified 2026-08-18): **tkinter exposes a real MSAA/UIA
+accessibility tree** — pywinauto element-driving works (buttons, entries by
+name). **Dear ImGui exposes no tree** — pywinauto can only send raw input
+(clicks at coordinates, keys); assertions degrade to screenshots. The plan
+splits accordingly.
+
+### Chunk 1 — UIA engine + AG features
+
+- New engine `backend/app/services/desktop_runner.py`, `Feature.native=True`:
+  pywinauto dependency (pure-python; new in `requirements.txt`), attach by
+  window title, click/type by element name, same session/checkpoint/
+  screenshot plumbing, same error mapping (`TesterAssertionError` /
+  `TesterEnvError` / `TesterTimeoutError`) and per-feature budget.
+  Deterministic guard mirrors the browser engine: window title must match a
+  known app pattern (never drive an arbitrary window).
+- AG features: launch `rigging_engine/main.py gui` (tkinter; existing AG
+  tester already launches it) → assert the main window + key widgets
+  (Notebook tabs, "View Last Export" bar button) → load a real source image
+  (`poses/images/` PNG, e.g. a run-cycle pose) via the file dialog →
+  start generation → **assert the progress state transition only**
+  (SF3D generation takes 5–10 min — completion is NOT asserted, same honest
+  pattern as Cg's RESEARCHING; budget_s ~600 for the transition window).
+  Writes are the app's own output under the project (self-created entities).
+- Tests: fake-UIA-window unit tests + live E2E with gray-level verification.
+
+### Chunk 2 — HFT input scripting (stretch, gated)
+
+Coordinate/keyboard input against a fixed window geometry (set position +
+size first), asserting via screenshots (pixel-region checks). Fragile by
+nature — only attempted if Chunk 1 ships AND the Round 3 HFT presence
+captures show a stable render. Honest fallback: presence-only forever.
+
+Button ground truth (GUI.cpp, verified 2026-08-19): main menu has
+`BENCHMARK MODE` (GUI.cpp:134 — auto-runs benchmark mode) and
+`TRADING GAME` (GUI.cpp:153 → `GamePhase::StockPicker`); the picker
+draws 2 rows of 3 clickable stock cards (drawStockPicker, GUI.cpp:536,
+fixed cardW/cardH) then `START TRADING` (GUI.cpp:208) begins the
+1–2 min trading phase; `MAIN MENU` (GUI.cpp:472) returns. The window is
+fixed-size (GUI::init takes width/height) and ImGui lays out
+deterministically, so button coordinates are stable once the window
+position is pinned via SetWindowPos. Target flow: click BENCHMARK MODE
+→ screenshot; MAIN MENU → TRADING GAME → click one card → START TRADING
+→ 3–4 screenshots across the run. No element tree: screenshot-only
+assertions (no text reads).
+
+### Chunk 3 — docs + tests + changelog
+
+Phase 3 section (this), engine tests, changelog rows, later.md line update.
+
 ## Explicit exclusions
 
-- **AG** (tkinter) — Playwright cannot drive it; pywinauto/UIA is a separate
-  future decision.
+- **AG** (tkinter) — Playwright cannot drive it; pywinauto/UIA is Phase 3
+  chunk 1 (element-driven; tkinter has a real accessibility tree).
 - **Demake `game.html`** (Phaser/WebGL canvas) and any canvas-only UI — the
   DOM boundary is the feature boundary.
 - **Cg Publish page** (YouTube auth/upload) — irreversible actions (Rule 2).
@@ -137,5 +229,10 @@ same Page API for features, zero new dependencies.
   scroll exploration, Session responsive polish).
 - v1.17.14.4: phase 2 Electron features (CDP engine, sandbox, WFT Payroll
   Audit, TV real window) + this plan's Phase 2 header updated.
+- v1.17.15: Round 3 app coverage — Algo Trader (Flask dashboard tester +
+  browser feature + CLI steps for backtester/trader) and HFT Order Book
+  (presence tester on build/hft.exe).
+- v1.17.16: Phase 3 — chunk 1 (pywinauto UIA engine + AG features), chunk 2
+  (HFT input scripting, gated), chunk 3 (docs/tests/changelog).
 - Docs updated at implementation: `docs/02_Implementation_Guide.md` §14.8
   (tester section gains the feature layer), `docs/03_Sprint_Plan.md`.

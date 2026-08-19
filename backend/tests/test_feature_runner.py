@@ -139,6 +139,7 @@ def _run_features(
 
 def test_registry_has_expected_slugs():
     assert set(FEATURES) == {
+        "Algo-Trader",
         "Card-Game",
         "Cg",
         "Demake-Engine",

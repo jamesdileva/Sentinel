@@ -45,6 +45,7 @@ class Feature:
 # Submodules import `Feature` back from this package (circular-safe,
 # same pattern as the testers registry).
 from app.testers.features import (  # noqa: E402
+    algo_trader,
     card_game,
     cg,
     demake,
@@ -56,6 +57,7 @@ from app.testers.features import (  # noqa: E402
 
 def _build_registry() -> dict[str, list[Feature]]:
     return {
+        "Algo-Trader": algo_trader.FEATURES,
         "Card-Game": card_game.FEATURES,
         "Cg": cg.FEATURES,
         "Demake-Engine": demake.FEATURES,

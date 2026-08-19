@@ -46,11 +46,13 @@ class Tester:
 # the class above exists (circular-safe, noqa: E402).
 from app.testers import (  # noqa: E402
     ag,
+    algo_trader,
     card_game,
     cg,
     default_smoke,
     demake_engine,
     dinner_menu_generator,
+    hft_order_book,
     tv_scheduler,
     workflow_toolkit,
 )
@@ -59,10 +61,12 @@ from app.testers import (  # noqa: E402
 def _build_registry() -> dict[str, Tester]:
     testers = [
         ag.TESTER,
+        algo_trader.TESTER,
         card_game.TESTER,
         cg.TESTER,
         demake_engine.TESTER,
         dinner_menu_generator.TESTER,
+        hft_order_book.TESTER,
         tv_scheduler.TESTER,
         workflow_toolkit.TESTER,
     ]

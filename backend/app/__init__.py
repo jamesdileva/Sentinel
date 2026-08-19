@@ -1,3 +1,3 @@
 """Project Sentinel backend package."""
 
-__version__ = "1.17.14.4"
+__version__ = "1.17.15.0"

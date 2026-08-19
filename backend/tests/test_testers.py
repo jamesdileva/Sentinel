@@ -107,10 +107,12 @@ def _unregister() -> None:
 def test_registry_has_phase_a_testers():
     assert set(TESTERS) == {
         "Ag",
+        "Algo-Trader",
         "Card-Game",
         "Cg",
         "Demake-Engine",
         "Dinner-Menu-Generator",
+        "Hft-Order-Book",
         "Tv-Scheduler",
         "Workflow-Toolkit",
     }
