@@ -9,7 +9,7 @@ import Portfolio from "../pages/Portfolio";
 import Projects from "../pages/Projects";
 import Security from "../pages/Security";
 import Sessions from "../pages/Sessions";
-import System from "../pages/System";
+import Settings from "../pages/Settings";
 
 export function AppRoutes() {
   return (
@@ -23,7 +23,7 @@ export function AppRoutes() {
         <Route path="knowledge" element={<KnowledgeExplorer />} />
         <Route path="portfolio" element={<Portfolio />} />
         <Route path="observatory" element={<Observatory />} />
-        <Route path="system" element={<System />} />
+        <Route path="system" element={<Settings />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>

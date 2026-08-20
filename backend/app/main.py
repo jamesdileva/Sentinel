@@ -23,6 +23,7 @@ from app.api.v1.projects import router as projects_router
 from app.api.v1.rag import router as rag_router
 from app.api.v1.security import router as security_router
 from app.api.v1.sessions import router as sessions_router
+from app.api.v1.settings import router as settings_router
 from app.api.v1.system import router as system_router
 from app.api.v1.testers import router as testers_router
 from app.api.v1.tests import router as tests_router
@@ -214,6 +215,7 @@ app.include_router(tests_router, prefix="/api/v1")
 app.include_router(testers_router, prefix="/api/v1")
 app.include_router(security_router, prefix="/api/v1")
 app.include_router(sessions_router, prefix="/api/v1")
+app.include_router(settings_router, prefix="/api/v1")
 app.include_router(system_router, prefix="/api/v1")
 app.include_router(rag_router, prefix="/api/v1")
 app.include_router(ws_router, prefix="/api/v1")
