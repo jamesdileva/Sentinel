@@ -34,8 +34,11 @@ is an env error, not a lie) -> theme-signature anchors -> click Browse
 the pose path + Enter (dialog must close, entry must show the path) ->
 click Generate Character -> assert the progress transition ONLY: the
 status region repaints (SF3D runs 5-10 min; completion is NOT asserted —
-same pattern as Cg's RESEARCHING). budget_s ~600 covers the transition
-window.
+same pattern as Cg's RESEARCHING). The feature then waits for the
+viewer window the app itself spawns at the end of a successful export
+(gui.py:505-508 `_launch_preview`), attaches to it and screenshots the
+generated character's 3D scene — completion proof without any text
+read. budget_s ~900 covers the transition + the viewer wait.
 
 The window is the one launched by the tester phase of this same session
 (tester-run hook); a missing/busy window is an honest TesterEnvError.
@@ -44,11 +47,12 @@ The window is the one launched by the tester phase of this same session
 import time
 from pathlib import Path
 
-from app.services.desktop_runner import DesktopApp
+from app.services.desktop_runner import DesktopApp, wait_for_window
 from app.testers._helpers import TesterAssertionError, TesterEnvError
 from app.testers.features import Feature, FeatureContext
 
 WINDOW_TITLE = r"^AG Character & Weapon Studio$"
+VIEWER_TITLE = r"^AG (Animation )?Viewer"  # viewer.py:901 default + playback caption
 POSE_IMAGE = r"poses\images\front_tpose.png"
 DIALOG_TITLE = r"^Select T-Pose Image$"
 
@@ -65,6 +69,8 @@ ENTRY_EMPTY = (255, 255, 255)
 ENTRY_MIN_TEXT_PX = 800  # measured ~1600 for the pose path
 
 TRANSITION_WAIT_S = 120  # transition window after the generate click
+VIEWER_WAIT_S = 600  # viewer wait after the transition (generation completes)
+VIEWER_SETTLE_S = 4  # scene load before the screenshot
 
 
 def run(ctx: FeatureContext) -> None:
@@ -121,6 +127,19 @@ def run(ctx: FeatureContext) -> None:
 
     ctx.shot("SF3D generation started")
 
+    viewer = wait_for_window(
+        VIEWER_TITLE, timeout_s=VIEWER_WAIT_S, budget_s=ctx.budget_s
+    )
+    if viewer is None:
+        raise TesterAssertionError(
+            f"viewer window ({VIEWER_TITLE!r}) never appeared within "
+            f"{VIEWER_WAIT_S}s — generation did not complete"
+        )
+    ctx.desktop = viewer
+    ctx.step("viewer window appeared: generation completed, scene loading")
+    time.sleep(VIEWER_SETTLE_S)
+    ctx.shot("AG viewer with the generated character")
+
 
 FEATURES = [
     Feature(
@@ -131,13 +150,16 @@ FEATURES = [
             "a real pose via the native file dialog (driven by keystrokes), "
             "click Generate Character and assert the progress state "
             "transition only (status region repaint) — SF3D completion is "
-            "not asserted (5-10 min run, Rule 3). Tk exposes no "
+            "not asserted via text; instead the feature waits for the "
+            "viewer window the app spawns at the end of a successful "
+            "export and screenshots the generated character's 3D scene. "
+            "Tk exposes no "
             "accessibility tree on this machine, so clicks are measured "
             "physical input; a busy desktop that withholds foreground is an "
             "honest env error."
         ),
         run=run,
         native=True,
-        budget_s=600,
+        budget_s=900,
     )
 ]

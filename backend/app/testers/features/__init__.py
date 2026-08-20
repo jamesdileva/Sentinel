@@ -53,6 +53,7 @@ class Feature:
 # same pattern as the testers registry).
 from app.testers.features import (  # noqa: E402
     ag,
+    airadio,
     algo_trader,
     card_game,
     cg,
@@ -67,6 +68,7 @@ from app.testers.features import (  # noqa: E402
 def _build_registry() -> dict[str, list[Feature]]:
     return {
         "Ag": ag.FEATURES,
+        "Airadio": airadio.FEATURES,
         "Algo-Trader": algo_trader.FEATURES,
         "Card-Game": card_game.FEATURES,
         "Cg": cg.FEATURES,

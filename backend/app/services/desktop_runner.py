@@ -53,6 +53,12 @@ CONNECT_MAX_S = 30  # wait for the app window to appear
 FOREGROUND_MAX_S = 6  # bring-to-front attempts before an honest env error
 DIALOG_WAIT_S = 15  # wait for a native dialog to open
 
+
+class WindowNotFoundError(TesterEnvError):
+    """No window matched the declared title pattern within the wait budget
+    (the window the feature waits for never appeared)."""
+
+
 WM_MOUSEMOVE = 0x0200
 WM_LBUTTONDOWN = 0x0201
 WM_LBUTTONUP = 0x0202
@@ -305,14 +311,14 @@ class DesktopApp:
 
     # ------------------------------------------------------------ connect
 
-    def connect(self) -> None:
+    def connect(self, timeout_s: float = CONNECT_MAX_S) -> None:
         """Attach to the app window. Refuses windows whose title does not
         match the feature's declared pattern (Rule 1)."""
         from pywinauto import Desktop
         from pywinauto.findwindows import ElementAmbiguousError
 
         self._desktop = Desktop(backend="uia")
-        deadline = time.monotonic() + CONNECT_MAX_S
+        deadline = time.monotonic() + timeout_s
         while time.monotonic() < deadline:
             self._check_budget()
             try:
@@ -336,9 +342,9 @@ class DesktopApp:
             self.window = window
             self._client = self._client_size()
             return
-        raise TesterEnvError(
+        raise WindowNotFoundError(
             f"No window matching {self.title_pattern!r} appeared within "
-            f"{CONNECT_MAX_S}s — is the app's GUI running? (the tester "
+            f"{timeout_s:.0f}s — is the app's GUI running? (the tester "
             f"launches it; a crashed/closed GUI is an investigate)"
         )
 
@@ -701,3 +707,18 @@ class DesktopApp:
             f"region {box} never settled for {settle_s}s within "
             f"{min(timeout, self.budget_s)}s (expected a static end-state)"
         )
+
+
+def wait_for_window(
+    title_pattern: str, timeout_s: float, budget_s: int = 120
+) -> DesktopApp | None:
+    """Wait for a NEW window (one the app itself spawns — e.g. AG's viewer
+    opening after generation completes) and attach to it with the usual
+    Rule-1 title guard. Returns None on timeout; ambiguous matches and
+    title refusals still raise (honest env errors, never swallowed)."""
+    app = DesktopApp(title_pattern, budget_s=budget_s)
+    try:
+        app.connect(timeout_s=timeout_s)
+    except WindowNotFoundError:
+        return None
+    return app

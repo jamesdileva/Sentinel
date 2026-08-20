@@ -326,5 +326,12 @@ Phase 3 section (this), engine tests, changelog rows, later.md line update.
 - v1.17.16: Phase 3 — chunk 1 (pywinauto engine + AG features; ground truth
   corrected 2026-08-19: Tk has no accessibility tree), chunk 2 (HFT input
   scripting, gated), chunk 3 (docs/tests/changelog).
+- v1.17.17.1: AG completion proof (wait_for_window on the app-spawned
+  viewer, budget 900 s, live E2E 14 steps), Airadio screenshot feature
+  (live title = ElmWave Network, not the BrowserWindow title), FinSight
+  HTTP tester (cd electron && electron .; no auth; fallback), default_smoke
+  runs the discovered test command first, docs/integration.md (tiers +
+  checklist + Tauri skipped). Engine gains WindowNotFoundError +
+  wait_for_window.
 - Docs updated at implementation: `docs/02_Implementation_Guide.md` §14.8
   (tester section gains the feature layer), `docs/03_Sprint_Plan.md`.

@@ -103,6 +103,47 @@ def test_connect_ambiguous_instances_is_clear_env_error(monkeypatch):
         app.connect()
 
 
+def test_wait_for_window_returns_none_when_window_never_appears(monkeypatch):
+    """v1.17.17.1: wait_for_window polls with the caller's timeout and
+    returns None (not an error) when the awaited window never shows."""
+    import pywinauto
+
+    def _raise(title_re=None):
+        raise RuntimeError("no window")
+
+    monkeypatch.setattr(
+        pywinauto, "Desktop", lambda backend=None: type("D", (), {"window": _raise})()
+    )
+    monkeypatch.setattr(dr.time, "sleep", lambda s: None)
+    got = dr.wait_for_window(r"^AG (Animation )?Viewer", timeout_s=1, budget_s=60)
+    assert got is None
+
+
+def test_wait_for_window_attaches_when_window_appears(monkeypatch):
+    """The awaited child window (e.g. AG's viewer after generation) is
+    attached with the same Rule-1 title guard as connect()."""
+    _patch_pywinauto(monkeypatch, title="AG Animation Viewer")
+    got = dr.wait_for_window(r"^AG (Animation )?Viewer", timeout_s=5, budget_s=60)
+    assert got is not None
+    assert got.window is not None
+    assert got._client == (720, 680)
+
+
+def test_wait_for_window_ambiguous_is_honest_env_error(monkeypatch):
+    """Leftover viewer instances must not be silently swallowed — the
+    ambiguous case stays an honest env error."""
+    import pywinauto
+    from pywinauto.findwindows import ElementAmbiguousError
+
+    class _AmbiguousDesktop:
+        def window(self, title_re=None):
+            raise ElementAmbiguousError("2 elements match")
+
+    monkeypatch.setattr(pywinauto, "Desktop", lambda backend=None: _AmbiguousDesktop())
+    with pytest.raises(TesterEnvError, match="Multiple windows match"):
+        dr.wait_for_window(r"^AG (Animation )?Viewer", timeout_s=1, budget_s=60)
+
+
 # ----------------------------------------------------------- foreground
 
 

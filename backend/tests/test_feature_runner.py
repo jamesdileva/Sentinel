@@ -145,6 +145,7 @@ def _run_features(
 def test_registry_has_expected_slugs():
     assert set(FEATURES) == {
         "Ag",
+        "Airadio",
         "Algo-Trader",
         "Card-Game",
         "Cg",
@@ -663,6 +664,14 @@ def test_native_feature_runs_against_fake_desktop(tmp_db, monkeypatch):
             im.save(path)
 
     monkeypatch.setattr(ag_features, "DesktopApp", _FakeDesktopApp)
+    monkeypatch.setattr(
+        ag_features,
+        "wait_for_window",
+        lambda title_pattern, timeout_s, budget_s: _FakeDesktopApp(
+            title_pattern, budget_s
+        ),
+    )
+    monkeypatch.setattr(ag_features.time, "sleep", lambda s: None)
     with DbSession(get_engine()) as db:
         project = _mk_project(db, "Ag")
         pose = Path(project.path) / "poses" / "images" / "front_tpose.png"
@@ -686,6 +695,87 @@ def test_native_feature_runs_against_fake_desktop(tmp_db, monkeypatch):
         assert "wait_region_change" in calls
         labels = [c.label for c in app_session.checkpoints]
         assert "feature pass: AG GUI generation start" in labels
+        assert any("viewer window appeared" in label for label in labels)
+        assert any(
+            "AG viewer with the generated character" in label for label in labels
+        )
+
+
+def test_ag_feature_viewer_never_appears_fails(tmp_db, monkeypatch):
+    """The viewer window is the completion proof — if generation never
+    finishes, the feature fails honestly (v1.17.17.1)."""
+    from app.testers.features import ag as ag_features
+
+    class _FakeDlg:
+        def wait_gone(self, timeout):
+            pass
+
+        def focus(self):
+            pass
+
+    class _BusyDesktopApp:
+        def __init__(self, title_pattern, budget_s=120):
+            pass
+
+        def connect(self):
+            pass
+
+        def bring_to_front(self):
+            pass
+
+        def assert_pixel(self, x, y, rgb, tolerance=6):
+            pass
+
+        def click(self, x, y):
+            pass
+
+        def press_alt(self, letter):
+            pass
+
+        def type_text(self, text):
+            pass
+
+        def press_enter(self):
+            pass
+
+        def dialog(self, title_pattern):
+            return _FakeDlg()
+
+        def content_pixels(self, box, bg):
+            return 1600
+
+        def wait_region_change(self, before, box, min_changed, timeout, step=4):
+            pass
+
+        def capture(self):
+            im = Image.new("RGB", (720, 680))
+            pixels = im.load()
+            for yy in range(680):
+                for xx in range(720):
+                    pixels[xx, yy] = (xx % 256, (xx + yy) % 256, 80)
+            return im
+
+        def shot(self, path):
+            self.capture().save(path)
+
+    monkeypatch.setattr(ag_features, "DesktopApp", _BusyDesktopApp)
+    monkeypatch.setattr(
+        ag_features,
+        "wait_for_window",
+        lambda title_pattern, timeout_s, budget_s: None,
+    )
+    monkeypatch.setattr(ag_features.time, "sleep", lambda s: None)
+    with DbSession(get_engine()) as db:
+        project = _mk_project(db, "Ag")
+        pose = Path(project.path) / "poses" / "images" / "front_tpose.png"
+        pose.parent.mkdir(parents=True, exist_ok=True)
+        pose.write_bytes(b"fixture")
+        service, app_session = _run_features(
+            db, project, ag_features.FEATURES, slug="Ag"
+        )
+        db.refresh(app_session)
+        assert app_session.status.value == "failed"
+        assert "viewer window" in app_session.actual_outcome
 
 
 def test_native_feature_busy_desktop_maps_to_investigate(tmp_db, monkeypatch):
@@ -709,6 +799,59 @@ def test_native_feature_busy_desktop_maps_to_investigate(tmp_db, monkeypatch):
         db.refresh(app_session)
         assert app_session.status.value == "investigate"
         assert "foreground" in app_session.actual_outcome
+
+
+def test_airadio_feature_screenshots_window(tmp_db, monkeypatch):
+    """Airadio is a pure screenshot feature: launch exe, attach by title,
+    capture, clean up — no clicks, no mouse (v1.17.17.1)."""
+    from app.testers.features import airadio as airadio_features
+
+    calls = []
+
+    class _FakeDesktopApp:
+        def __init__(self, title_pattern, budget_s=120):
+            self.title_pattern = title_pattern
+            self.budget_s = budget_s
+            self.window = object()
+
+        def connect(self):
+            calls.append("connect")
+
+        def shot(self, path):
+            im = Image.new("RGB", (720, 680))
+            pixels = im.load()
+            for yy in range(680):
+                for xx in range(720):
+                    pixels[xx, yy] = (xx % 256, (xx + yy) % 256, 80)
+            im.save(path)
+
+    monkeypatch.setattr(airadio_features, "DesktopApp", _FakeDesktopApp)
+    monkeypatch.setattr(
+        airadio_features.subprocess, "Popen", lambda *a, **k: calls.append("popen")
+    )
+
+    class _Ran:
+        returncode = 0
+
+    monkeypatch.setattr(airadio_features.subprocess, "run", lambda *a, **k: _Ran())
+    monkeypatch.setattr(airadio_features.time, "sleep", lambda s: None)
+    with DbSession(get_engine()) as db:
+        project = _mk_project(db, "Airadio")
+        exe = Path(project.path) / "release" / "win-unpacked" / "WestWaveGem Radio.exe"
+        exe.parent.mkdir(parents=True, exist_ok=True)
+        exe.write_bytes(b"fixture")
+        service, app_session = _run_features(
+            db, project, airadio_features.FEATURES, slug="Airadio"
+        )
+        db.refresh(app_session)
+        assert app_session.status.value == "passed", app_session.actual_outcome
+        assert "popen" in calls
+        assert "connect" in calls
+        labels = [c.label for c in app_session.checkpoints]
+        assert any(
+            "attached to the ElmWave Network window" in label for label in labels
+        )
+        assert any("ElmWave Network app window" in label for label in labels)
 
 
 class _HftFakeDesktopApp:

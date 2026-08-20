@@ -112,6 +112,7 @@ def test_registry_has_phase_a_testers():
         "Cg",
         "Demake-Engine",
         "Dinner-Menu-Generator",
+        "Finsight",
         "Hft-Order-Book",
         "Tv-Scheduler",
         "Workflow-Toolkit",
@@ -336,6 +337,164 @@ def test_launch_failure_is_env_error(tmp_db, project, monkeypatch):
         ctx = TesterContext(project, app_session.id, service)
         with pytest.raises(TesterEnvError):
             ctx.launch("probe")
+
+
+def test_finsight_run_electron_serves_dashboard(tmp_db, project, monkeypatch):
+    """Happy path: the electron shell reaches the Flask backend and GET /
+    on :10000 renders the dashboard — no fallback launch (v1.17.17.1)."""
+    import httpx as httpx_mod
+
+    launched = []
+    monkeypatch.setattr(
+        helpers_mod.BuildRunner,
+        "_launch_app",
+        staticmethod(
+            lambda p, cmd, env=None: (launched.append(cmd), "ok")[0] or (True, "ok")
+        ),
+    )
+
+    class FakeResp:
+        status_code = 200
+        text = "FinSight"
+
+    monkeypatch.setattr(httpx_mod, "request", lambda *a, **k: FakeResp())
+    from app.testers import finsight
+
+    with DbSession(get_engine()) as db:
+        service = AppSessionService(db)
+        app_session = service.start(project.id, "t")
+        finsight.run(TesterContext(project, app_session.id, service))
+    assert launched == [finsight.ELECTRON_CMD]
+
+
+def test_finsight_run_falls_back_to_python_app(tmp_db, project, monkeypatch):
+    """If the electron shell cannot reach the backend, the tester launches
+    the Flask app directly and still verifies the dashboard (v1.17.17.1)."""
+    import httpx as httpx_mod
+
+    launched = []
+    monkeypatch.setattr(
+        helpers_mod.BuildRunner,
+        "_launch_app",
+        staticmethod(
+            lambda p, cmd, env=None: (launched.append(cmd), "ok")[0] or (True, "ok")
+        ),
+    )
+    monkeypatch.setattr(helpers_mod.time, "sleep", lambda s: None)
+    calls = {"n": 0}
+
+    class FakeResp:
+        status_code = 200
+        text = "FinSight"
+
+    def flaky(method, url, timeout=None):
+        calls["n"] += 1
+        if calls["n"] <= 7:  # electron launch: all 7 attempts unreachable
+            raise httpx_mod.ConnectError("refused")
+        return FakeResp()
+
+    monkeypatch.setattr(httpx_mod, "request", flaky)
+    from app.testers import finsight
+
+    with DbSession(get_engine()) as db:
+        service = AppSessionService(db)
+        app_session = service.start(project.id, "t")
+        finsight.run(TesterContext(project, app_session.id, service))
+    assert launched == [finsight.ELECTRON_CMD, finsight.PYTHON_CMD]
+    assert calls["n"] == 8
+
+
+def test_default_smoke_runs_discovered_test_command(tmp_db, project, monkeypatch):
+    """The smoke tester runs the app's discovered `test` command first and
+    its output lands in the app log (v1.17.17.1)."""
+    from app.services.command_runner import CommandResult
+    from app.testers import default_smoke
+
+    project.stack = {
+        "language": "python",
+        "commands": {"startup": "npm start", "test": "pytest -q"},
+    }
+
+    def fake_run(command, cwd=None, timeout=None, env=None):
+        return CommandResult(
+            command=command,
+            exit_code=0,
+            stdout="3 passed",
+            stderr="",
+            duration_seconds=0.1,
+        )
+
+    launched = []
+    monkeypatch.setattr(
+        helpers_mod.BuildRunner,
+        "_launch_app",
+        staticmethod(
+            lambda p, cmd, env=None: (launched.append(cmd), "ok")[0] or (True, "ok")
+        ),
+    )
+    monkeypatch.setattr(helpers_mod, "run_command", fake_run)
+    monkeypatch.setattr(helpers_mod.time, "sleep", lambda s: None)
+    monkeypatch.setattr(
+        svc, "find_project_window", lambda path: (12345, (10, 20, 210, 120))
+    )
+    monkeypatch.setattr(svc, "_virtual_screen", lambda: (0, 0, 320, 200))
+    monkeypatch.setattr(
+        svc,
+        "capture_window_content",
+        lambda hwnd, rect: Image.new("RGB", (200, 100), (9, 8, 7)),
+    )
+    with DbSession(get_engine()) as db:
+        service = AppSessionService(db)
+        app_session = service.start(project.id, "t")
+        ctx = TesterContext(project, app_session.id, service)
+        default_smoke.run(ctx)
+        assert launched == ["npm start"]
+        checkpoints = db.exec(
+            select(svc.SessionCheckpoint).where(
+                svc.SessionCheckpoint.session_id == app_session.id
+            )
+        ).all()
+    labels = [c.label for c in checkpoints]
+    assert any(label.startswith("cli pytest -q") for label in labels)
+    assert any("app window after launch" in label for label in labels)
+
+
+def test_default_smoke_red_test_command_fails(tmp_db, project, monkeypatch):
+    """A failing discovered test command fails the smoke honestly — the run
+    never proceeds to launch (v1.17.17.1)."""
+    from app.services.command_runner import CommandResult
+    from app.testers import default_smoke
+
+    project.stack = {
+        "language": "python",
+        "commands": {"startup": "npm start", "test": "pytest -q"},
+    }
+
+    def failing_run(command, cwd=None, timeout=None, env=None):
+        return CommandResult(
+            command=command,
+            exit_code=1,
+            stdout="FAILED tests/test_app.py",
+            stderr="",
+            duration_seconds=0.1,
+        )
+
+    launched = []
+    monkeypatch.setattr(
+        helpers_mod.BuildRunner,
+        "_launch_app",
+        staticmethod(
+            lambda p, cmd, env=None: (launched.append(cmd), "ok")[0] or (True, "ok")
+        ),
+    )
+    monkeypatch.setattr(helpers_mod, "run_command", failing_run)
+    with DbSession(get_engine()) as db:
+        service = AppSessionService(db)
+        app_session = service.start(project.id, "t")
+        ctx = TesterContext(project, app_session.id, service)
+        with pytest.raises(TesterAssertionError):
+            default_smoke.run(ctx)
+    assert launched == []
 
 
 def test_screenshot_records_checkpoint_and_file(tmp_db, project, monkeypatch):
