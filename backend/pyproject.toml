@@ -21,6 +21,11 @@ dependencies = [
     # drives the installed system Edge via the msedge channel (no browser
     # download); loopback-only navigation is enforced in the feature layer.
     "playwright>=1.45",
+    # v1.17.16: native desktop features (docs/clickthrough_plan.md Phase 3
+    # chunk 1) — UIA attach/capture of the app's own window (pywinauto);
+    # native Win32 dialogs are driven by element name, tkinter widgets by
+    # measured SendInput clicks (this Tk ships no MSAA/UIA tree).
+    "pywinauto>=0.4.5",
 ]
 
 [project.optional-dependencies]

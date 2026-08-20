@@ -149,30 +149,73 @@ Notes:
 
 ## Phase 3 (v1.17.16) — native desktop UIA (chunked)
 
-Ground truth (verified 2026-08-18): **tkinter exposes a real MSAA/UIA
-accessibility tree** — pywinauto element-driving works (buttons, entries by
-name). **Dear ImGui exposes no tree** — pywinauto can only send raw input
-(clicks at coordinates, keys); assertions degrade to screenshots. The plan
-splits accordingly.
+Ground truth (CORRECTED 2026-08-19 — the 2026-08-18 claim was wrong on
+this machine): **Tcl/Tk 8.6.15 ships NO MSAA/UIA tree** (`tk::msaa` not
+present) — pywinauto element-driving of tkinter widgets is impossible;
+element names work ONLY on native Win32 dialogs (file open/save etc.).
+Live-verified on 2026-08-19: tk ignores posted WM_* mouse messages
+(SendMessage/PostMessage clicks change 0 pixels), so input must be
+physical SendInput clicks with the window topmost at the cursor;
+capture is via `PrintWindow(PW_RENDERFULLCONTENT|PW_CLIENTONLY)` through
+ctypes (occlusion-independent; pywinauto's own capture_as_image returns
+garbage and ImageGrab shows the screen). `SetWindowPos` HWND_TOPMOST
+fails (ERROR_INVALID_WINDOW_HANDLE 1400) — moves work, but foreground
+can only be obtained by SetForegroundWindow after BringWindowToTop and
+fails while another app holds foreground rights → the engine raises an
+honest, retryable TesterEnvError ("desktop busy"). **Dear ImGui exposes
+no tree** — pywinauto can only send raw input; assertions degrade to
+screenshots. The plan splits accordingly.
 
 ### Chunk 1 — UIA engine + AG features
 
 - New engine `backend/app/services/desktop_runner.py`, `Feature.native=True`:
-  pywinauto dependency (pure-python; new in `requirements.txt`), attach by
-  window title, click/type by element name, same session/checkpoint/
-  screenshot plumbing, same error mapping (`TesterAssertionError` /
-  `TesterEnvError` / `TesterTimeoutError`) and per-feature budget.
-  Deterministic guard mirrors the browser engine: window title must match a
-  known app pattern (never drive an arbitrary window).
-- AG features: launch `rigging_engine/main.py gui` (tkinter; existing AG
-  tester already launches it) → assert the main window + key widgets
-  (Notebook tabs, "View Last Export" bar button) → load a real source image
-  (`poses/images/` PNG, e.g. a run-cycle pose) via the file dialog →
-  start generation → **assert the progress state transition only**
-  (SF3D generation takes 5–10 min — completion is NOT asserted, same honest
-  pattern as Cg's RESEARCHING; budget_s ~600 for the transition window).
-  Writes are the app's own output under the project (self-created entities).
-- Tests: fake-UIA-window unit tests + live E2E with gray-level verification.
+  pywinauto dependency (pure-python; new in `pyproject.toml`), attach by
+  window title (UIA), click by SendInput, native dialogs driven by element
+  name, same session/checkpoint/screenshot plumbing, same error mapping
+  (`TesterAssertionError` / `TesterEnvError` / `TesterTimeoutError`) and
+  per-feature budget. Deterministic guard mirrors the browser engine: window
+  title must match a known app pattern (never drive an arbitrary window).
+- AG features: the existing AG tester launches `rigging_engine/main.py gui`
+  (tkinter) → the feature attaches by title `^AG Character & Weapon Studio$`
+  → brings it to the foreground (honest env error when the desktop is busy,
+  e.g. a game holds foreground) → asserts the layout signature via measured
+  pixel anchors (tab accent, bottom-bar fill, status background — window
+  moved to a fixed position first; clicks computed from the live rect) →
+  loads a real source image (`poses/images/front_tpose.png`) via the native
+  `Select T-Pose Image` dialog → clicks `Generate Character` → **asserts the
+  progress state transition only** (status-region repaint; SF3D generation
+  takes 5–10 min — completion is NOT asserted, same honest pattern as Cg's
+  RESEARCHING; budget_s 600 for the transition window). Writes are the
+  app's own output under the project (self-created entities).
+
+  Live fixes landed in v1.17.16.0 (2026-08-19/20, on this machine):
+  - Browse at **(642, 90)** (button spans x 598–687), Generate at
+    **(360, 469)** (fill x 270–450, y 454–484) — measured from captures,
+    not assumed.
+  - The native dialog is driven by **keystrokes**: `Alt+N` (pywinauto
+    `%n`) focuses the `File name:` box — it lives inside a DirectUIHWND the
+    win32 backend cannot reach — then the path is typed and Enter submits.
+    `dialog()` uses the **win32** desktop backend: the UIA desktop
+    `wait('exists')` times out on native dialogs while win32 resolves
+    instantly (`pywinauto.findwindows.find_windows()` hardcodes win32
+    anyway).
+  - The dialog opens **without foreground** (the parent keeps it), so the
+    engine's new `Element.focus()` (`ShowWindow(SW_SHOWNORMAL)` +
+    `SetForegroundWindow`) is applied before the keystrokes.
+  - After the dialog closes, the tk modal loop unwinds a few ms later and
+    `rest_path.set()` lands the path — the entry content check **polls for
+    up to 15 s** instead of asserting once (race measured 2026-08-20).
+  - The status log is Consolas 9pt: a new line is 1–2 px tall and can land
+    between the step-4 sample rows (the 2026-08-19 failure saw the line
+    render at y 543–549 while the grid only sampled 540/544/548) →
+    `changed_pixels`/`wait_region_change` gained a `step` parameter and the
+    transition check samples at **step 2, min 15 changed px**.
+- Tests: fake-UIA-window unit tests (DesktopApp against a stubbed
+  pywinauto.Desktop — title guard, foreground grant/busy, region diff,
+  budget, keyboard type/press_alt/press_enter, wait_gone, content_pixels,
+  thin-line step sampling) + fake-desktop feature runs + live E2E with
+  gray-level verification. Live E2E green 2026-08-20 (all 13 steps:
+  attach → foreground → layout signature → dialog → entry → transition).
 
 ### Chunk 2 — HFT input scripting (stretch, gated)
 
@@ -200,8 +243,9 @@ Phase 3 section (this), engine tests, changelog rows, later.md line update.
 
 ## Explicit exclusions
 
-- **AG** (tkinter) — Playwright cannot drive it; pywinauto/UIA is Phase 3
-  chunk 1 (element-driven; tkinter has a real accessibility tree).
+- **AG** (tkinter) — Playwright cannot drive it; pywinauto is Phase 3
+  chunk 1 (engine shipped v1.17.16; tkinter has NO accessibility tree —
+  measured SendInput clicks + native dialogs by element name).
 - **Demake `game.html`** (Phaser/WebGL canvas) and any canvas-only UI — the
   DOM boundary is the feature boundary.
 - **Cg Publish page** (YouTube auth/upload) — irreversible actions (Rule 2).
@@ -232,7 +276,8 @@ Phase 3 section (this), engine tests, changelog rows, later.md line update.
 - v1.17.15: Round 3 app coverage — Algo Trader (Flask dashboard tester +
   browser feature + CLI steps for backtester/trader) and HFT Order Book
   (presence tester on build/hft.exe).
-- v1.17.16: Phase 3 — chunk 1 (pywinauto UIA engine + AG features), chunk 2
-  (HFT input scripting, gated), chunk 3 (docs/tests/changelog).
+- v1.17.16: Phase 3 — chunk 1 (pywinauto engine + AG features; ground truth
+  corrected 2026-08-19: Tk has no accessibility tree), chunk 2 (HFT input
+  scripting, gated), chunk 3 (docs/tests/changelog).
 - Docs updated at implementation: `docs/02_Implementation_Guide.md` §14.8
   (tester section gains the feature layer), `docs/03_Sprint_Plan.md`.

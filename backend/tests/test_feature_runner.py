@@ -139,6 +139,7 @@ def _run_features(
 
 def test_registry_has_expected_slugs():
     assert set(FEATURES) == {
+        "Ag",
         "Algo-Trader",
         "Card-Game",
         "Cg",
@@ -202,6 +203,21 @@ def test_electron_go_refused(tmp_db):
             project, session.id, service, ctx, _GenericPage(), electron=True
         )
         with pytest.raises(TesterEnvError, match="electron windows"):
+            fctx.go("http://127.0.0.1:5173")
+
+
+def test_native_go_refused(tmp_db):
+    """Native features never navigate: their window is already on the
+    app's GUI (v1.17.16.0)."""
+    with DbSession(get_engine()) as db:
+        project = _mk_project(db, "Ag")
+        service = AppSessionService(db)
+        session = service.start(project.id, "Tester: x", "")
+        ctx = TesterContext(project, session.id, service)
+        fctx = FeatureContext(
+            project, session.id, service, ctx, _GenericPage(), native=True
+        )
+        with pytest.raises(TesterEnvError, match="native windows"):
             fctx.go("http://127.0.0.1:5173")
 
 
@@ -508,10 +524,15 @@ def test_blank_shot_raises_assertion(tmp_db):
 
 
 def test_all_registered_features_pass_against_fake_page(tmp_db):
-    """Drive every shipped feature against a generic fake page — proves the
-    scripts exercise a real (stubbed) Playwright API surface without a
-    browser, and keeps their run() bodies covered."""
+    """Drive every shipped WEB feature against a generic fake page —
+    proves the scripts exercise a real (stubbed) Playwright API surface
+    without a browser, and keeps their run() bodies covered. Native
+    features are excluded: they construct a DesktopApp engine (their own
+    window contract) and are covered by the fake-desktop tests above."""
     for slug, features in FEATURES.items():
+        web = [f for f in features if not f.native]
+        if not web:
+            continue
         with DbSession(get_engine()) as db:
             project = _mk_project(db, slug)
             if slug == "Demake-Engine":
@@ -529,7 +550,7 @@ def test_all_registered_features_pass_against_fake_page(tmp_db):
                 fixture.parent.mkdir(parents=True, exist_ok=True)
                 fixture.write_text("name,hours\n", encoding="utf-8")
             service, app_session = _run_features(
-                db, project, features, slug=slug, stub_page=_GenericPage()
+                db, project, web, slug=slug, stub_page=_GenericPage()
             )
             db.refresh(app_session)
             assert app_session.status.value == "passed", (
@@ -537,7 +558,151 @@ def test_all_registered_features_pass_against_fake_page(tmp_db):
                 app_session.actual_outcome,
             )
             labels = [c.label for c in app_session.checkpoints]
-            assert f"feature pass: {features[0].name}" in labels
+            assert f"feature pass: {web[0].name}" in labels
+
+
+# --------------------------------------------------------------- native
+
+
+def test_native_feature_runs_against_fake_desktop(tmp_db, monkeypatch):
+    """The native engine (v1.17.16.0) runs features with a pywinauto
+    DesktopApp against the app's window; the feature constructs its own
+    engine (it owns the window-title contract) and assigns ctx.desktop
+    before any ctx.shot()."""
+    from app.testers.features import ag as ag_features
+
+    calls = []
+
+    class _FakeEl:
+        def __init__(self, name):
+            self.name = name
+
+        def wait(self, timeout):
+            calls.append(f"wait:{self.name}")
+
+        def wait_gone(self, timeout):
+            calls.append("wait_gone")
+
+    class _FakeDialog:
+        def __init__(self):
+            self._el = _FakeDialogElement()
+
+        def wait_gone(self, timeout):
+            calls.append("wait_gone")
+
+        def focus(self):
+            calls.append("focus")
+
+    class _FakeDialogElement:
+        def child_window(self, title):
+            return _FakeEl(title)
+
+    class _FakeDesktopApp:
+        def __init__(self, title_pattern, budget_s=120):
+            self.title_pattern = title_pattern
+            self.budget_s = budget_s
+            self.window = object()
+            self._path_typed = False
+
+        def connect(self):
+            calls.append("connect")
+
+        def bring_to_front(self):
+            calls.append("bring_to_front")
+
+        def assert_pixel(self, x, y, rgb, tolerance=6):
+            calls.append("assert_pixel")
+
+        def click(self, x, y):
+            calls.append(f"click:{x},{y}")
+
+        def press_alt(self, letter):
+            calls.append(f"press_alt:{letter}")
+
+        def type_text(self, text):
+            calls.append(f"type_text:{text}")
+            self._path_typed = True
+
+        def press_enter(self):
+            calls.append("press_enter")
+
+        def dialog(self, title_pattern):
+            calls.append("dialog")
+            return _FakeDialog()
+
+        def element(self, title, parent):
+            return _FakeEl(title)
+
+        def capture(self):
+            im = Image.new("RGB", (720, 680))
+            pixels = im.load()
+            for yy in range(680):
+                for xx in range(720):
+                    pixels[xx, yy] = (xx % 256, (xx + yy) % 256, 80)
+            return im
+
+        def content_pixels(self, box, bg):
+            calls.append("content_pixels")
+            return 1600 if self._path_typed else 0
+
+        def wait_region_change(self, before, box, min_changed, timeout, step=4):
+            calls.append("wait_region_change")
+
+        def shot(self, path):
+            im = Image.new("RGB", (720, 680))
+            pixels = im.load()
+            for yy in range(680):
+                for xx in range(720):
+                    pixels[xx, yy] = (xx % 256, (xx + yy) % 256, 80)
+            im.save(path)
+
+    monkeypatch.setattr(ag_features, "DesktopApp", _FakeDesktopApp)
+    with DbSession(get_engine()) as db:
+        project = _mk_project(db, "Ag")
+        pose = Path(project.path) / "poses" / "images" / "front_tpose.png"
+        pose.parent.mkdir(parents=True, exist_ok=True)
+        pose.write_bytes(b"fixture")
+        service, app_session = _run_features(
+            db, project, ag_features.FEATURES, slug="Ag"
+        )
+        db.refresh(app_session)
+        assert app_session.status.value == "passed", app_session.actual_outcome
+        assert "connect" in calls
+        assert "bring_to_front" in calls
+        assert any(c == "click:642,90" for c in calls)
+        assert any(c == "click:360,469" for c in calls)
+        assert any(c.startswith("press_alt:") for c in calls)
+        assert any(c.startswith("type_text:") for c in calls)
+        assert "press_enter" in calls
+        assert "focus" in calls
+        assert "wait_gone" in calls
+        assert "content_pixels" in calls
+        assert "wait_region_change" in calls
+        labels = [c.label for c in app_session.checkpoints]
+        assert "feature pass: AG GUI generation start" in labels
+
+
+def test_native_feature_busy_desktop_maps_to_investigate(tmp_db, monkeypatch):
+    """A desktop that withholds foreground rights is an honest, retryable
+    env error — never a silent pass (v1.17.16.0)."""
+    from app.testers.features import ag as ag_features
+
+    class _BusyDesktopApp:
+        def __init__(self, title_pattern, budget_s=120):
+            pass
+
+        def connect(self):
+            raise TesterEnvError("could not be brought to the foreground")
+
+    monkeypatch.setattr(ag_features, "DesktopApp", _BusyDesktopApp)
+    with DbSession(get_engine()) as db:
+        project = _mk_project(db, "Ag")
+        service, app_session = _run_features(
+            db, project, ag_features.FEATURES, slug="Ag"
+        )
+        db.refresh(app_session)
+        assert app_session.status.value == "investigate"
+        assert "foreground" in app_session.actual_outcome
 
 
 # -------------------------------------------------------------- stubs

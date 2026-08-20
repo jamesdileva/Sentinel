@@ -263,14 +263,30 @@ class FeatureRunner:
         features = self.resolve(project)
         if not features:
             return
+        native = [f for f in features if f.native]
+        web = [f for f in features if not f.native]
         try:
-            with sync_playwright() as p:
-                if any(f.electron for f in features):
-                    self._run_electron(p, project, ctx, service, session_id, features)
-                else:
-                    self._run_browser(p, ctx, service, session_id, features)
+            if native:
+                self._run_native(project, ctx, service, session_id, native)
+            if web:
+                with sync_playwright() as p:
+                    if any(f.electron for f in web):
+                        self._run_electron(p, project, ctx, service, session_id, web)
+                    else:
+                        self._run_browser(p, ctx, service, session_id, web)
         except PlaywrightError as exc:
             raise TesterEnvError(f"Feature run failed: {exc}") from exc
+
+    # -------------------------------------------------------------- native
+
+    def _run_native(
+        self, project, ctx: TesterContext, service, session_id: str, features
+    ) -> None:
+        """Pywinauto engine (v1.17.16.0): no browser, no CDP. The feature
+        constructs its own DesktopApp (it owns the declared window-title
+        pattern) and assigns `ctx.desktop` before the first `ctx.shot()` —
+        the window was launched by the tester phase of this same session."""
+        self._run_features(features, ctx, service, session_id, page=None, native=True)
 
     # ------------------------------------------------------------- browser
 
@@ -315,7 +331,13 @@ class FeatureRunner:
     # ------------------------------------------------------------- common
 
     def _run_features(
-        self, features, ctx: TesterContext, service, session_id: str, page
+        self,
+        features,
+        ctx: TesterContext,
+        service,
+        session_id: str,
+        page,
+        native: bool = False,
     ) -> None:
         for feature in features:
             ctx.checkpoint(f"feature start: {feature.name}")
@@ -326,6 +348,7 @@ class FeatureRunner:
                 ctx,
                 page,
                 electron=feature.electron,
+                native=native,
                 budget_s=feature.budget_s,
             )
             try:
