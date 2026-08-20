@@ -65,6 +65,11 @@ class _FakeProc:
     pid = 1234
 
 
+# shared call log for the chunk-2 HFT fake desktop (module-level so the
+# fake class can live outside the test functions)
+calls: list = []
+
+
 def _run_features(
     db,
     project,
@@ -145,6 +150,7 @@ def test_registry_has_expected_slugs():
         "Cg",
         "Demake-Engine",
         "Dinner-Menu-Generator",
+        "Hft-Order-Book",
         "Tv-Scheduler",
         "Workflow-Toolkit",
     }
@@ -703,6 +709,129 @@ def test_native_feature_busy_desktop_maps_to_investigate(tmp_db, monkeypatch):
         db.refresh(app_session)
         assert app_session.status.value == "investigate"
         assert "foreground" in app_session.actual_outcome
+
+
+class _HftFakeDesktopApp:
+    """Chunk-2 fake: records engine calls; the card-button bbox is
+    configurable so the happy path and the honest-miss path are both
+    testable."""
+
+    def __init__(self, title_pattern, budget_s=120):
+        self.title_pattern = title_pattern
+        self.budget_s = budget_s
+        self.window = object()
+        self.card_box = (200, 220, 260, 240)
+
+    def connect(self):
+        calls.append("connect")
+
+    def bring_to_front(self):
+        calls.append("bring_to_front")
+
+    def pin_window(self, x, y, expected_client=None):
+        calls.append(f"pin:{x},{y}:{expected_client}")
+
+    def assert_pixel(self, x, y, rgb, tolerance=6):
+        calls.append(f"assert_pixel:{x},{y}")
+
+    def click(self, x, y):
+        calls.append(f"click:{x},{y}")
+
+    def move_mouse(self, x, y):
+        calls.append(f"move_mouse:{x},{y}")
+
+    def capture(self):
+        return Image.new("RGB", (1280, 760), (18, 20, 23))
+
+    def find_color_bbox(self, box, rgb, tolerance=6, min_pixels=50):
+        calls.append(f"find_color_bbox:{box[0]},{box[1]}")
+        return self.card_box
+
+    def wait_region_change(self, before, box, min_changed, timeout, step=4):
+        calls.append("wait_region_change")
+
+    def wait_region_stable(self, box, settle_s, timeout):
+        calls.append("wait_region_stable")
+
+    def shot(self, path):
+        im = Image.new("RGB", (1280, 760))
+        pixels = im.load()
+        for yy in range(760):
+            for xx in range(1280):
+                pixels[xx, yy] = (xx % 256, (xx + yy) % 256, 80)
+        im.save(path)
+
+
+def test_hft_native_feature_runs_against_fake_desktop(tmp_db, monkeypatch):
+    """Chunk 2 (v1.17.17.0): HFT click-through drives the fake desktop —
+    launch + attach + pin + signature + benchmark + menu + picker + card
+    button (color-search) + start trading + settle, then taskkill cleanup.
+    The feature launches and owns its hft.exe (tester stays presence-only)."""
+    from app.testers.features import hft_order_book as hft_features
+
+    kills = []
+    calls.clear()
+
+    def _fake_taskkill(args, **kwargs):
+        kills.append(args)
+        return _FakeProc()
+
+    monkeypatch.setattr(hft_features, "DesktopApp", _HftFakeDesktopApp)
+    monkeypatch.setattr(hft_features.subprocess, "Popen", lambda *a, **k: _FakeProc())
+    monkeypatch.setattr(hft_features.subprocess, "run", _fake_taskkill)
+
+    with DbSession(get_engine()) as db:
+        project = _mk_project(db, "Hft-Order-Book")
+        exe = Path(project.path) / "build" / "hft.exe"
+        exe.parent.mkdir(parents=True, exist_ok=True)
+        exe.write_bytes(b"fixture")
+        service, app_session = _run_features(
+            db, project, hft_features.FEATURES, slug="Hft-Order-Book"
+        )
+        db.refresh(app_session)
+        assert app_session.status.value == "passed", app_session.actual_outcome
+        assert "connect" in calls
+        assert "bring_to_front" in calls
+        assert any(c.startswith("pin:40,40:") for c in calls)
+        assert any(c == "move_mouse:10,10" for c in calls)
+        assert any(c == "click:628,323" for c in calls)  # BENCHMARK MODE
+        assert any(c == "click:1178,723" for c in calls)  # MAIN MENU
+        assert any(c == "click:628,412" for c in calls)  # TRADING GAME
+        assert any(c == "click:230,230" for c in calls)  # card button center
+        assert any(c == "click:640,409" for c in calls)  # START TRADING
+        assert any(c.startswith("find_color_bbox:") for c in calls)
+        assert calls.count("wait_region_stable") == 2
+        assert any(k[0] == "taskkill" and "hft.exe" in k for k in kills)
+        labels = [c.label for c in app_session.checkpoints]
+        assert "feature pass: HFT GUI click-through" in labels
+        assert "benchmark run completed" in " ".join(labels)
+
+
+def test_hft_native_feature_missing_card_button_fails(tmp_db, monkeypatch):
+    """Honest failure when the flow-laid card button is not where the
+    color search expects it (chunk 2, v1.17.17.0)."""
+    from app.testers.features import hft_order_book as hft_features
+
+    calls.clear()
+    monkeypatch.setattr(hft_features, "DesktopApp", _HftFakeDesktopApp)
+    monkeypatch.setattr(
+        _HftFakeDesktopApp,
+        "find_color_bbox",
+        lambda self, box, rgb, tolerance=6, min_pixels=50: (None),
+    )
+    monkeypatch.setattr(hft_features.subprocess, "Popen", lambda *a, **k: _FakeProc())
+    monkeypatch.setattr(hft_features.subprocess, "run", lambda *a, **k: _FakeProc())
+    with DbSession(get_engine()) as db:
+        project = _mk_project(db, "Hft-Order-Book")
+        exe = Path(project.path) / "build" / "hft.exe"
+        exe.parent.mkdir(parents=True, exist_ok=True)
+        exe.write_bytes(b"fixture")
+        service, app_session = _run_features(
+            db, project, hft_features.FEATURES, slug="Hft-Order-Book"
+        )
+        db.refresh(app_session)
+        assert app_session.status.value == "failed"
+        assert "TRADE THIS STOCK" in app_session.actual_outcome
 
 
 # -------------------------------------------------------------- stubs

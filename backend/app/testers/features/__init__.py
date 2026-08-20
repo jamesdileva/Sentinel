@@ -58,6 +58,7 @@ from app.testers.features import (  # noqa: E402
     cg,
     demake,
     dinner_menu,
+    hft_order_book,
     tv_scheduler,
     workflow_toolkit,
 )
@@ -71,6 +72,7 @@ def _build_registry() -> dict[str, list[Feature]]:
         "Cg": cg.FEATURES,
         "Demake-Engine": demake.FEATURES,
         "Dinner-Menu-Generator": dinner_menu.FEATURES,
+        "Hft-Order-Book": hft_order_book.FEATURES,
         "Tv-Scheduler": tv_scheduler.FEATURES,
         "Workflow-Toolkit": workflow_toolkit.FEATURES,
     }

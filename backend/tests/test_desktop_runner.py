@@ -557,6 +557,122 @@ def test_wait_region_change_forwards_step(monkeypatch):
     app.wait_region_change(before, (0, 540, 720, 668), 15, 2, step=2)
 
 
+# ------------------------------------------------------------ chunk 2
+
+
+def test_pin_window_moves_and_verifies_client(monkeypatch):
+    """HFT chunk 2 (v1.17.17.0): pin position + verify the client size the
+    measured coordinates assume (SDL sizes are client-area — the size is
+    never forced, only checked, so a resized window fails honestly)."""
+    _patch_pywinauto(monkeypatch, title="HFT Order Book")
+
+    def big_rect(h, r):
+        rect = ctypes.cast(r, ctypes.POINTER(ctypes.wintypes.RECT)).contents
+        rect.right = 1280
+        rect.bottom = 760
+        return 1
+
+    monkeypatch.setattr(dr.USER32, "GetClientRect", big_rect)
+    app = dr.DesktopApp(r"^HFT Order Book$")
+    app.connect()
+    calls = []
+    hwnd = app.window.handle
+    monkeypatch.setattr(
+        dr.USER32,
+        "SetWindowPos",
+        lambda h, after, x, y, w, hh, flags: calls.append((h, x, y, w, hh, flags)) or 1,
+    )
+    app.pin_window(40, 40, expected_client=(1280, 760))
+    h, x, y, w, hh, flags = calls[-1]
+    assert h == hwnd
+    assert (x, y) == (40, 40)
+    assert (w, hh) == (0, 0)  # SWP_NOSIZE — never force the size
+    assert flags & dr.SWP_NOSIZE
+    assert flags & dr.SWP_NOZORDER
+
+
+def test_pin_window_wrong_client_is_env_error(monkeypatch):
+    _patch_pywinauto(monkeypatch, title="HFT Order Book")
+
+    def small_rect(h, r):
+        rect = ctypes.cast(r, ctypes.POINTER(ctypes.wintypes.RECT)).contents
+        rect.right = 1000
+        rect.bottom = 600
+        return 1
+
+    monkeypatch.setattr(dr.USER32, "GetClientRect", small_rect)
+    app = dr.DesktopApp(r"^HFT Order Book$")
+    app.connect()
+    monkeypatch.setattr(dr.USER32, "SetWindowPos", lambda *a, **k: 1)
+    with pytest.raises(TesterEnvError, match="client size is"):
+        app.pin_window(40, 40, expected_client=(1280, 760))
+
+
+def test_find_color_bbox_locates_control(monkeypatch):
+    """Green-fill search: finds the flow-laid button's bbox (sampled step 2,
+    so bounds are within +/-2 px), tolerates theme blending, and rejects
+    stray pixels via min_pixels."""
+    _patch_pywinauto(monkeypatch, title="HFT Order Book")
+    app = dr.DesktopApp(r"^HFT Order Book$")
+    app.connect()
+    im = Image.new("RGB", (1280, 760), (18, 20, 23))
+    for y in range(220, 248):
+        for x in range(40, 400):
+            im.putpixel((x, y), (32, 95, 45))
+    monkeypatch.setattr(app, "capture", lambda: im)
+    bbox = app.find_color_bbox((0, 0, 500, 400), (26, 89, 38), tolerance=10)
+    assert bbox is not None
+    x0, y0, x1, y1 = bbox
+    assert x0 <= 40 and x1 >= 398 and y0 <= 220 and y1 >= 246
+    assert app.find_color_bbox((0, 0, 500, 400), (26, 89, 38), tolerance=2) is None
+    assert app.find_color_bbox((600, 0, 900, 400), (26, 89, 38), tolerance=10) is None
+
+
+def test_find_color_bbox_rejects_sparse_matches(monkeypatch):
+    _patch_pywinauto(monkeypatch, title="HFT Order Book")
+    app = dr.DesktopApp(r"^HFT Order Book$")
+    app.connect()
+    im = Image.new("RGB", (1280, 760), (18, 20, 23))
+    im.putpixel((100, 100), (26, 89, 38))
+    im.putpixel((102, 102), (26, 89, 38))
+    monkeypatch.setattr(app, "capture", lambda: im)
+    assert app.find_color_bbox((0, 0, 500, 400), (26, 89, 38), min_pixels=50) is None
+
+
+def test_wait_region_stable_returns_when_settled(monkeypatch):
+    _patch_pywinauto(monkeypatch, title="HFT Order Book")
+    app = dr.DesktopApp(r"^HFT Order Book$")
+    app.connect()
+    static = Image.new("RGB", (1280, 760), (18, 20, 23))
+    monkeypatch.setattr(app, "capture", lambda: static)
+    monkeypatch.setattr(dr.time, "sleep", lambda s: None)
+    app.wait_region_stable((0, 0, 1280, 760), settle_s=2, timeout=5)
+
+
+def test_wait_region_stable_times_out_on_animated_screen(monkeypatch):
+    _patch_pywinauto(monkeypatch, title="HFT Order Book")
+    app = dr.DesktopApp(r"^HFT Order Book$")
+    app.connect()
+    frames = []
+    for i in range(10):
+        im = Image.new("RGB", (1280, 760), (18, 20, 23))
+        im.putpixel((i, i), (255, 255, 255))
+        frames.append(im)
+    counter = {"i": 0}
+
+    def _animated():
+        i = counter["i"]
+        counter["i"] += 1
+        im = Image.new("RGB", (1280, 760), (18, 20, 23))
+        im.putpixel((i % 20, i % 20), (255, 255, 255))
+        return im
+
+    monkeypatch.setattr(app, "capture", _animated)
+    monkeypatch.setattr(dr.time, "sleep", lambda s: None)
+    with pytest.raises(TesterAssertionError, match="never settled"):
+        app.wait_region_stable((0, 0, 1280, 760), settle_s=2, timeout=3)
+
+
 def test_time_left_never_negative(monkeypatch):
     _patch_pywinauto(monkeypatch)
     app = dr.DesktopApp(r"^AG Character & Weapon Studio$")

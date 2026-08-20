@@ -217,25 +217,72 @@ screenshots. The plan splits accordingly.
   gray-level verification. Live E2E green 2026-08-20 (all 13 steps:
   attach → foreground → layout signature → dialog → entry → transition).
 
-### Chunk 2 — HFT input scripting (stretch, gated)
+### Chunk 2 — HFT input scripting (shipped v1.17.17.0)
 
-Coordinate/keyboard input against a fixed window geometry (set position +
-size first), asserting via screenshots (pixel-region checks). Fragile by
-nature — only attempted if Chunk 1 ships AND the Round 3 HFT presence
-captures show a stable render. Honest fallback: presence-only forever.
+Coordinate input against a fixed window geometry (pin position + verify
+the client size first), asserting via screenshots (pixel-region checks).
+No element tree: screenshot-only assertions (no text reads).
 
-Button ground truth (GUI.cpp, verified 2026-08-19): main menu has
-`BENCHMARK MODE` (GUI.cpp:134 — auto-runs benchmark mode) and
-`TRADING GAME` (GUI.cpp:153 → `GamePhase::StockPicker`); the picker
-draws 2 rows of 3 clickable stock cards (drawStockPicker, GUI.cpp:536,
-fixed cardW/cardH) then `START TRADING` (GUI.cpp:208) begins the
-1–2 min trading phase; `MAIN MENU` (GUI.cpp:472) returns. The window is
-fixed-size (GUI::init takes width/height) and ImGui lays out
-deterministically, so button coordinates are stable once the window
-position is pinned via SetWindowPos. Target flow: click BENCHMARK MODE
-→ screenshot; MAIN MENU → TRADING GAME → click one card → START TRADING
-→ 3–4 screenshots across the run. No element tree: screenshot-only
-assertions (no text reads).
+Ground truth (GUI.cpp, re-verified 2026-08-20): the window is
+`gui.init("HFT Order Book", 1280, 760)` — **resizable**, SDL2 + OpenGL3 +
+Dear ImGui 1.92.6; all random streams are seeded 42 (mt19937_64) so every
+run renders deterministically. PrintWindow
+(`PW_RENDERFULLCONTENT|PW_CLIENTONLY`) renders the GL window (no
+screen-crop fallback needed). Menu buttons measured: `BENCHMARK MODE`
+**(628, 323)** (blue #143B73), `TRADING GAME` **(628, 412)** (green
+#1A5926), `MAIN MENU` **(1178, 723)** (present only on the benchmark
+screen), `START TRADING` **(640, 409)** (240×48 centered at y=H·0.52,
+GUI.cpp:208); the picker's stock cards draw in
+a fixed grid (card 1 rect (12,106,404,300)) and the `TRADE THIS STOCK`
+button is **flow-laid** (its Y shifts with the wrapped description — it is
+the card child's last element, a full-card-width bar at the card bottom)
+→ located by a fill-color search in the card-1 bottom band (unpressed
+fill **#21262E** = ImGui FrameBg, tolerance 2), not a fixed coordinate.
+**Live-verified gotcha (2026-08-20):** the button is NOT green — the menu
+green #1A5926 and the picker's COL_GREEN "Start price" text #3DB04F are
+different shades; the original green search matched the text. ImGui also
+recolors a button to its hovered shade when the physical cursor is over
+it (menu TRADING GAME #1A5926 → #263880 live-observed), so the engine
+gained `move_mouse` and the feature parks the cursor at (10,10) before
+color asserts. Benchmark = 2M
+orders, ~1–2 s, and does **NOT** auto-return — the feature clicks MAIN
+MENU to get back (clicking it mid-run leaves the sim loop in the
+background; harmless, the next screen owns the window). Trading = 100k
+orders at 1× ≈ 40 s and **auto-ends** on a pixel-stable SessionEnd; the
+news banner shifts the panels 36 px (only the button row matters).
+
+Shipped flow (`app/testers/features/hft_order_book.py`): launch
+`build\hft.exe` (feature owns the process — the HFT presence tester stays
+presence-only, Rule 4) → taskkill-reclaim a stale leftover → attach
+`^HFT Order Book$` (Rule-1 guard) → bring to front → `pin_window(40, 40,
+expected_client=(1280, 760))` (moves the window, then verifies the client
+size the coordinates assume; SDL sizes are client-area so the size is
+never forced — a resized window fails honestly) → main-menu signature via
+`assert_pixel` on both buttons → BENCHMARK MODE (region change 500/20 →
+settle 2/30 → screenshot) → MAIN MENU (signature re-assert) → TRADING
+GAME (region change → screenshot) → `find_color_bbox` on the card-1
+bottom band for the `TRADE THIS STOCK` bar (#21262E, tolerance 2,
+min 1000 px, sampled step 2)
+→ click its center → TradingReady (screenshot) → START TRADING (region
+change → screenshot) → `wait_region_stable` (3 s stillness, 120 s cap) →
+SessionEnd (screenshot). Cleanup is taskkill in a `finally` block.
+
+New engine helpers (`app/services/desktop_runner.py`): `pin_window(x, y,
+expected_client=None)` (SetWindowPos move with SWP_NOACTIVATE|NOZORDER|
+NOSIZE; client-size verify → `TesterEnvError` on mismatch), `find_color_bbox`
+(color search → bbox or None), `move_mouse(x, y)` (SetCursorPos without
+clicking — parks the cursor off controls so ImGui's hover tint never
+changes an asserted fill), `wait_region_stable(box, settle_s, timeout)`
+(streak of consecutive identical captures — detects the static end-state of
+the still-animating trading screen).
+
+Tests: engine unit tests (pin move + flags, wrong-client env error, bbox
+locate/tolerance/sparse-reject, stable-return/timeout) + fake-desktop
+feature runs (happy path + honest failure when the card button is
+missing) + registry gains Hft-Order-Book; 618 total, coverage 90.15%.
+**Live E2E passed 2026-08-20 01:59–02:00** (all 19 steps: menu → benchmark
+→ MAIN MENU → picker → card-1 click → TradingReady → START TRADING →
+~40 s trading → SessionEnd; 6 stage screenshots).
 
 ### Chunk 3 — docs + tests + changelog
 

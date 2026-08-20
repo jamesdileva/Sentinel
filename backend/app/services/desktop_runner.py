@@ -60,6 +60,7 @@ MK_LBUTTON = 0x0001
 
 SWP_NOSIZE = 0x0001
 SWP_NOMOVE = 0x0002
+SWP_NOZORDER = 0x0004
 SWP_NOACTIVATE = 0x0010
 SWP_SHOWWINDOW = 0x0040
 
@@ -449,6 +450,52 @@ class DesktopApp:
         USER32.ClientToScreen(self.window.handle, ctypes.byref(point))
         _send_physical_click(point.x, point.y)
 
+    def move_mouse(self, x: int, y: int) -> None:
+        """Park the physical cursor at a client-area offset without clicking.
+        Needed before pixel-signature asserts: a cursor hovering a button
+        swaps it to its ImGui hovered tint, so the measured normal color
+        would fail (measured 2026-08-20 on HFT's menu — (26,89,38) vs
+        hovered (38,128,56))."""
+        self._check_budget()
+        point = ctypes.wintypes.POINT(x, y)
+        USER32.ClientToScreen(self.window.handle, ctypes.byref(point))
+        USER32.SetCursorPos(point.x, point.y)
+        time.sleep(0.3)
+
+    # ----------------------------------------------------------- geometry
+
+    def pin_window(
+        self,
+        x: int,
+        y: int,
+        expected_client: tuple[int, int] | None = None,
+    ) -> None:
+        """Pin the window to a fixed screen position so the measured client
+        coordinates stay valid (SetWindowPos move; HWND_TOPMOST is broken on
+        this machine but plain moves work — live-verified). The window is
+        centered at launch and resizable, so the position is pinned and the
+        client size is VERIFIED against the layout the coordinates assume
+        (SDL sizes are client-area — resizing to the layout's outer rect
+        would shrink the client, so the size is never forced)."""
+        self._check_budget()
+        hwnd = self.window.handle
+        ok = USER32.SetWindowPos(
+            hwnd, 0, x, y, 0, 0, SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOSIZE
+        )
+        if not ok:
+            raise TesterEnvError(
+                f"SetWindowPos pin failed (error {ctypes.get_last_error()})"
+            )
+        time.sleep(0.3)
+        if expected_client is not None:
+            client = self._client_size()
+            if client != expected_client:
+                raise TesterEnvError(
+                    f"window client size is {client}, expected {expected_client} "
+                    f"— the measured coordinates would not be honest; resize "
+                    f"the window back to {expected_client[0]}x{expected_client[1]}"
+                )
+
     # ------------------------------------------------------------ keyboard
 
     def type_text(self, text: str) -> None:
@@ -583,3 +630,74 @@ class DesktopApp:
                 if im[x, y] != bg:
                     count += 1
         return count
+
+    def find_color_bbox(
+        self,
+        box: tuple[int, int, int, int],
+        rgb: tuple[int, int, int],
+        tolerance: int = 6,
+        min_pixels: int = 50,
+    ) -> tuple[int, int, int, int] | None:
+        """Bounding box of the color matches inside a client box, or None.
+        Used to locate flow-laid-out controls whose exact Y depends on the
+        preceding content (HFT's "TRADE THIS STOCK" button, 2026-08-20).
+        Sampled (step 2) for speed; `min_pixels` rejects stray antialiased
+        pixels — a solid control must cover a real area."""
+        self._check_budget()
+        im = self.capture()
+        pixels = im.load()
+        x0, y0, x1, y1 = box
+        x1 = min(x1, self._client[0])
+        y1 = min(y1, self._client[1])
+        min_x, min_y = x1, y1
+        max_x = max_y = -1
+        count = 0
+        for y in range(y0, y1, 2):
+            for x in range(x0, x1, 2):
+                px = pixels[x, y]
+                if all(abs(a - b) <= tolerance for a, b in zip(px, rgb)):
+                    count += 1
+                    if x < min_x:
+                        min_x = x
+                    if x > max_x:
+                        max_x = x
+                    if y < min_y:
+                        min_y = y
+                    if y > max_y:
+                        max_y = y
+        if count < min_pixels:
+            return None
+        return min_x, min_y, max_x, max_y
+
+    def wait_region_stable(
+        self,
+        box: tuple[int, int, int, int],
+        settle_s: float,
+        timeout: float,
+    ) -> None:
+        """Poll captures until the region is identical for `settle_s`
+        seconds of stillness (polls 1 s apart — `settle_s` seconds means
+        `settle_s + 1` consecutive identical captures). Detects static
+        end-states of animated screens — HFT's benchmark completion and
+        SessionEnd (2026-08-20): the trading screen mutates every frame
+        and goes still exactly when the session ends. TesterAssertionError
+        on timeout."""
+        required = max(2, int(round(settle_s)) + 1)
+        streak = 0
+        last = None
+        deadline = time.monotonic() + min(timeout, self._time_left())
+        while time.monotonic() < deadline:
+            self._check_budget()
+            cur = self.capture()
+            if last is not None and self.changed_pixels(last, cur, box, 4) == 0:
+                streak += 1
+                if streak >= required:
+                    return
+            else:
+                streak = 0
+            last = cur
+            time.sleep(1)
+        raise TesterAssertionError(
+            f"region {box} never settled for {settle_s}s within "
+            f"{min(timeout, self.budget_s)}s (expected a static end-state)"
+        )
