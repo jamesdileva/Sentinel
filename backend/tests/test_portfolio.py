@@ -1,8 +1,10 @@
 """Sprint 10: Portfolio intelligence tests.
 
-Covers the deterministic health-score formula (30/30/25/15, missing = 0),
-PortfolioScore persistence/upsert, candidate ranking with missing items, the
-feature matrix symbols, and the HTTP API. In-memory SQLite; no AI, no network.
+Covers the deterministic health-score formula (30/30/20/15/5, missing = 0),
+the v1.17.18.0 screenshot component and tester-session test credit,
+PortfolioScore persistence/upsert, candidate ranking with missing items,
+the feature matrix symbols, and the HTTP API. In-memory SQLite; no AI, no
+network.
 """
 
 import datetime
@@ -15,11 +17,14 @@ from sqlmodel import Session, SQLModel, select
 
 import app.api.v1.portfolio as portfolio_api
 from app.db.models import (
+    AppSession,
     BuildLog,
     PortfolioScore,
     Project,
     ProjectFile,
     SecurityFinding,
+    SessionScreenshot,
+    SessionStatus,
     Severity,
 )
 from app.db.models import TestResult as TestResultRow
@@ -28,6 +33,7 @@ from app.services.portfolio_service import (
     PortfolioService,
     is_doc_path,
     is_test_file_path,
+    refresh_all_scores,
 )
 
 
@@ -118,6 +124,25 @@ def seed(engine) -> dict[str, Project]:
                 resolved=False,
             )
         )
+        # v1.17.18.0: alpha also has a passed tester session + a screenshot —
+        # the screenshots component and the tester test-credit both exercise.
+        alpha_session = AppSession(
+            project_id=alpha.id,
+            title="Tester: alpha",
+            status=SessionStatus.PASSED,
+            ended_at=datetime.datetime(2026, 8, 5, 10, 2, tzinfo=datetime.timezone.utc),
+        )
+        session.add(alpha_session)
+        session.flush()
+        session.add(
+            SessionScreenshot(
+                session_id=alpha_session.id,
+                path="alpha.png",
+                captured_at=datetime.datetime(
+                    2026, 8, 5, 10, 3, tzinfo=datetime.timezone.utc
+                ),
+            )
+        )
         files = [
             ProjectFile(
                 project_id=alpha.id, path="README.md", absolute_path="/r/README.md"
@@ -179,7 +204,8 @@ def test_health_score_healthy_project():
     engine = make_engine()
     projects = seed(engine)
     svc = make_service(engine)
-    # build 21+9 + tests 24+6 + security 25 + docs 15*50% = 92.5 (Sprint 15)
+    # build 30 + tests 30 + security 20 + docs 15*50% + screenshots 5
+    # = 92.5 (v1.17.18.0 weights 30/30/20/15/5)
     assert svc.compute_health_score(projects["alpha"]) == 92.5
 
 
@@ -187,9 +213,9 @@ def test_health_score_broken_project():
     engine = make_engine()
     projects = seed(engine)
     svc = make_service(engine)
-    # build 21 (static survives failed run) + tests 24 (static) + security 15
-    # (critical unresolved) + docs 15*33% = 65.0 (Sprint 15)
-    assert svc.compute_health_score(projects["beta"]) == 65.0
+    # build 21 (static survives failed run) + tests 24 (static) + security 10
+    # (critical unresolved) + docs 15*33% + no screenshots = 60.0
+    assert svc.compute_health_score(projects["beta"]) == 60.0
 
 
 def test_health_score_untouched_project_is_zero():
@@ -210,7 +236,7 @@ def test_compute_portfolio_score_upserts_row():
     assert first.test_status == "passing"
     assert first.security_status == "clean"
     assert first.documentation_pct == 50
-    assert first.screenshots_available is False
+    assert first.screenshots_available is True
     assert first.portfolio_score == 92.5
 
 
@@ -263,7 +289,7 @@ def test_score_row_is_cached_until_sources_change():
         session.commit()
     row = svc._fresh_row(projects["alpha"])
     assert row.build_status == "failing"
-    # static 21 survives + tests 30 + security 25 + docs 7.5
+    # static 21 survives + tests 30 + security 20 + docs 7.5 + screenshots 5
     assert row.portfolio_score == 83.5
 
 
@@ -275,7 +301,7 @@ def test_summary_counts():
     assert summary["projects"] == 3
     assert summary["buildable"] == 2  # alpha + beta have commands.build
     assert summary["open_findings"] == 1  # only beta's unresolved critical
-    assert summary["avg_health"] == round((92.5 + 65.0 + 0.0) / 3, 1)
+    assert summary["avg_health"] == round((92.5 + 60.0 + 0.0) / 3, 1)
 
 
 def test_clean_scan_flips_pending_to_clean():
@@ -290,7 +316,7 @@ def test_clean_scan_flips_pending_to_clean():
         gamma = session.get(Project, projects["gamma"].id)
         gamma.last_scanned = datetime.datetime.now(datetime.timezone.utc)
         session.commit()
-    assert svc._security_component(gamma) == (25.0, "clean")
+    assert svc._security_component(gamma) == (20.0, "clean")
 
 
 def test_clean_scan_invalidates_cached_pending_score():
@@ -307,7 +333,154 @@ def test_clean_scan_invalidates_cached_pending_score():
         session.commit()
     row = svc._fresh_row(gamma)
     assert row.security_status == "clean"
-    assert row.portfolio_score == 25.0  # security 25, no build/test/docs
+    assert row.portfolio_score == 20.0  # security 20, no build/test/docs
+
+
+# ---------------------------------------------------------------------------
+# v1.17.18.0: tester-session test credit + screenshot component
+# ---------------------------------------------------------------------------
+
+
+def test_passed_tester_session_credits_tests():
+    """gamma has no test files and no TestResult — a passed `Tester:` session
+    (the tester runner's own scripted run) counts as green test evidence."""
+    engine = make_engine()
+    projects = seed(engine)
+    svc = make_service(engine)
+    assert svc._test_component(projects["gamma"].id) == (0.0, "pending")
+    with Session(engine, expire_on_commit=False) as session:
+        session.add(
+            AppSession(
+                project_id=projects["gamma"].id,
+                title="Tester: gamma",
+                status=SessionStatus.PASSED,
+                ended_at=datetime.datetime(
+                    2026, 8, 6, 9, 0, tzinfo=datetime.timezone.utc
+                ),
+            )
+        )
+        session.commit()
+    assert svc._test_component(projects["gamma"].id) == (30.0, "passing")
+
+
+def test_failed_tester_session_does_not_credit():
+    """A non-green tester session is not test evidence at all."""
+    engine = make_engine()
+    projects = seed(engine)
+    svc = make_service(engine)
+    with Session(engine, expire_on_commit=False) as session:
+        session.add(
+            AppSession(
+                project_id=projects["gamma"].id,
+                title="Tester: gamma",
+                status=SessionStatus.FAILED,
+                ended_at=datetime.datetime(
+                    2026, 8, 6, 9, 0, tzinfo=datetime.timezone.utc
+                ),
+            )
+        )
+        session.commit()
+    assert svc._test_component(projects["gamma"].id) == (0.0, "pending")
+
+
+def test_red_test_result_dominates_tester_credit():
+    """An explicit red test run stays "failing" even when a passed tester
+    session exists — a failed reported run is never masked by another path."""
+    engine = make_engine()
+    projects = seed(engine)
+    svc = make_service(engine)
+    with Session(engine, expire_on_commit=False) as session:
+        session.add(
+            TestResultRow(
+                project_id=projects["gamma"].id,
+                run_at=datetime.datetime(
+                    2026, 8, 6, 10, 0, tzinfo=datetime.timezone.utc
+                ),
+                passed=5,
+                failed=2,
+                errors=0,
+            )
+        )
+        session.add(
+            AppSession(
+                project_id=projects["gamma"].id,
+                title="Tester: gamma",
+                status=SessionStatus.PASSED,
+                ended_at=datetime.datetime(
+                    2026, 8, 6, 9, 0, tzinfo=datetime.timezone.utc
+                ),
+            )
+        )
+        session.commit()
+    assert svc._test_component(projects["gamma"].id) == (24.0, "failing")
+
+
+def test_screenshot_component_and_epoch():
+    """Screenshots come from SessionScreenshot joined through their session;
+    a new screenshot recomputes a cached score row (it is a source epoch)."""
+    engine = make_engine()
+    projects = seed(engine)
+    svc = make_service(engine)
+    assert svc._screenshots_available(projects["beta"].id) is False
+    svc.scores()  # prime the cache
+    with Session(engine, expire_on_commit=False) as session:
+        session.add(
+            AppSession(
+                project_id=projects["beta"].id,
+                title="Manual run",
+                status=SessionStatus.PASSED,
+                ended_at=datetime.datetime.now(datetime.timezone.utc)
+                + datetime.timedelta(hours=1),
+            )
+        )
+        session.commit()
+        beta_session = session.exec(
+            select(AppSession).where(
+                AppSession.project_id == projects["beta"].id,
+                AppSession.title == "Manual run",
+            )
+        ).one()
+        session.add(
+            SessionScreenshot(
+                session_id=beta_session.id,
+                path="beta.png",
+                captured_at=datetime.datetime.now(datetime.timezone.utc)
+                + datetime.timedelta(hours=2),
+            )
+        )
+        session.commit()
+    row = svc._fresh_row(projects["beta"])
+    assert row.screenshots_available is True
+    # 21 build + 24 tests + 10 security + 5 docs + 5 screenshots = 65.0
+    assert row.portfolio_score == 65.0
+
+
+def test_refresh_all_scores_recomputes_cached_rows():
+    """refresh_all_scores (startup hook) rewrites every cached row — the
+    self-heal path for rows cached under older component definitions."""
+    engine = make_engine()
+    projects = seed(engine)
+    svc = make_service(engine)
+    svc.scores()  # prime the cache with the current definitions
+    with Session(engine, expire_on_commit=False) as session:
+        row = session.exec(
+            select(PortfolioScore).where(
+                PortfolioScore.project_id == projects["alpha"].id
+            )
+        ).first()
+        row.screenshots_available = False  # simulate a stale pre-fix row
+        row.portfolio_score = 87.5
+        session.commit()
+
+    refresh_all_scores(engine=engine)
+    with Session(engine) as session:
+        row = session.exec(
+            select(PortfolioScore).where(
+                PortfolioScore.project_id == projects["alpha"].id
+            )
+        ).first()
+        assert row.screenshots_available is True
+        assert row.portfolio_score == 92.5
 
 
 # ---------------------------------------------------------------------------
@@ -324,7 +497,13 @@ def test_best_candidates_ranked_with_missing():
     assert ranked[0].score == 92.5
     assert ranked[0].missing == []
     assert ranked[2].score == 0.0
-    assert set(ranked[2].missing) == {"build", "tests", "security", "docs"}
+    assert set(ranked[2].missing) == {
+        "build",
+        "tests",
+        "security",
+        "docs",
+        "screenshots",
+    }
 
 
 def test_best_candidates_min_score_filter():
@@ -342,8 +521,9 @@ def test_feature_matrix_symbols():
     matrix = svc.feature_matrix()
     assert matrix.features == ["build", "test", "docs", "security", "screenshots"]
     assert matrix.projects == ["alpha", "beta", "gamma"]
-    # docs at 50% is green (Sprint 15 threshold)
-    assert matrix.matrix[0] == ["✓", "✓", "✓", "✓", "✗"]
+    # docs at 50% is green (Sprint 15 threshold); alpha's screenshot flips
+    # the last column (v1.17.18.0)
+    assert matrix.matrix[0] == ["✓", "✓", "✓", "✓", "✓"]
     assert matrix.matrix[1] == ["⚠", "⚠", "⚠", "⚠", "✗"]
     assert matrix.matrix[2] == ["✗", "✗", "✗", "✗", "✗"]
 
@@ -397,7 +577,7 @@ def test_api_feature_matrix(api_client):
     assert response.status_code == 200
     body = response.json()
     assert body["projects"] == ["alpha", "beta", "gamma"]
-    assert body["matrix"][0] == ["✓", "✓", "✓", "✓", "✗"]
+    assert body["matrix"][0] == ["✓", "✓", "✓", "✓", "✓"]
 
 
 def test_api_summary(api_client):
@@ -407,4 +587,4 @@ def test_api_summary(api_client):
     assert body["projects"] == 3
     assert body["buildable"] == 2
     assert body["open_findings"] == 1
-    assert body["avg_health"] == 52.5
+    assert body["avg_health"] == 50.8

@@ -189,7 +189,7 @@ class PortfolioScore(SQLModel, table=True):
     test_status: str  # "pass", "fail", "pending"
     documentation_pct: int  # 0-100
     security_status: str  # "pass", "warn", "fail"
-    screenshots_available: bool = False
+    screenshots_available: bool = False  # v1.17.18.0: real SessionScreenshot data
     portfolio_score: float  # 0.0 - 100.0
     updated_at: datetime.datetime = Field(default_factory=datetime.utcnow)
 
@@ -419,12 +419,12 @@ commit/build/test/finding timestamps rather than parsed commit messages.
 
 ### 2.7. Portfolio (Sprint 10)
 
-Deterministic health scoring (30/30/25/15, missing = 0); see Â§14.5 for the
+Deterministic health scoring (30/30/20/15/5, missing = 0); see Â§14.5 for the
 formula and semantics.
 
 **GET `/portfolio/scores`** â€” Health scores for all projects
-- Recomputed on read from stored build/test/security/file rows, then persisted
-  to the `PortfolioScore` table
+- Cached in the `PortfolioScore` table; recomputed on demand or when a source
+  row is newer (and wholesale at startup via `refresh_all_scores`, v1.17.18.0)
 - Returns: list of `PortfolioScoreRead` (`build_status`, `test_status`,
   `security_status`, `documentation_pct`, `screenshots_available`,
   `portfolio_score`, `updated_at`)
@@ -1627,7 +1627,7 @@ long runs stay bounded (v1.14). Deterministic and unit-tested.
 | `test_automation.py` | Celery task chains, pipeline orchestration | `tasks/*.py`, `services/automation_engine.py` |
 | `test_security.py` | Security scanner integration, finding schemas | `services/security_scanner.py` |
 | `test_world_sim.py` | World Simulator isolation, event generation | `services/world_simulator.py` |
-| `test_portfolio.py` | Portfolio scoring (30/30/25/15), candidates, matrix, API | `services/portfolio_service.py` |
+| `test_portfolio.py` | Portfolio scoring (30/30/20/15/5), candidates, matrix, tester-credit, screenshots, API | `services/portfolio_service.py` |
 | `test_observatory.py` | Galaxy shared-tech graph, timeline window/kinds/order/cap, architecture tree, API | `services/observatory_service.py` |
 | `test_rag_service.py` | RAG service: indexing, semantic search, grounded query, provenance | `services/rag_service.py`, `services/chroma_manager.py`, `services/ollama_service.py` |
 | `test_rag_api.py` | RAG endpoints, knowledge summaries | `api/v1/rag.py` |
@@ -1870,36 +1870,40 @@ document changelogs; Pi-hole is no longer part of Sentinel.)
 
 ---
 
-## 14.5. Portfolio Intelligence (Sprint 10, scoring refined in Sprint 15)
+## 14.5. Portfolio Intelligence (Sprint 10, scoring refined in Sprint 15 + v1.17.18.0)
 
 `PortfolioService` (`backend/app/services/portfolio_service.py`) aggregates each
-project's build, test, security and documentation state into a deterministic
-0-100 health score â€” no AI, no extra jobs. Scores are recomputed on read and
-upserted into the `PortfolioScore` table (docs/02 Â§1), so the API, matrix and
-candidates always agree.
+project's build, test, security, documentation and screenshot state into a
+deterministic 0-100 health score — no AI, no extra jobs. Scores are cached in
+the `PortfolioScore` table (docs/02 §1) and recomputed only when a source row
+(build/test/security/file/screenshot/session) is newer than the stored score —
+so the API, matrix and candidates always agree. `refresh_all_scores()` at
+backend startup (v1.17.18.0) recomputes every row once so scores cached under
+older component definitions self-heal.
 
-**Score formula (weights sum to 100, Sprint 15 static/proven split):**
+**Score formula (weights sum to 100, v1.17.18.0 rebalance):**
 
 | Component | Weight | Rule |
 |-----------|--------|------|
-| build | 30 | `21 static` if a build command was detected in `stack.commands.build` (granted from repo detection alone) + `9` when the latest `BuildLog` actually passed. The static 21 survives a failed run â€” a command does not change because a build failed. No command â†’ 0/pending |
-| tests | 30 | `24 static` if conventional test files exist (`tests/`, `__tests__/`, `test_*.py`, `*_test.py`, `*.test.ts(x)`, `*.spec.ts(x)`) + `6` when the latest `TestResult` is green; failed/errored run keeps the static 24. No test files and no run â†’ 0/pending |
-| security | 25 | all findings resolved â†’ 25 ("clean"); unresolved deduct per severity (critical 10 / high 6 / medium 3 / low 1 / info 0, floor 0); no findings at all â†’ 0 (never scanned â€” **pending**, distinct from clean since v1.17.6.6) |
-| docs | 15 | README/Markdown/`docs/` files Ã· total indexed files Ã— 15 |
+| build | 30 | `21 static` if a build command was detected in `stack.commands.build` (granted from repo detection alone) + `9` when the latest `BuildLog` actually passed. The static 21 survives a failed run — a command does not change because a build failed. No command → 0/pending |
+| tests | 30 | `24 static` if conventional test files exist (`tests/`, `__tests__/`, `test_*.py`, `*_test.py`, `*.test.ts(x)`, `*.spec.ts(x)`) + `6` green evidence from the latest `TestResult` **or** a passed `Tester:` session (v1.17.18.0 — the tester runner's own scripted runs are honest green evidence). Precedence: a red/errored `TestResult` is `failing` and dominates (a failed reported run is never masked); green `TestResult` or passed tester session → `passing`; no test files and no run and no tester session → 0/pending; test files exist but no green evidence yet → 24/configured |
+| security | 20 | all findings resolved → 20 ("clean"); unresolved deduct per severity (critical 10 / high 6 / medium 3 / low 1 / info 0, floor 0); no findings at all → 0 (never scanned — **pending**, distinct from clean since v1.17.6.6) |
+| docs | 15 | README/Markdown/`docs/` files ÷ total indexed files × 15 |
+| screenshots | 5 | any `SessionScreenshot` row for the project (joined through its owning `AppSession`) → 5, else 0. Was a hardcoded `False`/`✗` stub before v1.17.18.0 |
 
-A component with no data yet scores **0** â€” projects are never assumed healthy.
+A component with no data yet scores **0** — projects are never assumed healthy.
 `documentation_pct` is the same ratio as a 0-100 integer. `screenshots_available`
-is always `False` (no screenshot feature yet; the Feature Matrix screenshots
-column stays `âœ—`).
+reflects the real `SessionScreenshot` data; the Feature Matrix screenshots
+column is `✓`/`✗` accordingly.
 
-**Never-scanned â‰  clean (v1.17.6.6):** the scanner stamps `Project.last_scanned`
+**Never-scanned ≠ clean (v1.17.6.6):** the scanner stamps `Project.last_scanned`
 on every pass, so a project with zero findings is **pending** until it has been
-scanned at least once and **clean** only afterwards â€” the security cell shows
-`âš  pending` vs `âœ“ clean` accordingly. Because the scan now runs chained to the
-daily repo-sync (Â§7.1), every project gets its first scan within one sync cycle
+scanned at least once and **clean** only afterwards — the security cell shows
+`⚠ pending` vs `✓ clean` accordingly. Because the scan now runs chained to the
+daily repo-sync (§7.1), every project gets its first scan within one sync cycle
 (manually: `POST /security/scan?project_id=`, CLI `sentinel scan`).
 
-**Feature Matrix cells** (`âœ“`/`âš `/`âœ—`): build/test â€” passing/failing/pending
+**Feature Matrix cells** (`✓`/`⚠`/`✗`): build/test — passing/failing/pending
 (a detected-but-unproven component is `âš ` "configured"); docs â€” **â‰¥50%** /
 1-49% / 0% (the 50% green threshold is a Sprint 15 decision); security â€”
 clean/findings/pending.
@@ -2064,6 +2068,7 @@ status radio) / Delete / Export-to-portfolio (copyable card snippet dialog).
 | 2026-08-20 | 1.17.17.1 | **Post-chunk-2 batch: AG completion proof, Airadio screenshot, FinSight HTTP tester, smoke test step, integration checklist (docs/integration.md).** Engine: `DesktopApp.connect(timeout_s)` parametrized + new `WindowNotFoundError(TesterEnvError)`; module-level `wait_for_window(title_pattern, timeout_s, budget_s)` polls for an app-spawned window (returns None on timeout — feature fails honestly — raises on ambiguity). AG feature now proves generation completion without any text read (Rule 3): after the transition assert it `wait_for_window(^AG (Animation )?Viewer)` (deadline 600 s — the app spawns the pygame/SDL viewer at the end of a successful export, gui.py:505-508) → attach → settle 4 s → screenshot; budget_s 600→900. **Live E2E passed 2026-08-20 03:06-03:10 (14 steps; viewer screenshot 800×600, 165 gray levels — real scene)**; mouse needed only the first ~2 min. Airadio screenshot feature `features/airadio.py` (native, no clicks/foreground — pure window capture): live title ground truth is **`ElmWave Network`** (the renderer HTML `<title>` wins; the packaged BrowserWindow title `WestWaveGem` is wrong — one wasted investigate), exe `release\win-unpacked\WestWaveGem Radio.exe`, taskkill by the app's own image name before launch and in finally; `npm run dev` is Vite-only (no window), so only the packaged exe opens one. **Live E2E passed (7 steps; 1264×761 window, 228 gray levels)**. FinSight HTTP tester `testers/finsight.py` (dinner-menu pattern, no mouse): root `package.json` has NO main entry, so the working launch is `cd electron && electron .` (electron/package.json → main.js → spawns `../app.py` from the electron cwd); Flask on :10000, **no auth — GET / renders the dashboard**; fallback to `python app.py` if the shell never reaches the backend. **Live E2E passed (4 steps: electron launch → fallback → http 200 → headless dashboard render)**. default_smoke now runs the project's discovered `test` command first (`ctx.cli(expect_exit=0)`, output in `data/logs/apps/<slug>.log`); a red suite fails the smoke before launch. Mouse-usage audit locked: only AG + HFT features need the physical mouse; everything else headless/synthetic. Tauri **skipped** — Electron (CDP) + web dashboards are the supported shapes for new apps. New `docs/integration.md`: tier 0/1/2 capability table, per-project live-verify checklist, verified-ground-truth docstring template, the 4-line native-feature skeleton, and the 7-step integration checklist. Tests: +9 (3 wait_for_window engine, AG viewer-never-appears, Airadio fake-desktop, 2 FinSight run, 2 default_smoke) + registry sets — 627 total, coverage 90.33%, lint clean. | |
 elease\win-unpacked\WestWaveGem Radio.exe, taskkill by the app's own image name before launch and in finally; 
 pm run dev is Vite-only (no window), so only the packaged exe opens one. **Live E2E passed (7 steps; 1264x761 window, 228 gray levels)**. FinSight HTTP tester 	esters/finsight.py (dinner-menu pattern, no mouse): root package.json has NO main entry, so the working launch is cd electron && electron . (electron/package.json -> main.js -> spawns ../app.py from the electron cwd); Flask on :10000, **no auth -- GET / renders the dashboard**; fallback to python app.py if the shell never reaches the backend. **Live E2E passed (4 steps: electron launch -> fallback -> http 200 -> headless dashboard render)**. default_smoke now runs the project's discovered 	est command first (ctx.cli(expect_exit=0), output in data/logs/apps/<slug>.log); a red suite fails the smoke before launch. Mouse-usage audit locked: only AG + HFT features need the physical mouse; everything else headless/synthetic. Tauri **skipped** -- Electron (CDP) + web dashboards are the supported shapes for new apps. New docs/integration.md: tier 0/1/2 capability table, per-project live-verify checklist, verified-ground-truth docstring template, the 4-line native-feature skeleton, and the 7-step integration checklist. Tests: +9 (3 wait_for_window engine, AG viewer-never-appears, Airadio fake-desktop, 2 FinSight run, 2 default_smoke) + registry sets -- 627 total, coverage 90.33%, lint clean. | |
+| 2026-08-20 | 1.17.18.0 | **Portfolio scoring fixes + tester-credit (docs/02 §14.5).** The portfolio's `screenshots_available` column was a hardcoded `False` stub (never read from `SessionScreenshot`) and its feature-matrix cell was hardcoded `✗`; now it counts any session screenshot for the project (join via the owning session) and contributes weight 5. Weights rebalanced from 30/30/25/15 to **build 30 / tests 30 / security 20 / docs 15 / screenshots 5** (=100). Tests evidence (v1.17.18.0) now also credits a **passed `Tester:` session** (the tester runner's own scripted runs are honest green evidence): precedence is latest-TestResult-red → `failing` (a failed reported run is never masked), green TestResult **or** passed tester session → `passing`; `_source_epoch` grew screenshot `captured_at` and tester-session `ended_at` so the change-driven cache recomputes when those appear. `refresh_all_scores()` runs at backend startup and recomputes every cached row — rows cached under older component definitions self-heal. New tests: +5 (tester credit, failed-tester no-credit, red-dominates-tester, screenshot component + epoch invalidation, refresh_all_scores) — 632 total. Live E2E 2026-08-20: `/api/v1/portfolio/scores` shows Ag/Airadio/FinSight/HFT/Cg/Card Game `screenshots_available=True`; Airadio/FinSight/HFT `test_status=passing`; Ag stays `failing` (its red Tests-page run dominates). | |
 | 2026-08-20 | 1.17.17.0 | **Click-through chunk 2 (HFT input scripting, docs/clickthrough_plan.md) — shipped.** Ground truth re-verified (GUI.cpp): "HFT Order Book" is SDL2 + OpenGL3 + Dear ImGui 1.92.6, `gui.init(1280, 760)` — resizable — with all random streams seeded 42 (mt19937_64), so runs render deterministically; PrintWindow(PW_RENDERFULLCONTENT\|PW_CLIENTONLY) renders the GL window (no screen-crop fallback). Buttons measured: BENCHMARK MODE (628,323) #143B73, TRADING GAME (628,412) #1A5926, MAIN MENU (1178,723), START TRADING (640,409); the picker's `TRADE THIS STOCK` button is the card child's last element — a full-card-width bar at the card bottom — located by its fill-color search in the card-1 bottom band (unpressed fill #21262E = ImGui FrameBg), not a fixed coordinate; live-verified gotcha: the button is NOT green (the earlier green search matched the COL_GREEN "Start price" text), and ImGui hover-tints buttons under the physical cursor (#1A5926 → #263880) so the engine gained `move_mouse` to park the cursor off controls. Benchmark (2M orders, ~1-2 s) does NOT auto-return — the feature clicks MAIN MENU; trading (100k @ 1× ≈ 40 s) auto-ends on a pixel-stable SessionEnd. New engine helpers in `desktop_runner.py`: `pin_window` (SetWindowPos move + client-size verify — SDL sizes are client-area, never forced; mismatch → TesterEnvError), `find_color_bbox` (sampled color search, min_pixels rejects stray antialiasing), `move_mouse` (SetCursorPos without click — hover-tint parking), `wait_region_stable` (streak of consecutive identical captures). New feature `app/testers/features/hft_order_book.py` (native, budget 240 s): taskkill-reclaim → launch `build\hft.exe` (the HFT presence tester stays presence-only, Rule 4) → attach ^HFT Order Book$ → bring to front → pin (40,40) verify 1280×760 → menu signature → benchmark (region change + settle) → MAIN MENU → TRADING GAME → find_color_bbox card-1 button → START TRADING → settle → SessionEnd, screenshots per stage, taskkill cleanup in finally. Registry gains Hft-Order-Book. Tests: +4 engine (pin move+flags, wrong-client env error, bbox locate/tolerance/sparse, stable return/timeout), +2 feature (fake-desktop happy path + honest failure on missing card button), registry test updated — 618 total, coverage 90.15%, lint clean. **Live E2E passed 2026-08-20 01:59–02:00** (all 19 steps, 6 stage screenshots). | |
 | 2026-08-19 | 1.17.16.0 | **Click-through Phase 3 chunk 1: native desktop engine (pywinauto) + AG features (docs/clickthrough_plan.md).** Live-verified ground-truth correction: Tk 8.6.15 has NO MSAA/UIA tree (`tk::msaa` absent) — the 2026-08-18 plan claim was wrong — tk ignores posted WM_* clicks, capture works only via `PrintWindow(PW_RENDERFULLCONTENT\|PW_CLIENTONLY)` ctypes, HWND_TOPMOST fails (err 1400), and SetForegroundWindow cannot override an app holding foreground → honest retryable TesterEnvError ("desktop busy"). New `app/services/desktop_runner.py` `DesktopApp`: UIA title-pattern attach (Rule-1 guard), bring_to_front (SW_RESTORE + AttachThreadInput + BringWindowToTop + SetForegroundWindow verify), PrintWindow capture, SendInput physical clicks, native dialogs by element name, `changed_pixels`/`wait_region_change`/`assert_pixel` (tolerance 6). `Feature.native=True`; FeatureContext native branch (shot→`ctx.desktop.shot`, go refused); FeatureRunner partitions native/web. AG feature (measured anchors; real pose via native dialog; Generate → transition-only assert, budget_s 600). AG tester docstring updated (animate green since AG `bb27c7b`). pywinauto in `pyproject.toml`. Tests: +11 (8 DesktopApp unit, 3 native feature incl. busy→investigate + go-refused); registry gains Ag. | |
 | 2026-08-20 | 1.17.16.0 | **Chunk 1 live fixes (two more live E2E rounds + PC restart).** The native dialog is driven by keystrokes, not element names: its `File name:` box lives inside a DirectUIHWND the win32 tree cannot reach — `Alt+N` (`%n`), typed path, Enter; `dialog()` resolves via the **win32** desktop (UIA `wait('exists')` times out on native dialogs; `find_windows()` hardcodes win32 anyway) and the engine's new `Element.focus()` brings it to the foreground (it opens WITHOUT foreground — keys would hit the parent). After the dialog closes, the tk modal loop unwinds ~100 ms later and `rest_path.set()` lands late — the entry check **polls up to 15 s**. Buttons live-measured: Browse **(642, 90)** (spans x 598-687), Generate **(360, 469)** (fill x 270-450, y 454-484). The 9pt status log line is 1-2 px tall and rendered at y 543-549 — between the step-4 sample rows — so `changed_pixels`/`wait_region_change` gained a `step` parameter and the transition check samples at step 2, min 15 px. New engine helpers: `type_text`/`press_alt`/`press_enter` (SendInput keybd, `_KEY_TO_VK`), `Element.wait_gone`, `Element.focus`, `content_pixels`. Tests: +2 (thin-line step sampling, step forwarding) — 610 total, coverage 90.09%. Live E2E green 2026-08-20: all 13 steps passed (`/api/v1/testers/run`), screenshots + checkpoints recorded. |

@@ -128,6 +128,9 @@ def _background_initial_scan() -> None:
 async def lifespan(_: FastAPI):
     attach_file_logging()  # uvicorn replaced root handlers; keep the run log
     init_db()
+    from app.services.portfolio_service import refresh_all_scores
+
+    refresh_all_scores()  # v1.17.18.0: self-heal rows cached pre-screenshots
     run_startup_checks()
     if settings.scheduler_enabled:
         scheduler.start()

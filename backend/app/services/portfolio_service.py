@@ -1,29 +1,38 @@
 """PortfolioService — deterministic portfolio intelligence (docs/02 §14.5).
 
-Aggregates each project's build, test, security and documentation state into a
-0-100 health score, persists it to the `PortfolioScore` table, and produces the
-candidate ranking and feature matrix. All logic is deterministic (no AI): scores
-derive purely from stored rows, and nothing here mutates project data.
+Aggregates each project's build, test, security, documentation and
+screenshot state into a 0-100 health score, persists it to the
+`PortfolioScore` table, and produces the candidate ranking and feature
+matrix. All logic is deterministic (no AI): scores derive purely from
+stored rows, and nothing here mutates project data.
 
-Scoring (Sprint 10 + Sprint 15 refinements):
-- weights: build 30 / tests 30 / security 25 / docs 15
+Scoring (Sprint 10 + Sprint 15 refinements + v1.17.18.0):
+- weights: build 30 / tests 30 / security 20 / docs 15 / screenshots 5
 - build = 21 static (a build command was discovered in the repo) + 9 when the
   latest build actually passed. The static part survives a failed run — the
   command does not change because a build failed (Sprint 15 decision).
-- tests = 24 static (test files exist in the repo) + 6 when the latest test
-  run is green. Same static-first logic as build.
+- tests = 24 static (test files exist in the repo) + 6 when there is green
+  evidence. Evidence since v1.17.18.0: the latest test run is green OR a
+  passed tester session exists (`Tester:` sessions auto-created by the
+  tester runner — a scripted run of the app's own suite is honest test
+  evidence). An explicit red test run dominates (failing, static only).
 - security: unresolved findings deduct by severity; scanned with no open
   findings (including zero findings — `last_scanned` is stamped on every run
   since v1.17.6.6) is "clean"; no findings AND never scanned is "pending"
 - docs = fraction of indexed files that are README/Markdown/docs files;
   >= 50% counts as a green ✓ in the feature matrix (Sprint 15 threshold).
+- screenshots (v1.17.18.0): 5 points when the project has at least one
+  session screenshot (SessionScreenshot rows — the Sessions page captures).
+  The feature-matrix column was a hardcoded ✗ stub before this version.
 - a component with no data yet scores 0 (never assumed healthy)
 
 Caching (Sprint 15): portfolio reads are cached in the `PortfolioScore` row.
-A project is recomputed only when a source row (build/test/security/file) is
-newer than the stored score, or when no score row exists yet — so repeated tab
-loads are instant and the numbers refresh exactly when the underlying data
-changes (e.g. after a repo sync pulls new commits).
+A project is recomputed only when a source row (build/test/security/file/
+screenshot/session) is newer than the stored score, or when no score row
+exists yet — so repeated tab loads are instant and the numbers refresh
+exactly when the underlying data changes (e.g. after a repo sync pulls new
+commits). `refresh_all_scores()` at startup (v1.17.18.0) recomputes every
+row once so rows cached under older component definitions self-heal.
 """
 
 import datetime
@@ -33,18 +42,21 @@ from sqlmodel import Session, select
 
 from app.core.logging import get_logger
 from app.db.models import (
+    AppSession,
     BuildLog,
     PortfolioScore,
     Project,
     ProjectFile,
     SecurityFinding,
+    SessionScreenshot,
+    SessionStatus,
     TestResult,
 )
 from app.schemas import FeatureMatrix, PortfolioCandidate, PortfolioScoreRead
 
 logger = get_logger(__name__)
 
-WEIGHTS = {"build": 30, "tests": 30, "security": 25, "docs": 15}
+WEIGHTS = {"build": 30, "tests": 30, "security": 20, "docs": 15, "screenshots": 5}
 
 # Sprint 15: static (detected) vs proven (ran green) split of the build/test
 # components. The static part is granted purely from repo detection and is
@@ -143,6 +155,32 @@ class PortfolioService:
     def _has_test_files(self, project_id: str) -> bool:
         return any(is_test_file_path(f.path) for f in self._files(project_id))
 
+    def _latest_tester_pass(self, project_id: str) -> AppSession | None:
+        """Most recent passed `Tester:` session (auto-created by the tester
+        runner). A green scripted run of the app's own suite is honest test
+        evidence — v1.17.18.0."""
+        stmt = (
+            select(AppSession)
+            .where(
+                AppSession.project_id == project_id,
+                AppSession.status == SessionStatus.PASSED,
+                AppSession.title.startswith("Tester:"),
+            )
+            .order_by(AppSession.ended_at.desc())
+        )
+        return self.session.exec(stmt).first()
+
+    def _screenshots_available(self, project_id: str) -> bool:
+        """Any session screenshot for the project (the Sessions page's
+        captures count — v1.17.18.0, was a hardcoded ✗ stub)."""
+        stmt = (
+            select(SessionScreenshot.id)
+            .join(AppSession, SessionScreenshot.session_id == AppSession.id)
+            .where(AppSession.project_id == project_id)
+            .limit(1)
+        )
+        return self.session.exec(stmt).first() is not None
+
     # --- component scores -----------------------------------------------------
 
     def _build_component(self, project: Project) -> tuple[float, str]:
@@ -158,12 +196,14 @@ class PortfolioService:
     def _test_component(self, project_id: str) -> tuple[float, str]:
         test = self._latest_test(project_id)
         ran = test is not None and test.passed + test.failed + test.errors > 0
-        if not self._has_test_files(project_id) and not ran:
-            return 0.0, "pending"
-        if ran and test.failed == 0 and test.errors == 0:
-            return float(TESTS_STATIC + TESTS_PROVEN), "passing"
-        if ran:
+        if ran and (test.failed > 0 or test.errors > 0):
+            # an explicit red run dominates any later green evidence
             return float(TESTS_STATIC), "failing"
+        tester_pass = self._latest_tester_pass(project_id) is not None
+        if not self._has_test_files(project_id) and not ran and not tester_pass:
+            return 0.0, "pending"
+        if (ran and test.failed == 0 and test.errors == 0) or tester_pass:
+            return float(TESTS_STATIC + TESTS_PROVEN), "passing"
         return float(TESTS_STATIC), "configured"
 
     def _security_component(self, project: Project) -> tuple[float, str]:
@@ -210,6 +250,15 @@ class PortfolioService:
                 SecurityFinding.project_id == project_id
             ),
             select(ProjectFile.created_at).where(ProjectFile.project_id == project_id),
+            # v1.17.18.0: screenshots and tester sessions are score sources too
+            select(SessionScreenshot.captured_at)
+            .join(AppSession, SessionScreenshot.session_id == AppSession.id)
+            .where(AppSession.project_id == project_id),
+            select(AppSession.ended_at).where(
+                AppSession.project_id == project_id,
+                AppSession.status == SessionStatus.PASSED,
+                AppSession.title.startswith("Tester:"),
+            ),
         ):
             for value in self.session.exec(stmt).all():
                 if value is not None:
@@ -247,12 +296,15 @@ class PortfolioService:
         tests, test_status = self._test_component(project.id)
         security, security_status = self._security_component(project)
         docs, docs_pct = self._docs_component(project.id)
+        screenshots_available = self._screenshots_available(project.id)
+        screenshots = float(WEIGHTS["screenshots"]) if screenshots_available else 0.0
         return {
-            "score": round(build + tests + security + docs, 1),
+            "score": round(build + tests + security + docs + screenshots, 1),
             "build_status": build_status,
             "test_status": test_status,
             "security_status": security_status,
             "docs_pct": docs_pct,
+            "screenshots_available": screenshots_available,
         }
 
     def compute_portfolio_score(self, project: Project) -> PortfolioScore:
@@ -269,7 +321,7 @@ class PortfolioService:
         row.test_status = components["test_status"]
         row.security_status = components["security_status"]
         row.documentation_pct = components["docs_pct"]
-        row.screenshots_available = False
+        row.screenshots_available = components["screenshots_available"]
         row.portfolio_score = components["score"]
         row.updated_at = datetime.datetime.now(timezone.utc)
         self.session.add(row)
@@ -313,7 +365,8 @@ class PortfolioService:
                     self._pass_symbol(row.test_status),
                     self._docs_symbol(row.documentation_pct),
                     self._security_symbol(row.security_status),
-                    "✗",
+                    # v1.17.18.0: real data — was a hardcoded ✗ stub
+                    "✓" if row.screenshots_available else "✗",
                 ]
             )
         return FeatureMatrix(
@@ -363,6 +416,8 @@ class PortfolioService:
             missing.append("security")
         if row.documentation_pct == 0:
             missing.append("docs")
+        if not row.screenshots_available:
+            missing.append("screenshots")
         return missing
 
     def _pass_symbol(self, status: str) -> str:
@@ -385,3 +440,25 @@ class PortfolioService:
         if status == "findings":
             return "⚠"
         return "✗"
+
+
+def refresh_all_scores(engine=None) -> None:
+    """Recompute every project's cached score row (v1.17.18.0).
+
+    Called at backend startup so rows cached under older component
+    definitions (e.g. the pre-screenshots stub, the old 25/15 weights)
+    self-heal without waiting for new source data. Deterministic and cheap
+    (a handful of indexed queries per project); must never break startup.
+    Tests may pass a custom engine.
+    """
+    from app.db.connection import get_engine
+
+    try:
+        with Session(engine or get_engine()) as session:
+            service = PortfolioService(session)
+            projects = service._all_projects()
+            for project in projects:
+                service.compute_portfolio_score(project)
+        logger.info("Portfolio scores refreshed for %d project(s)", len(projects))
+    except Exception:  # noqa: BLE001 — startup must survive a scoring hiccup
+        logger.exception("Portfolio score refresh failed")
