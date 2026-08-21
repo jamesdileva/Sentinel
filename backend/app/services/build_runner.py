@@ -198,6 +198,11 @@ class BuildRunner:
                 )
         apps_dir = Path(settings.db_path).parent.parent / "logs" / "apps"
         apps_dir.mkdir(parents=True, exist_ok=True)
+        # Audit A2 (v1.17.18.1): rotate the previous run's log before opening,
+        # so accumulation across launches stays bounded.
+        from app.services.app_sessions import _rotate_app_log
+
+        _rotate_app_log(_slug(project.name))
         log_file = open(apps_dir / f"{_slug(project.name)}.log", "a", encoding="utf-8")
         # v1.17.8.2: CREATE_NEW_PROCESS_GROUP only — DETACHED_PROCESS makes
         # cmd.exe spawn external children (npm, python, node) with invalid

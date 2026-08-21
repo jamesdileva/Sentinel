@@ -1,4 +1,4 @@
-"""SettingsService — read-only configuration report (v1.17.18.0).
+"""SettingsService — read-only configuration report (v1.17.18.1).
 
 Surfaces every SENTINEL_* setting with its current value, default and source
 (environment / .env file / default), plus deterministic validation warnings
@@ -7,8 +7,9 @@ reachability, embedding-model presence). Strictly read-only (docs/01 Rule 2:
 nothing here changes server state); the dashboard renders the report and
 provides no edit controls.
 
-Secrets (`SENTINEL_API_KEY`, `SENTINEL_GITHUB_TOKEN`) are redacted to
-set/not-set — the values never leave the machine (docs/01 Rule 1).
+Secrets (`SENTINEL_GITHUB_TOKEN`) are redacted to set/not-set — the values
+never leave the machine (docs/01 Rule 1). v1.17.18.1: removed dead
+`SENTINEL_API_KEY` (no consumer — audit A5).
 """
 
 import datetime
@@ -34,13 +35,6 @@ CATALOG: list[dict] = [
     },
     {"key": "SENTINEL_HOST", "label": "Bind host", "group": "Server", "field": "host"},
     {"key": "SENTINEL_PORT", "label": "Port", "group": "Server", "field": "port"},
-    {
-        "key": "SENTINEL_API_KEY",
-        "label": "API key",
-        "group": "Server",
-        "field": "api_key",
-        "secret": True,
-    },
     {
         "key": "SENTINEL_VERSION",
         "label": "Version",

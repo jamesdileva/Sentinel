@@ -291,6 +291,21 @@ def initdb():
 
 
 @app.command()
+def backup(
+    keep: int = typer.Option(7, "--keep", min=1, help="Backups to keep"),
+):
+    """Snapshot db + chroma + screenshots + logs into data/backups/ (audit A1,
+    v1.17.18.1). User-initiated only — never scheduled (Rule 2)."""
+    from app.services.backup_service import create_backup
+
+    result = create_backup(keep=keep)
+    if result["skipped"]:
+        typer.echo(f"Backup FAILED: {result['skipped']}", err=True)
+        raise typer.Exit(code=1)
+    typer.echo(f"Backup written to {result['path']} ({result['files']} files)")
+
+
+@app.command()
 def config(
     action: str = typer.Argument("show"),
     key: str | None = None,

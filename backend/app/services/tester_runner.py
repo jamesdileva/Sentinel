@@ -106,6 +106,8 @@ class TesterRunner:
         )
         ctx = TesterContext(project, app_session.id, service)
         launcher: Path | None = None
+        outcome = "unknown"
+        status = "unknown"
         try:
             launcher = self._auto_launch(project, tester, ctx, service, app_session.id)
             tester.run(ctx)
@@ -123,9 +125,12 @@ class TesterRunner:
             logger.exception("Tester %s crashed", tester.name)
             outcome = f"Tester crashed: {exc!r}"
             status = "failed"
-        service.end(app_session.id, outcome, status)
-        if launcher is not None:
-            _kill_tree_best_effort(launcher)
+        finally:
+            # v1.17.18.1 (audit A4): end() + process kill in finally so the
+            # packaged-app tree is always reaped, even if end() throws.
+            service.end(app_session.id, outcome, status)
+            if launcher is not None:
+                _kill_tree_best_effort(launcher)
         logger.info("Tester %r for %s -> %s", tester.name, project.name, status)
         return app_session
 

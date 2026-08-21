@@ -52,19 +52,15 @@ def test_settings_lists_all_groups_and_items(tmp_db, monkeypatch):
 
 def test_secrets_are_redacted(tmp_db, monkeypatch):
     monkeypatch.setattr(settings, "github_token", "ghp_super-secret")
-    monkeypatch.setattr(settings, "api_key", "s3cret")
     response, _ = _report(tmp_db, monkeypatch)
     body = response.json()
     items = {i["key"]: i for g in body["groups"] for i in g["items"]}
     assert items["SENTINEL_GITHUB_TOKEN"]["value"] == "set"
-    assert items["SENTINEL_API_KEY"]["value"] == "set"
     assert "super-secret" not in response.text
-    assert "s3cret" not in response.text
 
 
 def test_secret_unset_shows_not_set(tmp_db, monkeypatch):
     monkeypatch.setattr(settings, "github_token", "")
-    monkeypatch.setattr(settings, "api_key", "")
     response, _ = _report(tmp_db, monkeypatch)
     body = response.json()
     items = {i["key"]: i for g in body["groups"] for i in g["items"]}

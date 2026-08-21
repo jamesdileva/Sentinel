@@ -132,6 +132,15 @@ async def lifespan(_: FastAPI):
     from app.services.portfolio_service import refresh_all_scores
 
     refresh_all_scores()  # v1.17.18.0: self-heal rows cached pre-screenshots
+    from sqlmodel import Session
+
+    from app.db.connection import get_engine
+    from app.services.app_sessions import AppSessionService
+
+    with Session(get_engine()) as startup_session:
+        swept = AppSessionService(startup_session).sweep_expired_screenshots()
+    if swept:
+        logger.info("Screenshot retention sweep removed %d expired file(s)", swept)
     run_startup_checks()
     if settings.scheduler_enabled:
         scheduler.start()

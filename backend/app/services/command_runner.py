@@ -11,6 +11,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from app.core.config import settings
+from app.core.logging import get_logger
+
+logger = get_logger(__name__)
 
 _GIT_CANDIDATES = (
     r"C:\Program Files\Git\cmd",
@@ -64,43 +67,76 @@ def git_command() -> str:
     return resolved
 
 
+def _kill_tree(pid: int) -> None:
+    """Audit A4 (v1.17.18.1): kill a process tree on Windows.
+
+    Uses `taskkill /T /F /PID` to reap the child and all its grandchildren
+    (npm, python, node trees that `shell=True` spawns).  Best-effort — a
+    missing PID or access error is logged and swallowed.
+    """
+    try:
+        subprocess.run(
+            ["taskkill", "/T", "/F", "/PID", str(pid)],
+            capture_output=True,
+            timeout=5,
+        )
+    except Exception:  # noqa: BLE001 — best-effort cleanup
+        logger.debug("taskkill tree for PID %d failed", pid, exc_info=True)
+
+
 def run_command(
     command: str,
     cwd: str | Path | None = None,
     timeout: int | None = None,
     env: dict[str, str] | None = None,
 ) -> CommandResult:
-    """Run a command, capture output, and return a structured result."""
+    """Run a command, capture output, and return a structured result.
+
+    v1.17.18.1 (audit A4): uses Popen with CREATE_NEW_PROCESS_GROUP so that
+    a timeout kills the entire child tree (taskkill /T) — not just the
+    direct cmd.exe, which left grandchildren (npm, python, node) orphaned.
+    """
     timeout = timeout if timeout is not None else settings.command_timeout_seconds
-    # v1.17.3: a partial `env` must overlay the inherited environment, not
-    # replace it — subprocess.run() with env={} drops PATH, which made every
-    # `git` invocation fail with "'git' is not recognized".
     full_env = {**os.environ, **(env or {})}
+    flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
     try:
-        start = subprocess.run(
+        proc = subprocess.Popen(
             command,
             shell=True,
             cwd=str(cwd) if cwd else None,
-            timeout=timeout,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            creationflags=flags,
             env=full_env,
         )
-        return CommandResult(
-            command=command,
-            exit_code=start.returncode,
-            stdout=start.stdout,
-            stderr=start.stderr,
-            duration_seconds=0.0,
-        )
-    except subprocess.TimeoutExpired as exc:
+    except OSError as exc:
         return CommandResult(
             command=command,
             exit_code=-1,
-            stdout=exc.stdout or "",
-            stderr=exc.stderr or "",
+            stdout="",
+            stderr=str(exc),
+            duration_seconds=0.0,
+        )
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout)
+        return CommandResult(
+            command=command,
+            exit_code=proc.returncode,
+            stdout=stdout.decode("utf-8", errors="replace") if stdout else "",
+            stderr=stderr.decode("utf-8", errors="replace") if stderr else "",
+            duration_seconds=float(timeout),
+        )
+    except subprocess.TimeoutExpired:
+        logger.warning(
+            "Command timed out after %ds: %s — killing process tree", timeout, command
+        )
+        _kill_tree(proc.pid)
+        stdout, stderr = proc.communicate(timeout=5)
+        return CommandResult(
+            command=command,
+            exit_code=-1,
+            stdout=stdout.decode("utf-8", errors="replace") if stdout else "",
+            stderr=stderr.decode("utf-8", errors="replace") if stderr else "",
             duration_seconds=float(timeout),
             timed_out=True,
         )

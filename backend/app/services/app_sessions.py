@@ -83,6 +83,29 @@ def _stamp(marker: str) -> str:
     return f"{marker} {datetime.datetime.now().isoformat(timespec='seconds')}"
 
 
+def _rotate_app_log(slug: str) -> None:
+    """Audit A2 (v1.17.18.1): cap per-app log growth.
+
+    When <slug>.log exceeds the cap, rename it to <slug>.log.1 (dropping any
+    previous .1). Rotation only succeeds while the app process is NOT holding
+    the log handle (Windows locks open files) — i.e. at launch time or after
+    an app died — which is exactly when the accumulation happens. A still-
+    running app's mid-life growth is bounded by the next launch.
+    """
+    path = _apps_dir() / f"{slug}.log"
+    max_bytes = settings.app_log_max_kb * 1024
+    if max_bytes <= 0 or not path.exists():
+        return
+    try:
+        if path.stat().st_size >= max_bytes:
+            rotated = path.with_suffix(".log.1")
+            rotated.unlink(missing_ok=True)
+            path.rename(rotated)
+            logger.info("Rotated app log %s", path)
+    except OSError:
+        logger.debug("App log %s locked — rotation deferred", path)
+
+
 class AppSessionService:
     """One responsibility (Rule 4): record sessions and capture screenshots."""
 
@@ -98,21 +121,31 @@ class AppSessionService:
         return _apps_dir() / f"{_slug(project.name)}.log"
 
     def _append_log(self, project: Project, line: str) -> None:
+        slug = _slug(project.name)
+        _rotate_app_log(slug)
         path = self._log_path(project)
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "a", encoding="utf-8") as fh:
             fh.write(f"{line}\n")
 
     def _log_lines(self, project: Project) -> list[str]:
-        path = self._log_path(project)
-        if not path.exists():
-            return []
-        # Child processes write the log with their own locale encoding
-        # (cp1252 on this machine), so tolerate non-UTF-8 bytes — the slice
-        # keeps every line, unknown bytes become U+FFFD (v1.17.11.0 bugfix:
-        # end() crashed with UnicodeDecodeError and left the session running).
-        with open(path, "r", encoding="utf-8", errors="replace") as fh:
-            return fh.read().splitlines()
+        # Audit A2 (v1.17.18.1): after rotation the session's markers may be
+        # split across <slug>.log.1 (older) and <slug>.log (newer) — read both
+        # in order so the marker-based slice stays complete.
+        lines: list[str] = []
+        for path in (
+            self._log_path(project).with_suffix(".log.1"),
+            self._log_path(project),
+        ):
+            if not path.exists():
+                continue
+            # Child processes write the log with their own locale encoding
+            # (cp1252 on this machine), so tolerate non-UTF-8 bytes — the slice
+            # keeps every line, unknown bytes become U+FFFD (v1.17.11.0 bugfix:
+            # end() crashed with UnicodeDecodeError and left the session running).
+            with open(path, "r", encoding="utf-8", errors="replace") as fh:
+                lines.extend(fh.read().splitlines())
+        return lines
 
     def _slice_for(self, project: Project, session_id: str) -> str:
         """Deterministic slice of the app log between this session's markers.
@@ -372,6 +405,32 @@ class AppSessionService:
             self.session.delete(analysis)
         self.session.delete(app_session)
         self.session.commit()
+
+    def sweep_expired_screenshots(self) -> int:
+        """Audit A3 (v1.17.18.1): delete screenshots older than
+        `settings.screenshot_retention_days` (0 = disabled). Deterministic
+        cleanup only (Rule 2) — called once at startup, never a beat."""
+        days = settings.screenshot_retention_days
+        if days <= 0:
+            return 0
+        removed = 0
+        for screenshot in self.screenshot_repo.older_than(days):
+            project = ProjectRepository(self.session).get(screenshot.session.project_id)
+            slug = _slug(project.name) if project else "unknown"
+            shot_dir = _screenshots_dir() / slug
+            for name in (
+                screenshot.path,
+                f"{Path(screenshot.path).stem}.thumb.png",
+            ):
+                try:
+                    (shot_dir / name).unlink(missing_ok=True)
+                except OSError:
+                    logger.warning("Could not remove expired screenshot %s", name)
+            self.session.delete(screenshot)
+            removed += 1
+        if removed:
+            self.session.commit()
+        return removed
 
     # ------------------------------------------------------------ portfolio
 

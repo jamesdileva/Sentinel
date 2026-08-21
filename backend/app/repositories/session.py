@@ -45,3 +45,15 @@ class SessionScreenshotRepository(Repository):
         return list(
             self.session.exec(stmt.order_by(SessionScreenshot.captured_at)).all()
         )
+
+    def older_than(self, days: int) -> list[SessionScreenshot]:
+        """All screenshots captured before (now - days), oldest first."""
+        import datetime
+
+        cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(
+            days=days
+        )
+        stmt = select(SessionScreenshot).where(SessionScreenshot.captured_at < cutoff)
+        return list(
+            self.session.exec(stmt.order_by(SessionScreenshot.captured_at)).all()
+        )

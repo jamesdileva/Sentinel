@@ -119,7 +119,11 @@ class Settings(BaseSettings):
     auto_scan_on_startup: bool = True
     auto_index_knowledge: bool = True  # queue RAG indexing for new/unembedded projects
 
-    api_key: str = ""
+    # v1.17.18.1 (audit A2/A3): data-growth caps. app_log_max_kb rotates
+    # data/logs/apps/<slug>.log to <slug>.log.1 when it exceeds the cap;
+    # screenshot_retention_days=0 disables the startup retention sweep.
+    app_log_max_kb: int = 5120
+    screenshot_retention_days: int = 365
 
     scheduler_enabled: bool = True
     command_timeout_seconds: int = 300
