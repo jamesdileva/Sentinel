@@ -26,7 +26,6 @@ from app.schemas.session import (
 )
 from app.schemas.triage import TriageEvidence, TriageRead
 from app.services.app_sessions import AppSessionService, resolve_screenshot
-from app.services.ollama_service import OllamaUnavailableError
 from app.services.triage_service import TriageService
 
 logger = get_logger(__name__)
@@ -167,14 +166,11 @@ def triage_session(session_id: str, db: DbSession = Depends(get_session)):
 @router.post("/{session_id}/summarize", response_model=TriageRead)
 def summarize_session(session_id: str, db: DbSession = Depends(get_session)):
     """Optional local-LLM paragraph DESCRIBING the deterministic evidence.
-    No causes, no fixes, no decisions — provenance recorded (Rules 2+7)."""
+    No causes, no fixes, no decisions — provenance recorded (Rules 2+7).
+    Ollama unavailability maps to 503 via the central SentinelError handler
+    (v1.17.18.3, audit2 Q3) — same as /rag/* now."""
     app_session = _terminal_session(session_id, db)
-    try:
-        analysis = TriageService(db).summarize(app_session)
-    except OllamaUnavailableError as exc:
-        raise HTTPException(
-            status_code=503, detail=f"Ollama unavailable: {exc}"
-        ) from exc
+    analysis = TriageService(db).summarize(app_session)
     return _triage_read(analysis, db)
 
 

@@ -106,8 +106,11 @@ class TesterRunner:
         )
         ctx = TesterContext(project, app_session.id, service)
         launcher: Path | None = None
-        outcome = "unknown"
-        status = "unknown"
+        # Legal terminal values from the start (v1.17.18.3 audit2 Q2): a
+        # BaseException leaving `status` at its initializer must not turn
+        # into an unhandled ValueError inside SessionStatus().
+        outcome = "Tester run interrupted"
+        status = "investigate"
         try:
             launcher = self._auto_launch(project, tester, ctx, service, app_session.id)
             tester.run(ctx)
@@ -126,11 +129,21 @@ class TesterRunner:
             outcome = f"Tester crashed: {exc!r}"
             status = "failed"
         finally:
-            # v1.17.18.1 (audit A4): end() + process kill in finally so the
-            # packaged-app tree is always reaped, even if end() throws.
-            service.end(app_session.id, outcome, status)
+            # v1.17.18.3 (audit2 Q2): reap the packaged-app tree FIRST and
+            # independently — the v1.17.18.1 ordering ran end() first, so
+            # an end() exception skipped the kill (the exact orphan A4 was
+            # meant to close) and masked the original error.
             if launcher is not None:
-                _kill_tree_best_effort(launcher)
+                try:
+                    _kill_tree_best_effort(launcher)
+                except Exception:  # noqa: BLE001
+                    logger.exception(
+                        "Session-end cleanup crashed for %s", launcher.name
+                    )
+            try:
+                service.end(app_session.id, outcome, status)
+            except Exception:  # noqa: BLE001 — never mask the tester outcome
+                logger.exception("Failed to end app session %s", app_session.id)
         logger.info("Tester %r for %s -> %s", tester.name, project.name, status)
         return app_session
 

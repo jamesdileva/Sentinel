@@ -18,7 +18,7 @@ from sqlmodel import Session
 from app.core.logging import get_logger
 from app.db.models import AppSession, Project, TriageAnalysis
 from app.repositories import TriageAnalysisRepository
-from app.services.ollama_service import OllamaService, OllamaUnavailableError
+from app.services.ollama_service import OllamaService
 from app.services.system_service import OllamaStatus
 
 logger = get_logger(__name__)
@@ -189,16 +189,18 @@ class TriageService:
         project = app_session.project
         evidence = build_evidence(project, app_session)
         prompt = _summary_prompt(evidence)
+        ollama = OllamaService()
         try:
-            result = OllamaService().generate_with_metrics(
+            result = ollama.generate_with_metrics(
                 prompt,
                 max_tokens=150,
                 temperature=0.2,
                 purpose="triage-summary",
                 num_ctx=4096,
             )
-        except OllamaUnavailableError as exc:
-            raise OllamaUnavailableError(str(exc)) from exc
+        finally:
+            # v1.17.18.3 (audit2 S1): per-call client must not leak its pool.
+            ollama.close()
         analysis.evidence = evidence
         analysis.summary = result["response"]
         analysis.model = result["model"]

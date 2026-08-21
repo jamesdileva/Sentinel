@@ -5,7 +5,7 @@ Polling-based (no websocket): state/history for the map UI, plus god tools
 the API process; background advancement happens via the Celery beat task.
 """
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.schemas import (
     WorldAccelerateRequest,
@@ -37,11 +37,11 @@ def world_state(
 
 @router.get("/world-sim/history", response_model=list[WorldEventRead])
 def world_history(
-    limit: int = 100,
+    limit: int = Query(100, ge=1, le=500),
     before: int | None = None,
     service: WorldSimulatorService = Depends(get_world_service),
 ) -> list[dict]:
-    return service.get_history(limit=min(limit, 500), before=before)
+    return service.get_history(limit=limit, before=before)
 
 
 @router.get(

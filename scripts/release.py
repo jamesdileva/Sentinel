@@ -45,13 +45,31 @@ INCLUDED = [
 ]
 
 
+EXCLUDED_DIR_NAMES = {"__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache"}
+EXCLUDED_SUFFIXES = {".pyc", ".pyo"}
+
+
+def _excluded(path: Path) -> bool:
+    """v1.17.18.3 (audit2 Q8): never ship stale bytecode — a .pyc whose
+    embedded mtime beats the source on the target machine could win the
+    import over the shipped .py."""
+    return (
+        any(part in EXCLUDED_DIR_NAMES for part in path.parts)
+        or path.suffix.lower() in EXCLUDED_SUFFIXES
+    )
+
+
 def _collect_files() -> list[Path]:
     files: list[Path] = []
     for entry in INCLUDED:
         path = ROOT / entry
         if path.is_dir():
-            files.extend(p for p in path.rglob("*") if p.is_file())
-        elif path.exists():
+            files.extend(
+                p
+                for p in path.rglob("*")
+                if p.is_file() and not _excluded(p.relative_to(ROOT))
+            )
+        elif path.exists() and not _excluded(path.relative_to(ROOT)):
             files.append(path)
     return files
 

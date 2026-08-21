@@ -13,7 +13,7 @@ What run.py does (deterministic checks + start):
 
 Usage:
     python run.py                 # checks + start on 127.0.0.1:8420
-    python run.py --port 8080     # different port (also SENTINEL_PORT)
+    python run.py --port 8080     # different port (SENTINEL_PORT overrides)
     python run.py --reload        # dev file-watch reload
     python run.py --check         # only run the startup checks
 """
@@ -148,7 +148,7 @@ def run_python_checks() -> list:
     return run_startup_checks()
 
 
-def start_server(args: argparse.Namespace) -> int:
+def start_server(args: argparse.Namespace, port: int) -> int:
     argv = [
         str(PY),
         "-m",
@@ -157,7 +157,9 @@ def start_server(args: argparse.Namespace) -> int:
         "--host",
         "127.0.0.1",
         "--port",
-        str(args.port),
+        # v1.17.18.3 (audit2 Q1): bind the resolved port (env SENTINEL_PORT
+        # wins over --port, matching the occupancy probe in main()).
+        str(port),
     ]
     if args.reload:
         argv.append("--reload")
@@ -180,7 +182,11 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
-    port = int(os.environ.get("SENTINEL_PORT", str(args.port)))
+    # v1.17.18.3 (audit2 Q1): resolve once, use everywhere (probe + bind).
+    env_port = os.environ.get("SENTINEL_PORT")
+    port = int(env_port) if env_port else args.port
+    if env_port and env_port != str(args.port):
+        _warn(f"SENTINEL_PORT={env_port} overrides --port {args.port}")
 
     if args.check:
         startup_checks()
@@ -199,7 +205,7 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     startup_checks()
-    return start_server(args)
+    return start_server(args, port)
 
 
 if __name__ == "__main__":

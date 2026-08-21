@@ -36,12 +36,39 @@ def _check_watch_dirs() -> ComponentStatus:
 def _check_ollama() -> ComponentStatus:
     if not settings.ollama_host:
         return ComponentStatus("ollama", False, "AI host not configured")
+    ollama = OllamaService()
     try:
-        models = OllamaService().list_models()
-        detail = ", ".join(models) if models else "reachable, no models"
-        return ComponentStatus("ollama", True, detail)
+        models = ollama.list_models()
     except Exception as exc:  # noqa: BLE001  (probe; failures are expected)
         return ComponentStatus("ollama", False, str(exc).splitlines()[0])
+    finally:
+        ollama.close()  # v1.17.18.3 (audit2 S1)
+    detail = ", ".join(models) if models else "reachable, no models"
+    return ComponentStatus("ollama", True, detail)
+
+
+def _check_schema() -> ComponentStatus:
+    """Model-vs-DB drift (v1.17.18.3, audit2 Q5): create_all cannot ALTER
+    existing tables, so a new model field without a migration would leave
+    old deployments silently missing it. Surface any gap on the System page
+    instead of failing to boot."""
+    from sqlmodel import Session
+
+    from app.db.connection import check_schema_drift, get_engine
+
+    try:
+        with Session(get_engine()) as session:
+            drifted = check_schema_drift(session.get_bind())
+    except Exception as exc:  # noqa: BLE001 — never crash the check pass
+        return ComponentStatus("schema", False, f"drift probe failed: {exc}")
+    if drifted:
+        return ComponentStatus(
+            "schema",
+            False,
+            f"missing column(s): {', '.join(drifted)} — add a migration in "
+            "app/db/connection.py",
+        )
+    return ComponentStatus("schema", True, "models match database")
 
 
 def _check_chroma(chroma_path: Path) -> ComponentStatus:
@@ -58,6 +85,7 @@ def run_startup_checks() -> list[ComponentStatus]:
     """Run all startup checks in dependency order. Never raises."""
     checks = [
         ComponentStatus("database", check_db(), str(settings.db_path)),
+        _check_schema(),
         _check_chroma(settings.chroma_path),
         _check_watch_dirs(),
         _check_ollama(),

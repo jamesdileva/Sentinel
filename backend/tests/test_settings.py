@@ -24,6 +24,9 @@ class _FakeOllama:
     def list_models(self):
         return list(self._models)
 
+    def close(self):
+        pass
+
 
 def _report(tmp_db, monkeypatch, ollama=None, **overrides):
     monkeypatch.setattr(

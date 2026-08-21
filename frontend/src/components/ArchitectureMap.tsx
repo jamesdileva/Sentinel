@@ -99,6 +99,9 @@ export default function ArchitectureMap() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    // v1.17.18.3 (audit2 Q9): clear the latch before each attempt so one
+    // transient failure no longer bricks the panel until a page reload.
+    setError(null);
     listProjects()
       .then((response) => {
         setProjects(response.projects);
@@ -112,6 +115,7 @@ export default function ArchitectureMap() {
     setTree(null);
     setCollapsed(new Set());
     setTerm("");
+    setError(null);
     getArchitecture(selected)
       .then(setTree)
       .catch((e) => setError(String(e)));

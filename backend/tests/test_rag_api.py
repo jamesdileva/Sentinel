@@ -486,3 +486,28 @@ def test_rag_search_damaged_index_returns_503(tmp_db):
     assert resp.status_code == 503
     assert "rebuild" in resp.json()["detail"].lower()
     assert "rag-index --reset" in resp.json()["detail"]
+
+
+def test_rag_search_ollama_down_returns_503(tmp_db):
+    """v1.17.18.3 (audit2 Q3): Ollama unavailability surfaces as 503 through
+    the central SentinelError handler — previously it escaped /rag/* as an
+    unhandled 500 while sessions mapped the identical error to 503."""
+
+    class DownEmbedder:
+        def __call__(self, _text):
+            from app.services.ollama_service import OllamaUnavailableError
+
+            raise OllamaUnavailableError("Ollama embed failed: connection refused")
+
+    service = RagService(
+        session=Session(get_engine()),
+        embedder=DownEmbedder(),
+        llm=_fake_llm,
+    )
+    app.dependency_overrides[get_rag_service] = lambda: service
+    try:
+        resp = TestClient(app).post("/api/v1/rag/search", json={"query": "x"})
+    finally:
+        app.dependency_overrides.pop(get_rag_service, None)
+    assert resp.status_code == 503
+    assert "connection refused" in resp.json()["detail"]

@@ -232,6 +232,9 @@ def _fake_ollama_response(text="The upload step failed at app/main.py:42."):
                 "total_duration_ns": 2_000_000,
             }
 
+        def close(self):  # v1.17.18.3 (audit2 S1): summarize closes its client
+            pass
+
     return FakeOllama
 
 
@@ -320,6 +323,9 @@ def test_api_summarize_ollama_down_503(client, tmp_path, monkeypatch):
     class DownOllama:
         def generate_with_metrics(self, prompt, **kwargs):
             raise OllamaUnavailableError("connection refused")
+
+        def close(self):
+            pass
 
     monkeypatch.setattr(triage_service, "OllamaService", DownOllama)
     with DbSession(get_engine()) as db:

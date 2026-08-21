@@ -4,11 +4,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import Dashboard from "./Dashboard";
 import type { Project } from "../types";
-import type { BuildJob } from "../api/builds";
-
-vi.mock("../contexts/BuildContext", () => ({
-  useBuilds: vi.fn(),
-}));
 
 vi.mock("../contexts/UIContext", () => ({
   useUI: vi.fn(),
@@ -30,14 +25,12 @@ vi.mock("../api/system", () => ({
   getSystemOverview: vi.fn(),
 }));
 
-import { useBuilds } from "../contexts/BuildContext";
 import { useUI } from "../contexts/UIContext";
 import { useProjectList } from "../hooks/useProjects";
 import { useActivity } from "../hooks/useActivity";
 import { getSummary } from "../api/portfolio";
 import { getSystemOverview } from "../api/system";
 
-const mockUseBuilds = vi.mocked(useBuilds);
 const mockUseUI = vi.mocked(useUI);
 const mockUseProjectList = vi.mocked(useProjectList);
 const mockUseActivity = vi.mocked(useActivity);
@@ -61,23 +54,8 @@ function makeProject(overrides: Partial<Project> = {}): Project {
   };
 }
 
-function makeJob(overrides: Partial<BuildJob> = {}): BuildJob {
-  return {
-    id: "j1",
-    project_id: "p1",
-    status: "running",
-    ...overrides,
-  } as BuildJob;
-}
-
 describe("Dashboard", () => {
   beforeEach(() => {
-    mockUseBuilds.mockReturnValue({
-      activeJobs: [makeJob()],
-      history: [],
-      trackJob: vi.fn(),
-      setJobStatus: vi.fn(),
-    });
     mockUseUI.mockReturnValue({
       dark: false,
       toggleDark: vi.fn(),
@@ -121,8 +99,9 @@ describe("Dashboard", () => {
   it("shows summary stats and project cards", async () => {
     render(<Dashboard />);
     expect(screen.getByText("Projects")).toBeInTheDocument();
-    expect(screen.getAllByText("1")).toHaveLength(2);
-    expect(screen.getByText("Builds")).toBeInTheDocument();
+    // v1.17.18.3 (audit2 F3): the "Buildable" tile is fed by the portfolio
+    // summary — the dead BuildContext that always showed 0 is gone.
+    expect(await screen.findByText("Buildable")).toBeInTheDocument();
     expect(screen.getByText("Findings")).toBeInTheDocument();
     expect(screen.getByText("alpha")).toBeInTheDocument();
   });
@@ -144,7 +123,7 @@ describe("Dashboard", () => {
     mockGetSummary.mockRejectedValue(new Error("backend down"));
     render(<Dashboard />);
     expect(await screen.findByText("Health")).toBeInTheDocument();
-    expect(screen.getAllByText("—")).toHaveLength(2);
+    expect(screen.getAllByText("—")).toHaveLength(3);
   });
 
   it("renders an error banner and retries on click", async () => {

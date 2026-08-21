@@ -125,17 +125,22 @@ def ask(
     from app.services.ollama_service import OllamaService
     from app.services.rag_service import RagService
 
-    if not OllamaService().is_available():
+    probe = OllamaService()
+    available = probe.is_available()
+    probe.close()  # v1.17.18.3 (audit2 S1)
+    if not available:
         typer.echo(
-            "Ollama is not reachable. Start it with `docker compose --profile ollama up` "
+            "Ollama is not reachable. Start the Ollama app (see docs/desktop.md) "
             "and pull models: `ollama pull llama3.1:8b nomic-embed-text`.",
             err=True,
         )
         raise typer.Exit(code=1)
     with Session(get_engine()) as session:
-        response = RagService(session).query(
-            question, project_id=project_id, top_k=top_k
-        )
+        rag = RagService(session)
+        try:
+            response = rag.query(question, project_id=project_id, top_k=top_k)
+        finally:
+            rag.close()  # v1.17.18.3 (audit2 S1)
     typer.echo(response.answer)
     if response.sources:
         typer.echo(f"\nSources ({len(response.sources)}):")
@@ -192,18 +197,25 @@ def rag_index(
     from app.services.ollama_service import OllamaService
     from app.services.rag_service import RagService
 
-    if not OllamaService().is_available():
+    probe = OllamaService()
+    available = probe.is_available()
+    probe.close()  # v1.17.18.3 (audit2 S1)
+    if not available:
         typer.echo(
-            "Ollama is not reachable. Start it with `docker compose --profile ollama up` "
+            "Ollama is not reachable. Start the Ollama app (see docs/desktop.md) "
             "and pull models: `ollama pull llama3.1:8b nomic-embed-text`.",
             err=True,
         )
         raise typer.Exit(code=1)
     with Session(get_engine()) as session:
         project = RagService.get_project(session, project_id)
-        counts = RagService(session).index_project(
-            project, with_summary=with_summary, force_summary=with_summary
-        )
+        rag = RagService(session)
+        try:
+            counts = rag.index_project(
+                project, with_summary=with_summary, force_summary=with_summary
+            )
+        finally:
+            rag.close()  # v1.17.18.3 (audit2 S1)
         typer.echo(f"Indexed {project.name}: {counts}")
 
 

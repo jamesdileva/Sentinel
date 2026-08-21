@@ -92,6 +92,79 @@ def test_migrate_columns_adds_purpose_to_old_db(tmp_db):
     assert "purpose" in columns
 
 
+def test_fk_indexes_created_on_fresh_db(tmp_db):
+    """v1.17.18.3 (audit2 Q4): every FK/hot-filter column carries an index —
+    SQLite does not auto-index foreign keys, and per-project lookups were
+    full-table scans."""
+    from sqlalchemy import inspect
+
+    indexes = {
+        ix["name"]: set(ix["column_names"])
+        for ix in inspect(connection.get_engine()).get_indexes("projectfile")
+    }
+    assert "ix_projectfile_project_id" in indexes
+    assert "project_id" in indexes["ix_projectfile_project_id"]
+
+
+def test_migrate_indexes_backfills_existing_db(tmp_db):
+    """v1.17.18.3 (audit2 Q4): a DB created before the index migration gets
+    its hot-path indexes on the next init_db() (create_all can't add them),
+    idempotently."""
+    from sqlalchemy import inspect
+
+    engine = connection.get_engine()
+    with engine.begin() as conn:
+        conn.exec_driver_sql("DROP INDEX IF EXISTS ix_projectfile_project_id")
+    connection.init_db()
+    names = {ix["name"] for ix in inspect(engine).get_indexes("projectfile")}
+    assert "ix_projectfile_project_id" in names
+
+    connection.init_db()  # second run must be a no-op, not an error
+    names = {ix["name"] for ix in inspect(engine).get_indexes("projectfile")}
+    assert "ix_projectfile_project_id" in names
+
+
+def test_check_schema_drift_detects_missing_column(tmp_db):
+    """v1.17.18.3 (audit2 Q5): a model column missing from the live DB is
+    reported (the v1.17.1 class of silent drift), instead of degrading a
+    read path into an opaque 500."""
+    engine = connection.get_engine()
+    assert connection.check_schema_drift(engine) == []
+
+    with engine.begin() as conn:
+        # Simulate a pre-migration DB: rebuild ollamaquerylog without purpose.
+        conn.exec_driver_sql("DROP TABLE ollamaquerylog")
+        conn.exec_driver_sql(
+            "CREATE TABLE ollamaquerylog ("
+            "id VARCHAR(32) PRIMARY KEY NOT NULL, "
+            "model VARCHAR(100) NOT NULL, "
+            "prompt_chars INTEGER NOT NULL DEFAULT 0, "
+            "response_chars INTEGER NOT NULL DEFAULT 0, "
+            "eval_count INTEGER NOT NULL DEFAULT 0, "
+            "eval_duration_ns INTEGER NOT NULL DEFAULT 0, "
+            "total_duration_ns INTEGER NOT NULL DEFAULT 0, "
+            "created_at DATETIME NOT NULL)"
+        )
+
+    drifted = connection.check_schema_drift(engine)
+    assert "ollamaquerylog.purpose" in drifted
+
+
+def test_startup_check_surfaces_schema_drift(tmp_db, monkeypatch):
+    """The System page shows drift as a failed 'schema' check (Rule 7:
+    transparency) instead of failing to boot."""
+    from app.services.startup_check import run_startup_checks
+
+    monkeypatch.setattr(
+        connection,
+        "check_schema_drift",
+        lambda engine=None: ["ollamaquerylog.purpose"],
+    )
+    checks = {c.name: c for c in run_startup_checks()}
+    assert checks["schema"].ok is False
+    assert "ollamaquerylog.purpose" in checks["schema"].detail
+
+
 def test_foreign_keys_enforced(tmp_db):
     with Session(connection.get_engine()) as session:
         orphan = ProjectFile(

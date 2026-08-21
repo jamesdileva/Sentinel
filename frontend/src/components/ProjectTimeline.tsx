@@ -46,6 +46,9 @@ export default function ProjectTimeline() {
     setEvents([]);
     setHasMore(false);
     setLoading(true);
+    // v1.17.18.3 (audit2 Q9): clear the latch before each attempt so one
+    // transient failure no longer bricks the timeline until a page reload.
+    setError(null);
     getTimeline({
       days,
       kinds: kind === "all" ? [] : [kind],
@@ -65,6 +68,7 @@ export default function ProjectTimeline() {
   }, [days, kind, projectId]);
 
   const loadMore = () => {
+    setError(null);
     getTimeline({
       days,
       kinds: kind === "all" ? [] : [kind],

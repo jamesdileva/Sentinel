@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 
-import { useBuilds } from "../contexts/BuildContext";
 import { useProjectList } from "../hooks/useProjects";
 import { useActivity } from "../hooks/useActivity";
 import { getSummary } from "../api/portfolio";
@@ -25,7 +24,6 @@ function kindColor(kind: string): string {
 
 export default function Dashboard() {
   const { projects, loading, error, refresh } = useProjectList();
-  const { activeJobs } = useBuilds();
   const { events, status } = useActivity();
   const [summary, setSummary] = useState<PortfolioSummary | null>(null);
 
@@ -45,7 +43,10 @@ export default function Dashboard() {
 
   const stats = [
     { label: "Projects", value: loading ? "…" : String(projects.length) },
-    { label: "Builds", value: String(activeJobs.length) },
+    // v1.17.18.3 (audit2 F3): the old "Builds" tile read a dead context and
+    // always showed 0 — replaced with the truthful buildable count from the
+    // same portfolio summary this page already loads.
+    { label: "Buildable", value: summary ? String(summary.buildable) : "—" },
     { label: "Findings", value: summary ? String(summary.open_findings) : "—" },
     {
       label: "Health",

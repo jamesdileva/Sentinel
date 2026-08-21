@@ -13,7 +13,7 @@ eval_count / eval_duration counters, persisted for every generation
 import datetime
 
 from sqlalchemy.exc import SQLAlchemyError
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
 from app.core.config import settings
 from app.core.logging import get_logger
@@ -48,16 +48,30 @@ class OllamaStatus:
 
     def __init__(self, session: Session | None = None) -> None:
         self.session = session
-        self.ollama = OllamaService()
+        # v1.17.18.3 (audit2 S1): created lazily — record_query()-only callers
+        # (rag/triage provenance logging) must not build an unused httpx pool.
+        self.ollama: OllamaService | None = None
+
+    def _ensure_ollama(self) -> OllamaService:
+        if self.ollama is None:
+            self.ollama = OllamaService()
+        return self.ollama
 
     def report(self) -> dict:
-        available = self.ollama.is_available()
-        models: list[str] = []
-        if available:
-            try:
-                models = self.ollama.list_models()
-            except Exception:  # noqa: BLE001  probe only
-                models = []
+        try:
+            ollama = self._ensure_ollama()
+            available = ollama.is_available()
+            models: list[str] = []
+            if available:
+                try:
+                    models = ollama.list_models()
+                except Exception:  # noqa: BLE001  probe only
+                    models = []
+        finally:
+            # v1.17.18.3 (audit2 S1): OllamaStatus is built per request;
+            # without an explicit close each poll leaked an httpx pool.
+            if self.ollama is not None:
+                self.ollama.close()
         return {
             "available": available,
             "host": settings.ollama_host,
@@ -97,7 +111,16 @@ class OllamaStatus:
             return []
         limit = limit or settings.max_recent_ollama_queries
         try:
-            rows = list(self.session.exec(select(OllamaQueryLog)))
+            # v1.17.18.3 (audit2 Q6): ORDER BY + LIMIT in SQL — this table
+            # grows forever (a row per generation), and materializing every
+            # row to sort in Python degraded /system/* linearly with usage.
+            rows = list(
+                self.session.exec(
+                    select(OllamaQueryLog)
+                    .order_by(col(OllamaQueryLog.created_at).desc())
+                    .limit(limit)
+                )
+            )
         except SQLAlchemyError:
             # Defensive (v1.17.1): a pre-migration DB without newer columns
             # (e.g. ollama_query_log.purpose) must degrade to empty, not 500.
@@ -106,7 +129,6 @@ class OllamaStatus:
                 exc_info=True,
             )
             return []
-        rows.sort(key=lambda r: r.created_at, reverse=True)
         return [
             {
                 "model": row.model,

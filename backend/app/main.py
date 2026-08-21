@@ -30,6 +30,7 @@ from app.api.v1.tests import router as tests_router
 from app.api.v1.world_sim import router as world_sim_router
 from app.api.v1.ws import router as ws_router
 from app.core.config import settings
+from app.core.exceptions import SentinelError
 from app.core.logging import attach_file_logging, get_logger, setup_logging
 from app.db.connection import check_db, get_engine, init_db
 from app.services.chroma_manager import RagIndexError
@@ -75,7 +76,10 @@ def _background_initial_scan() -> None:
         from app.services.sync_service import RepoSyncService
         from app.tasks import sync_tasks
 
-        if RepoSyncService().configured:
+        probe = RepoSyncService()
+        configured = probe.configured
+        probe.close()  # v1.17.18.3 (audit2 S1)
+        if configured:
             try:
                 sync_tasks.run_repo_sync()
             except Exception:  # noqa: BLE001 — startup must survive a bad sync
@@ -185,6 +189,18 @@ def health() -> dict:
 @app.get("/api/v1/health", tags=["system"])
 def health_v1() -> dict:
     return health()
+
+
+@app.exception_handler(SentinelError)
+async def sentinel_error_handler(request: Request, exc: SentinelError) -> JSONResponse:
+    """Central domain-error mapping (v1.17.18.3, audit2 Q3).
+
+    core/exceptions.py existed since Sprint 11 but was never wired, so each
+    route hand-mapped domain errors and identical failures produced
+    different statuses (Ollama down: 503 from sessions, unhandled 500 from
+    /rag/*). Every SentinelError subclass now carries its status_code; the
+    handler is looked up through the MRO so all subclasses are covered."""
+    return JSONResponse(status_code=exc.status_code, content={"detail": str(exc)})
 
 
 @app.exception_handler(RagIndexError)

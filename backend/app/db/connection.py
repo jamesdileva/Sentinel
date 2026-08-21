@@ -98,6 +98,76 @@ def _migrate_columns(engine) -> None:
                     )
 
 
+def _migrate_indexes(engine) -> None:
+    """Create the hot-path indexes on pre-existing tables (v1.17.18.3, audit2 Q4).
+
+    `create_all` gives fresh databases every `index=True` index, but cannot
+    add them to an existing DB — and SQLite does not auto-index foreign-key
+    columns, so every per-project lookup was a full table scan. Idempotent:
+    `IF NOT EXISTS` plus an inspector check for differently-named indexes.
+    Names must match SQLAlchemy's generated convention (ix_<table>_<column>).
+    """
+    _INDEXES = (
+        ("projectfile", "project_id"),
+        ("dependency", "project_id"),
+        ("securityfinding", "project_id"),
+        ("gitcommit", "project_id"),
+        ("testresult", "project_id"),
+        ("buildlog", "project_id"),
+        ("knowledgesummary", "project_id"),
+        ("chatmessage", "project_id"),
+        ("appsession", "project_id"),
+        ("sessioncheckpoint", "session_id"),
+        ("sessionscreenshot", "session_id"),
+        ("triageanalysis", "session_id"),
+        ("activityevent", "created_at"),
+        ("ollamaquerylog", "created_at"),
+    )
+    inspector = __import__("sqlalchemy").inspect(engine)
+    created = 0
+    for table, column in _INDEXES:
+        if not inspector.has_table(table):
+            continue
+        existing = inspector.get_indexes(table)
+        name = f"ix_{table}_{column}"
+        if any(column in ix["column_names"] for ix in existing):
+            continue  # covered already (by this or another index)
+        try:
+            with engine.begin() as conn:
+                conn.exec_driver_sql(
+                    f'CREATE INDEX IF NOT EXISTS "{name}" ON "{table}" ("{column}")'
+                )
+            created += 1
+        except Exception:  # noqa: BLE001 — never wedge startup on an index
+            logger.exception("Index migration failed: %s on %s", name, table)
+    if created:
+        logger.info("Created %d missing index(es)", created)
+
+
+def check_schema_drift(engine=None) -> list[str]:
+    """Compare the live DB schema to the model metadata (v1.17.18.3, audit2 Q5).
+
+    `create_all` cannot add columns to existing tables, so a model field
+    without a matching migration leaves old deployments silently missing
+    that column (the v1.17.1 /system 500 regression). Returns the list of
+    model columns absent from the database — empty means no drift.
+    Surfaced on /system via the "schema" startup check.
+    """
+    from sqlalchemy import inspect
+
+    engine = engine or get_engine()
+    inspector = inspect(engine)
+    drifted: list[str] = []
+    for table in SQLModel.metadata.sorted_tables:
+        if not inspector.has_table(table.name):
+            continue  # fresh table — create_all just made it
+        live = {c["name"] for c in inspector.get_columns(table.name)}
+        for column in table.columns:
+            if column.name not in live:
+                drifted.append(f"{table.name}.{column.name}")
+    return drifted
+
+
 def init_db() -> None:
     """Create all tables defined in app.db.models, then migrate older ones."""
     from app import db  # noqa: F401  (ensure models are imported)
@@ -105,6 +175,15 @@ def init_db() -> None:
     engine = get_engine()
     SQLModel.metadata.create_all(engine)
     _migrate_columns(engine)
+    _migrate_indexes(engine)
+    drifted = check_schema_drift(engine)
+    if drifted:
+        logger.error(
+            "Schema drift detected — model columns missing from the database: "
+            "%s. Add ALTER TABLE migrations to _MIGRATIONS in "
+            "app/db/connection.py; affected reads will degrade until then.",
+            ", ".join(drifted),
+        )
     logger.info("Database initialized: %s", settings.db_path)
 
 

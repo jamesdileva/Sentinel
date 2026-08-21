@@ -27,9 +27,12 @@ def run_index_knowledge(project_id: str, with_summary: bool = False) -> dict:
             data={"project_id": project.id},
         )
         service = RagService(session)
-        counts = service.index_project(
-            project, with_summary=with_summary, progress=progress(project)
-        )
+        try:
+            counts = service.index_project(
+                project, with_summary=with_summary, progress=progress(project)
+            )
+        finally:
+            service.close()  # v1.17.18.3 (audit2 S1)
         total = sum(counts.values())
         activity_bus.publish_event(
             "index",
@@ -69,9 +72,13 @@ def run_index_knowledge_all() -> dict:
     for project in projects:
         try:
             with Session(get_engine()) as session:
-                counts = RagService(session).index_project(
-                    project, with_summary=True, progress=progress(project)
-                )
+                service = RagService(session)
+                try:
+                    counts = service.index_project(
+                        project, with_summary=True, progress=progress(project)
+                    )
+                finally:
+                    service.close()  # v1.17.18.3 (audit2 S1)
             detail = ", ".join(f"{k}={v}" for k, v in counts.items() if v)
             activity_bus.publish_event(
                 "index",

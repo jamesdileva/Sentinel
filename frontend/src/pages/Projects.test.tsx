@@ -36,13 +36,11 @@ function makeProject(overrides: Partial<Project> = {}): Project {
 function makeFile(overrides: Partial<ProjectFile> = {}): ProjectFile {
   return {
     id: "f1",
-    project_id: "p1",
     path: "app/main.py",
-    absolute_path: "/dev/alpha/app/main.py",
     language: "python",
     size_bytes: 1024,
     summary: null,
-    embedding_id: null,
+    created_at: "2026-01-01T00:00:00Z",
     ...overrides,
   };
 }

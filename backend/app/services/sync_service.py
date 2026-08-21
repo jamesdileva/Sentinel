@@ -74,6 +74,10 @@ class RepoSyncService:
     def configured(self) -> bool:
         return bool(self.token)
 
+    def close(self) -> None:
+        """Release the GitHub API connection pool (v1.17.18.3, audit2 S1)."""
+        self._client.close()
+
     def remote_repos(self) -> list[dict]:
         """Return [{full_name, clone_url}] for the token's repos.
 
@@ -355,20 +359,25 @@ def latest_sync_run(session: Session) -> dict | None:
 
 
 def run_sync(service: RepoSyncService | None = None) -> dict:
-    """Entry point used by both the CLI and the Celery beat task."""
+    """Entry point used by both the CLI and the scheduler beat."""
+    owned = service is None
     service = service or RepoSyncService()
-    if not service.configured:
-        logger.warning("GitHub sync skipped: SENTINEL_GITHUB_TOKEN not configured")
-        persist_sync_run(status="skipped", detail="token not configured")
-        return {"configured": False, "skipped": True}
     try:
-        return service.sync()
-    except httpx.HTTPError as exc:
-        logger.error("GitHub sync failed: %s", exc)
-        persist_sync_run(status="error", detail=f"{exc.__class__.__name__}: {exc}")
-        return {"configured": True, "error": f"{exc.__class__.__name__}: {exc}"}
-    except FileNotFoundError as exc:
-        # v1.17.3: git unavailable (minimal-PATH contexts) — say exactly that.
-        logger.error("GitHub sync failed: %s", exc)
-        persist_sync_run(status="error", detail=str(exc))
-        return {"configured": True, "error": str(exc)}
+        if not service.configured:
+            logger.warning("GitHub sync skipped: SENTINEL_GITHUB_TOKEN not configured")
+            persist_sync_run(status="skipped", detail="token not configured")
+            return {"configured": False, "skipped": True}
+        try:
+            return service.sync()
+        except httpx.HTTPError as exc:
+            logger.error("GitHub sync failed: %s", exc)
+            persist_sync_run(status="error", detail=f"{exc.__class__.__name__}: {exc}")
+            return {"configured": True, "error": f"{exc.__class__.__name__}: {exc}"}
+        except FileNotFoundError as exc:
+            # v1.17.3: git unavailable (minimal-PATH contexts) — say exactly that.
+            logger.error("GitHub sync failed: %s", exc)
+            persist_sync_run(status="error", detail=str(exc))
+            return {"configured": True, "error": str(exc)}
+    finally:
+        if owned:
+            service.close()  # v1.17.18.3 (audit2 S1): only close what we built

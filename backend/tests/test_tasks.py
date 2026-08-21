@@ -64,6 +64,9 @@ def test_run_index_knowledge(tmp_db, monkeypatch):
                 progress(3, 3)
             return {"files": 3, "commits": 1}
 
+        def close(self):
+            pass
+
     monkeypatch.setattr(rag_tasks, "RagService", FakeRag)
     result = rag_tasks.run_index_knowledge("p-fake")
     assert result == {"project_id": "p-fake", "counts": {"files": 3, "commits": 1}}

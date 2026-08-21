@@ -63,7 +63,7 @@ class Project(SQLModel, table=True):
 
 class ProjectFile(SQLModel, table=True):
     id: str = Field(default_factory=_uuid, primary_key=True)
-    project_id: str = Field(foreign_key="project.id")
+    project_id: str = Field(foreign_key="project.id", index=True)
     path: str
     absolute_path: str
     language: str | None = None
@@ -80,7 +80,7 @@ class ProjectFile(SQLModel, table=True):
 
 class Dependency(SQLModel, table=True):
     id: str = Field(default_factory=_uuid, primary_key=True)
-    project_id: str = Field(foreign_key="project.id")
+    project_id: str = Field(foreign_key="project.id", index=True)
     name: str
     version: str | None = None
     latest_version: str | None = None
@@ -94,7 +94,7 @@ class Dependency(SQLModel, table=True):
 
 class SecurityFinding(SQLModel, table=True):
     id: str = Field(default_factory=_uuid, primary_key=True)
-    project_id: str = Field(foreign_key="project.id")
+    project_id: str = Field(foreign_key="project.id", index=True)
     type: str
     severity: Severity
     title: str
@@ -112,7 +112,7 @@ class SecurityFinding(SQLModel, table=True):
 
 class GitCommit(SQLModel, table=True):
     id: str = Field(default_factory=_uuid, primary_key=True)
-    project_id: str = Field(foreign_key="project.id")
+    project_id: str = Field(foreign_key="project.id", index=True)
     hash: str
     message: str
     author: str | None = None
@@ -128,7 +128,7 @@ class GitCommit(SQLModel, table=True):
 
 class TestResult(SQLModel, table=True):
     id: str = Field(default_factory=_uuid, primary_key=True)
-    project_id: str = Field(foreign_key="project.id")
+    project_id: str = Field(foreign_key="project.id", index=True)
     run_at: datetime.datetime = Field(default_factory=_utcnow)
     passed: int = 0
     failed: int = 0
@@ -144,7 +144,7 @@ class TestResult(SQLModel, table=True):
 
 class BuildLog(SQLModel, table=True):
     id: str = Field(default_factory=_uuid, primary_key=True)
-    project_id: str = Field(foreign_key="project.id")
+    project_id: str = Field(foreign_key="project.id", index=True)
     started_at: datetime.datetime = Field(default_factory=_utcnow)
     completed_at: datetime.datetime | None = None
     exit_code: int | None = None
@@ -162,7 +162,7 @@ class BuildLog(SQLModel, table=True):
 
 class KnowledgeSummary(SQLModel, table=True):
     id: str = Field(default_factory=_uuid, primary_key=True)
-    project_id: str = Field(foreign_key="project.id")
+    project_id: str = Field(foreign_key="project.id", index=True)
     type: str
     content: str
     generated_at: datetime.datetime = Field(default_factory=_utcnow)
@@ -188,7 +188,10 @@ class OllamaQueryLog(SQLModel, table=True):
     eval_count: int = 0
     eval_duration_ns: int = 0
     total_duration_ns: int = 0
-    created_at: datetime.datetime = Field(default_factory=_utcnow)
+    # v1.17.18.3 (audit2 Q4/Q6): /system/* reads the newest rows via
+    # ORDER BY created_at DESC LIMIT n — unindexed this is a full scan
+    # that degrades linearly as the table grows forever.
+    created_at: datetime.datetime = Field(default_factory=_utcnow, index=True)
 
 
 class ActivityEvent(SQLModel, table=True):
@@ -205,7 +208,7 @@ class ActivityEvent(SQLModel, table=True):
     message: str
     detail: str | None = None
     data: dict | None = Field(default=None, sa_column=Column(JSON))
-    created_at: datetime.datetime = Field(default_factory=_utcnow)
+    created_at: datetime.datetime = Field(default_factory=_utcnow, index=True)
 
 
 class ChatMessage(SQLModel, table=True):
@@ -216,7 +219,7 @@ class ChatMessage(SQLModel, table=True):
     """
 
     id: str = Field(default_factory=_uuid, primary_key=True)
-    project_id: str = ""
+    project_id: str = Field(default="", index=True)
     role: str  # user | assistant
     text: str
     sources: list | None = Field(default=None, sa_column=Column(JSON))
@@ -296,7 +299,7 @@ class AppSession(SQLModel, table=True):
     """
 
     id: str = Field(default_factory=_uuid, primary_key=True)
-    project_id: str = Field(foreign_key="project.id")
+    project_id: str = Field(foreign_key="project.id", index=True)
     title: str
     expected_output: str | None = None
     actual_outcome: str | None = None
@@ -315,7 +318,7 @@ class SessionCheckpoint(SQLModel, table=True):
     """A user-labeled moment during a session (later.md Tier 1)."""
 
     id: str = Field(default_factory=_uuid, primary_key=True)
-    session_id: str = Field(foreign_key="appsession.id")
+    session_id: str = Field(foreign_key="appsession.id", index=True)
     label: str
     at: datetime.datetime = Field(default_factory=_utcnow)
 
@@ -331,7 +334,7 @@ class SessionScreenshot(SQLModel, table=True):
     """
 
     id: str = Field(default_factory=_uuid, primary_key=True)
-    session_id: str = Field(foreign_key="appsession.id")
+    session_id: str = Field(foreign_key="appsession.id", index=True)
     checkpoint_id: str | None = Field(default=None, foreign_key="sessioncheckpoint.id")
     path: str
     captured_at: datetime.datetime = Field(default_factory=_utcnow)
@@ -351,7 +354,7 @@ class TriageAnalysis(SQLModel, table=True):
     """
 
     id: str = Field(default_factory=_uuid, primary_key=True)
-    session_id: str = Field(foreign_key="appsession.id")
+    session_id: str = Field(foreign_key="appsession.id", index=True)
     evidence: dict = Field(default_factory=dict, sa_column=Column(JSON))
     summary: str | None = None
     model: str | None = None

@@ -310,10 +310,13 @@ def _validation_warnings() -> list[dict]:
 
     try:
         ollama = OllamaService(timeout_seconds=2)  # short probe, not the 1800s default
-        available = ollama.is_available()
-        models: list[str] = []
-        if available:
-            models = ollama.list_models()
+        try:
+            available = ollama.is_available()
+            models: list[str] = []
+            if available:
+                models = ollama.list_models()
+        finally:
+            ollama.close()  # v1.17.18.3 (audit2 S1): probe runs per page load
         if not available:
             warnings.append(
                 {

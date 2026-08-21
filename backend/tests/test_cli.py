@@ -122,6 +122,9 @@ def test_ask_answers(monkeypatch):
         def query(self, question, project_id=None, top_k=5):
             return FakeResponse()
 
+        def close(self):
+            pass
+
     monkeypatch.setattr(ollama_service.OllamaService, "is_available", lambda self: True)
     monkeypatch.setattr(rag_service, "RagService", FakeRagService)
     result = runner.invoke(cli.app, ["ask", "deploy?"])
@@ -157,6 +160,9 @@ def test_rag_index_ok(project_id, monkeypatch):
         @staticmethod
         def get_project(session, project_id):
             return FakeProject()
+
+        def close(self):
+            pass
 
     monkeypatch.setattr(ollama_service.OllamaService, "is_available", lambda self: True)
     monkeypatch.setattr(rag_service, "RagService", FakeRagService)

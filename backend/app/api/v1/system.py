@@ -6,7 +6,7 @@ nothing here changes server state — except POST /system/sync, which queues the
 deterministic repo-sync job on explicit user action (the header button).
 """
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session
 
 from app.core.config import settings
@@ -59,8 +59,8 @@ def ollama_status(session: Session = Depends(get_session)) -> dict:
 
 
 @router.get("/activity")
-def activity(limit: int = 50) -> dict:
+def activity(limit: int = Query(50, ge=1, le=500)) -> dict:
     """Tail of the persisted activity stream (newest first)."""
     from app.services import activity_bus
 
-    return {"events": activity_bus.recent_events(limit=min(limit, 500))}
+    return {"events": activity_bus.recent_events(limit=limit)}

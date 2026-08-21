@@ -11,13 +11,10 @@ carries provenance (model, timestamp) per docs/01 §16.2.
 import httpx
 
 from app.core.config import settings
+from app.core.exceptions import OllamaUnavailableError
 from app.core.logging import get_logger
 
 logger = get_logger(__name__)
-
-
-class OllamaUnavailableError(RuntimeError):
-    """Raised when the Ollama server cannot be reached or returns an error."""
 
 
 class OllamaService:

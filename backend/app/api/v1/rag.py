@@ -5,6 +5,8 @@ in the API process (Ollama is local); indexing runs as an in-process
 scheduler job.
 """
 
+from collections.abc import Iterator
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func
 from sqlmodel import Session, select
@@ -36,9 +38,15 @@ def _project_or_404(project_id: str, session: Session) -> object:
     return project
 
 
-def get_rag_service(session: Session = Depends(get_session)) -> RagService:
-    """FastAPI dependency: RAG service bound to the request session."""
-    return RagService(session)
+def get_rag_service(session: Session = Depends(get_session)) -> Iterator[RagService]:
+    """FastAPI dependency: RAG service bound to the request session. The
+    per-request Ollama httpx pool is closed when the request ends
+    (v1.17.18.3, audit2 S1)."""
+    service = RagService(session)
+    try:
+        yield service
+    finally:
+        service.close()
 
 
 @router.post("/rag/search", response_model=RagSearchResponse)

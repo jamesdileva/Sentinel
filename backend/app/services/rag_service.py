@@ -210,6 +210,11 @@ class RagService:
             self._uses_real_llm = False
         self.chroma = chroma or _shared_chroma()
 
+    def close(self) -> None:
+        """Release the Ollama httpx pool (v1.17.18.3, audit2 S1). The shared
+        ChromaManager owns its own lifecycle and must not be touched here."""
+        self.ollama.close()
+
     # --- ingestion -------------------------------------------------------
 
     def index_project(

@@ -17,25 +17,13 @@ export interface Project {
 }
 
 export interface ProjectFile {
+  /** Mirrors ProjectFileRead — only the fields the API actually returns. */
   id: string;
-  project_id: string;
   path: string;
-  absolute_path: string;
   language: string | null;
   size_bytes: number | null;
   summary: string | null;
-  embedding_id: string | null;
-}
-
-export interface Dependency {
-  id: string;
-  project_id: string;
-  name: string;
-  version: string | null;
-  latest_version: string | null;
-  type: "production" | "dev" | string;
-  vulnerable: boolean;
-  severity: "critical" | "high" | "medium" | "low" | "info" | null;
+  created_at: string;
 }
 
 export interface DatabaseHealth {
@@ -49,9 +37,6 @@ export interface HealthResponse {
   version: string;
   database: DatabaseHealth;
 }
-
-export type ProjectStatus = Project["status"];
-export type DependencyType = Dependency["type"];
 
 /* --- Observatory (Sprint 10.5) ------------------------------------------ */
 
