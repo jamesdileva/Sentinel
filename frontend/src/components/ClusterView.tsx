@@ -1,14 +1,13 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import type { GalaxyGraph, GalaxyNode } from "../types";
-import { getGalaxy } from "../api/observatory";
 import FocusPanel from "./FocusPanel";
 import { colorFor, usageCount } from "./galaxyShared";
 
 const LABEL_W = 150;
-const COL_W = 15;
-const ROW_H = 18;
+const COL_W = 20;
+const ROW_H = 22;
 const HEADER_H = 48;
-const DENDRO_H = 130;
+const DENDRO_H = 180;
 
 interface TreeNode {
   id: string;
@@ -90,20 +89,11 @@ function treeHeight(t: TreeNode): number {
   return Math.max(t.height, t.left ? treeHeight(t.left) : 0, t.right ? treeHeight(t.right) : 0);
 }
 
-export default function ClusterView() {
-  const [graph, setGraph] = useState<GalaxyGraph | null>(null);
+export default function ClusterView({ graph }: { graph: GalaxyGraph }) {
   const [active, setActive] = useState<string | null>(null);
   const [hover, setHover] = useState<{ row: string; col: string } | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    getGalaxy()
-      .then(setGraph)
-      .catch((e) => setError(String(e)));
-  }, []);
 
   const derived = useMemo(() => {
-    if (!graph) return null;
     const byId = new Map(graph.nodes.map((n) => [n.id, n]));
     const techOf = new Map<string, Set<string>>();
     for (const link of graph.links) {
@@ -132,10 +122,7 @@ export default function ClusterView() {
     return { byId, techOf, techs, tree, rows, maxH };
   }, [graph]);
 
-  if (error)
-    return <p className="text-sm text-red-500">Galaxy failed to load: {error}</p>;
-  if (!graph || !derived)
-    return <p className="text-sm text-neutral-500">Loading galaxy…</p>;
+  if (!derived) return <p className="text-sm text-neutral-500">Loading galaxy…</p>;
 
   const { byId, techOf, techs, tree, rows, maxH } = derived;
   const svgW = LABEL_W + Math.max(1, techs.length) * COL_W + 20;
@@ -284,7 +271,7 @@ export default function ClusterView() {
                       onMouseLeave={() => setHover(null)}
                       onClick={() =>
                         setActive((current) =>
-                          current === row.id ? null : row.id,
+                          current === t.id ? null : t.id,
                         )
                       }
                     />
@@ -303,13 +290,16 @@ export default function ClusterView() {
             Tree = portfolio families · hover a cell · click a label to focus
           </span>
         </div>
-        <ul data-testid="galaxy-tech-list" className="text-xs text-neutral-400">
-          {techs.map((n) => (
-            <li key={n.id}>
-              <span className="text-amber-400">{n.label}</span> — {n.detail}
-            </li>
-          ))}
-        </ul>
+        <details className="text-xs text-neutral-400">
+          <summary className="cursor-pointer hover:text-neutral-200">All technologies ({techs.length})</summary>
+          <ul data-testid="galaxy-tech-list" className="mt-1 space-y-0.5">
+            {techs.map((n) => (
+              <li key={n.id}>
+                <span className="text-amber-400">{n.label}</span> — {n.detail}
+              </li>
+            ))}
+          </ul>
+        </details>
       </div>
       <FocusPanel
         node={focusNode}

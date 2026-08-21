@@ -1,4 +1,6 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
+import type { GalaxyGraph } from "../types"
+import { getGalaxy } from "../api/observatory"
 import ArchitectureMap from "../components/ArchitectureMap"
 import ClusterView from "../components/ClusterView"
 import MetroView from "../components/MetroView"
@@ -18,6 +20,15 @@ function Section({ title, subtitle, children }: { title: string; subtitle: strin
 
 export default function Observatory() {
   const [galaxyView, setGalaxyView] = useState<"metro" | "families">("metro")
+  const [graph, setGraph] = useState<GalaxyGraph | null>(null)
+  const [graphError, setGraphError] = useState<string | null>(null)
+
+  useEffect(() => {
+    getGalaxy()
+      .then(setGraph)
+      .catch((e) => setGraphError(String(e)))
+  }, [])
+
   return (
     <div className="space-y-10">
       <header>
@@ -46,7 +57,15 @@ export default function Observatory() {
               : "Projects clustered by tech similarity into a family tree + usage matrix."}
           </p>
         </div>
-        {galaxyView === "metro" ? <MetroView /> : <ClusterView />}
+        {graphError ? (
+          <p className="text-sm text-red-500">Galaxy failed to load: {graphError}</p>
+        ) : !graph ? (
+          <p className="text-sm text-neutral-500">Loading galaxy…</p>
+        ) : galaxyView === "metro" ? (
+          <MetroView graph={graph} />
+        ) : (
+          <ClusterView graph={graph} />
+        )}
       </Section>
       <Section title="Activity Timeline" subtitle="Recent commits, builds, test runs, and security findings.">
         <ProjectTimeline />

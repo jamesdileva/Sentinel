@@ -181,7 +181,7 @@ export default function ProjectTimeline() {
                         })}
                       </time>
                     </div>
-                    <p className="truncate text-xs text-neutral-400">
+                    <p className="truncate text-xs text-neutral-400" title={event.message}>
                       {event.message}
                     </p>
                   </li>

@@ -11,7 +11,9 @@ export const COLORS = [
 ];
 
 export function colorFor(key: string): string {
-  return COLORS[key.length % COLORS.length];
+  let hash = 5381;
+  for (let i = 0; i < key.length; i++) hash = ((hash << 5) + hash + key.charCodeAt(i)) & 0xffffffff;
+  return COLORS[Math.abs(hash) % COLORS.length];
 }
 
 export function usageCount(detail: string | null): number {

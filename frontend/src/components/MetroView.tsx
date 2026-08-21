@@ -1,12 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import type { GalaxyGraph, GalaxyNode } from "../types";
-import { getGalaxy } from "../api/observatory";
 import FocusPanel from "./FocusPanel";
 import { colorFor, tooltipFor, usageCount } from "./galaxyShared";
 
-const WIDTH = 900;
+const WIDTH = 1200;
 const MARGIN_X = 40;
-const SLOT_STEP = 80;
+const SLOT_STEP = 100;
 const ROW_GAP = 30;
 const TOP = 30;
 const LABEL_W = 150;
@@ -18,10 +17,9 @@ interface Station {
   x: number;
 }
 
-export default function MetroView({ height = 520 }: { height?: number }) {
-  const [graph, setGraph] = useState<GalaxyGraph | null>(null);
+export default function MetroView({ graph, height = 520 }: { graph: GalaxyGraph; height?: number }) {
   const [lineCount, setLineCount] = useState(15);
-  const [positions, setPositions] = useState<Map<string, number>>(new Map());
+  const [positions, setPositions] = useState<Map<string, number>>(() => defaultPositions(graph));
   const [active, setActive] = useState<string | null>(null);
   const [hovered, setHovered] = useState<string | null>(null);
   const [layoutDirty, setLayoutDirty] = useState(false);
@@ -30,19 +28,8 @@ export default function MetroView({ height = 520 }: { height?: number }) {
     baseX: number;
     clientX: number;
   } | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    getGalaxy()
-      .then((g) => {
-        setGraph(g);
-        setPositions(defaultPositions(g));
-      })
-      .catch((e) => setError(String(e)));
-  }, []);
 
   const layout = useMemo(() => {
-    if (!graph) return null;
     const techs = graph.nodes
       .filter((n) => n.kind === "tech")
       .sort((a, b) => usageCount(b.detail) - usageCount(a.detail));
@@ -92,10 +79,7 @@ export default function MetroView({ height = 520 }: { height?: number }) {
     [graph],
   );
 
-  if (error)
-    return <p className="text-sm text-red-500">Galaxy failed to load: {error}</p>;
-  if (!graph || !layout)
-    return <p className="text-sm text-neutral-500">Loading galaxy…</p>;
+  if (!layout) return <p className="text-sm text-neutral-500">Loading galaxy…</p>;
 
   const { lines, lineIndex, stations, unserved, techLinks, projects } = layout;
   const svgH = Math.max(height, TOP + lines.length * ROW_GAP + 40);
@@ -279,6 +263,7 @@ export default function MetroView({ height = 520 }: { height?: number }) {
                   strokeWidth={3.5}
                   className="fill-slate-300 text-[12px]"
                 >
+                  <title>{station.project.label}</title>
                   {station.project.label}
                 </text>
               </g>
@@ -325,13 +310,16 @@ export default function MetroView({ height = 520 }: { height?: number }) {
             ))}
           </div>
         )}
-        <ul data-testid="galaxy-tech-list" className="text-xs text-neutral-400">
-          {techList.map((n) => (
-            <li key={n.id}>
-              <span className="text-amber-400">{n.label}</span> — {n.detail}
-            </li>
-          ))}
-        </ul>
+        <details className="text-xs text-neutral-400">
+          <summary className="cursor-pointer hover:text-neutral-200">All technologies ({techList.length})</summary>
+          <ul data-testid="galaxy-tech-list" className="mt-1 space-y-0.5">
+            {techList.map((n) => (
+              <li key={n.id}>
+                <span className="text-amber-400">{n.label}</span> — {n.detail}
+              </li>
+            ))}
+          </ul>
+        </details>
       </div>
       <FocusPanel
         node={focusNode}
