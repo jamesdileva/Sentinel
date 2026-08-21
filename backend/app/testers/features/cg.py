@@ -29,7 +29,7 @@ cleanup needed.
 
 import re
 
-from app.testers._helpers import TesterTimeoutError
+from app.testers._helpers import TesterAssertionError, TesterTimeoutError
 from app.testers.features import Feature, FeatureContext
 
 APP_URL = "http://localhost:5173"  # renderer vite dev (tester's electron-dev)
@@ -46,9 +46,14 @@ def _studio_round_trip(ctx: FeatureContext) -> None:
     status_card.first.wait_for(state="visible", timeout=30000)
     stat = page.locator("span.stat-value", has_text=re.compile(r"^\s*\d"))
     stat.first.wait_for(state="visible", timeout=15000)
-    count = int(re.sub(r"\D", "", stat.first.inner_text()))
+    # v1.17.18.5 (audit2 T7 + cg int("") guard): a stat rendering no digits
+    # raised a raw ValueError outside the Tester error taxonomy.
+    digits = re.sub(r"\D", "", stat.first.inner_text())
+    if not digits:
+        raise TesterAssertionError("Total Topics stat rendered without a number")
+    count = int(digits)
     if count < 1:
-        raise TesterTimeoutError(f"Total Topics stat shows {count}")
+        raise TesterAssertionError(f"Total Topics stat shows {count}")
     ctx.step(f"topics generated and rendered (Total Topics = {count})")
     ctx.shot("dashboard after topic generation")
 

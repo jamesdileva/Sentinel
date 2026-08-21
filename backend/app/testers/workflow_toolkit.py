@@ -314,4 +314,5 @@ TESTER = Tester(
     ),
     run=run,
     project_slug="Workflow-Toolkit",
+    ports=(8000,),  # v1.17.18.5 (audit2 T11): shared with CG/Demake, declare it
 )

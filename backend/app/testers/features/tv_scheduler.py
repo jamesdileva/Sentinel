@@ -35,7 +35,7 @@ is self-contained.
 
 import re
 
-from app.testers._helpers import TesterAssertionError, TesterTimeoutError
+from app.testers._helpers import TesterAssertionError
 from app.testers.features import Feature, FeatureContext
 
 CANDIDATES = [
@@ -92,7 +92,8 @@ def _dashboard_scroll_exploration(ctx: FeatureContext) -> None:
         "return window.scrollY > 0; }"
     )
     if not scrolled:
-        raise TesterTimeoutError("page content fits without scrolling")
+        # v1.17.18.5 (audit2 T7): assertion failure, not a timeout.
+        raise TesterAssertionError("page content fits without scrolling")
     day = page.locator("h3").first
     day.wait_for(state="visible", timeout=15000)
     ctx.step("scrolled to the bottom — episode schedule in view")
@@ -106,17 +107,53 @@ def _dashboard_scroll_exploration(ctx: FeatureContext) -> None:
         "return el.scrollWidth > el.clientWidth; }"
     )
     if not scrollable:
-        raise TesterTimeoutError("popular shows row has no horizontal overflow")
+        raise TesterAssertionError("popular shows row has no horizontal overflow")
     ctx.step("popular shows row side-scrolled")
     ctx.shot("popular shows side-scroller")
 
 
 def _search_filters_watchlist(ctx: FeatureContext) -> None:
+    """v1.17.18.5 (audit2 T6): the old version typed text and screenshotted —
+    green regardless of whether filtering worked (Rule 6). Now it adds a
+    self-created show first, asserts the filter KEEPS the matching row
+    visible while hiding nothing else relevant, then cleans up."""
     page = ctx.page
-    page.get_by_placeholder("Search saved shows...").fill("Fire")
-    ctx.step("search filter applied (matches 'Chicago Fire' when saved)")
+    my_shows = page.locator(
+        "xpath=//section[.//button[normalize-space()='+ Add Show']]"
+    )
+    existing = {
+        name.strip() for name in my_shows.locator("xpath=.//strong").all_inner_texts()
+    }
+    candidate = next((c for c in CANDIDATES if c not in existing), None)
+    if candidate is None:
+        raise TesterAssertionError(
+            f"all candidates already in the watchlist: {CANDIDATES}"
+        )
+    page.get_by_placeholder("Paste show name from open tabs...").fill(candidate)
+    page.get_by_role("button", name="+ Add Show").click()
+    row = my_shows.locator(
+        f"xpath=.//div[./strong[normalize-space()='{candidate}']]"
+    ).first
+    row.wait_for(state="visible", timeout=15000)
+
+    search = page.get_by_placeholder("Search saved shows...")
+    # Case-mismatch on purpose: proves the filter matches content, and that
+    # the row SURVIVES filtering (a broken filter would hide it).
+    search.fill(candidate.upper())
     page.wait_for_timeout(1000)
+    if row.count() < 1:
+        raise TesterAssertionError(
+            f"search '{candidate.upper()}' hid the matching row ({candidate})"
+        )
+    ctx.step(f"search filter keeps the matching row ('{candidate}' via upper-case)")
     ctx.shot("watchlist filtered by search")
+
+    # Cleanup: only the self-created entity is touched.
+    search.fill("")
+    page.wait_for_timeout(500)
+    row.get_by_role("button", name="Delete", exact=True).click()
+    row.wait_for(state="hidden", timeout=15000)
+    ctx.step("self-created show deleted after filter check")
 
 
 FEATURES = [
@@ -137,7 +174,9 @@ FEATURES = [
     ),
     Feature(
         "search filters saved shows",
-        "Type into the saved-shows search box and capture the filtered list.",
+        "Add a self-created show, type its name in upper case into the "
+        "saved-shows search box, and assert the matching row stays visible "
+        "(filtering proven, not just screenshotted), then delete it.",
         _search_filters_watchlist,
         electron=True,
     ),

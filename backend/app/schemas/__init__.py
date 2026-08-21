@@ -22,7 +22,12 @@ from app.schemas.observatory import (
     Timeline,
     TimelineEvent,
 )
-from app.schemas.portfolio import FeatureMatrix, PortfolioCandidate, PortfolioScoreRead
+from app.schemas.portfolio import (
+    FeatureMatrix,
+    PortfolioCandidate,
+    PortfolioScoreRead,
+    PortfolioSummary,
+)
 from app.schemas.project import (
     ProjectFileRead,
     ProjectList,
@@ -38,6 +43,7 @@ from app.schemas.rag import (
 )
 from app.schemas.security import (
     ScanResponse,
+    SecurityClearRead,
     SecurityFindingCreate,
     SecurityFindingRead,
 )
@@ -86,6 +92,7 @@ __all__ = [
     "KnowledgeSummaryRead",
     "PortfolioCandidate",
     "PortfolioScoreRead",
+    "PortfolioSummary",
     "ProjectFileRead",
     "ProjectList",
     "ProjectRead",
@@ -96,6 +103,7 @@ __all__ = [
     "RagSearchRequest",
     "RagSearchResponse",
     "ScanResponse",
+    "SecurityClearRead",
     "SecurityFindingCreate",
     "SecurityFindingRead",
     "SessionCheckpointCreate",

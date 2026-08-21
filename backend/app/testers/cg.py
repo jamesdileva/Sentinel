@@ -72,4 +72,5 @@ TESTER = Tester(
     ),
     run=run,
     project_slug="Cg",
+    ports=(8000,),  # v1.17.18.5 (audit2 T11): declared like demake/wft
 )

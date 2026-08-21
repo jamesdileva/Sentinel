@@ -61,6 +61,20 @@ export default function Sessions() {
   const [zoomImage, setZoomImage] = useState<string | null>(null);
   const [exportResult, setExportResult] = useState<SessionExport | null>(null);
 
+  // v1.17.18.5 (audit2 F10): every dialog closes on Escape as well as
+  // overlay-click — keyboard users were previously locked out of dismissal.
+  useEffect(() => {
+    if (!zoomImage && !showCreate && !exportResult) return;
+    const handler = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setZoomImage(null);
+      setShowCreate(false);
+      setExportResult(null);
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [zoomImage, showCreate, exportResult]);
+
   const load = async () => {
     setLoading(true);
     setError(null);
@@ -278,6 +292,7 @@ export default function Sessions() {
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-6"
           onClick={() => setZoomImage(null)}
           role="dialog"
+          aria-modal="true"
           aria-label="Screenshot preview"
         >
           <img
@@ -790,6 +805,7 @@ function CreateDialog({
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-6"
       onClick={onClose}
       role="dialog"
+      aria-modal="true"
       aria-label="New session"
     >
       <div
@@ -882,6 +898,7 @@ function ExportDialog({
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-6"
       onClick={onClose}
       role="dialog"
+      aria-modal="true"
       aria-label="Export result"
     >
       <div

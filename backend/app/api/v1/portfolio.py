@@ -9,7 +9,12 @@ from fastapi import APIRouter, Depends
 from sqlmodel import Session
 
 from app.db.connection import get_session
-from app.schemas import FeatureMatrix, PortfolioCandidate, PortfolioScoreRead
+from app.schemas import (
+    FeatureMatrix,
+    PortfolioCandidate,
+    PortfolioScoreRead,
+    PortfolioSummary,
+)
 from app.services.portfolio_service import PortfolioService
 
 router = APIRouter(prefix="/portfolio", tags=["portfolio"])
@@ -45,10 +50,10 @@ def feature_matrix(
     return service.feature_matrix()
 
 
-@router.get("/summary")
+@router.get("/summary", response_model=PortfolioSummary)
 def portfolio_summary(
     service: PortfolioService = Depends(get_portfolio_service),
-) -> dict:
+) -> PortfolioSummary:
     """Dashboard stats: project count, buildable projects, open findings,
     average health. Read-only; cached like the score table (Sprint 15)."""
-    return service.summary()
+    return PortfolioSummary(**service.summary())

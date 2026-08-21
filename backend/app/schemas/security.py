@@ -42,3 +42,9 @@ class SecurityFindingRead(BaseModel):
 
 class ScanResponse(JobEnvelope):
     pass
+
+
+class SecurityClearRead(BaseModel):
+    """Response for DELETE /security/findings (v1.17.18.5, audit2 C5)."""
+
+    deleted: int

@@ -18,7 +18,6 @@ buttons itself — the user drives the app, the recorder only watches).
 import datetime
 import re
 from pathlib import Path
-from urllib.parse import quote
 
 from PIL import Image, ImageGrab
 from sqlmodel import Session
@@ -39,6 +38,7 @@ from app.repositories import (
     SessionScreenshotRepository,
     TriageAnalysisRepository,
 )
+from app.services.indexer import origin_url
 from app.utils.window_capture import (
     _virtual_screen,
     capture_window_content,
@@ -461,6 +461,19 @@ class AppSessionService:
             shutil.copy2(src_dir / src_name, dst)
             copied.append(str(dst))
         rel = f"images/sessions/{full_dst.name}"
+        # v1.17.18.5 (audit2 S9): derive the repo link from the checkout's
+        # own git origin instead of assuming the display name is a
+        # jamesdileva repo (wrong for juduncan/* and renamed checkouts).
+        origin = origin_url(Path(project.path))
+        if origin:
+            repo_link = f'    <a href="https://{origin}">View Code</a>'
+        else:
+            repo_link = ""
+        links = "\n".join(
+            ['  <div class="links">']
+            + ([repo_link] if repo_link else [])
+            + ["  </div>"]
+        )
         snippet = "\n".join(
             [
                 f"<!-- {project.name} — {app_session.title} (auto-generated) -->",
@@ -470,9 +483,7 @@ class AppSessionService:
                 '  <div class="images">',
                 f'    <img src="{rel}" onclick="openModal(this.src)">',
                 "  </div>",
-                '  <div class="links">',
-                f'    <a href="https://github.com/jamesdileva/{quote(project.name)}">View Code</a>',
-                "  </div>",
+                links,
                 "</div>",
             ]
         )

@@ -86,6 +86,12 @@ backend\.venv\Scripts\python.exe -m app.cli sync   # immediate repo sync if impa
   URL, never exposed (the laptop's `OLLAMA_HOST=0.0.0.0` setup is retired).
 - Pi-hole is gone and the router DNS is back to Automatic — Sentinel never
   controlled it; the laptop no longer hosts anything for this project.
+- **Desktop-app testers drive the real mouse/keyboard** (v1.17.18.5, audit2
+  S10 warning): AG / Airadio / HFT features inject real `SendInput` events
+  into the app's focused window. While such a tester runs, typing or moving
+  the mouse can steal focus and inject keystrokes into *your* session —
+  hands off until the run finishes (the runner refuses windows whose title
+  doesn't match the project, but your own focus is yours to lose).
 
 ## Known issues (see docs/02 §13.4 troubleshooting table)
 

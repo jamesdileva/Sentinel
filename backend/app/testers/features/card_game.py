@@ -20,7 +20,7 @@ landed) before clicking Login.
 import threading
 import time
 
-from app.testers._helpers import TesterTimeoutError
+from app.testers._helpers import TesterAssertionError, TesterTimeoutError
 from app.testers.features import Feature, FeatureContext
 
 APP_URL = "http://localhost:5173"  # vite 8 binds ::1 — localhost, not 127.0.0.1
@@ -73,7 +73,8 @@ def _register_and_spin(ctx: FeatureContext) -> None:
     page.wait_for_timeout(3000)
     after = balance.first.inner_text()
     if after == before:
-        raise TesterTimeoutError(f"balance did not change after spin ({before!r})")
+        # v1.17.18.5 (audit2 T7): an assertion failure, not a timeout.
+        raise TesterAssertionError(f"balance did not change after spin ({before!r})")
     ctx.step(f"balance changed after spin ({before} -> {after})")
     ctx.shot("post-spin state")
 

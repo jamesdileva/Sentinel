@@ -125,7 +125,13 @@ export default function Builds() {
     if (!pollingJobId) return;
     let cancelled = false;
     let elapsed = 0;
+    // v1.17.18.5 (audit2 F6): the interval can fire another tick while a
+    // previous finish()'s history refresh is still awaiting — guard so the
+    // completion toast fires exactly once.
+    let finishing = false;
     const finish = async (message: string, tone: "success" | "error") => {
+      if (finishing) return;
+      finishing = true;
       try {
         const rows = await getBuildHistory(projectId);
         if (!cancelled) setHistory(rows);

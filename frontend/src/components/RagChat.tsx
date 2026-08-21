@@ -14,6 +14,10 @@ export default function RagChat({ projectId }: RagChatProps) {
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const nextId = useRef(1);
+  // v1.17.18.5 (audit2 F6): an in-flight ragQuery resolved after the user
+  // switched rooms must not append the old room's answer to the new room.
+  const roomRef = useRef(projectId ?? "__all__");
+  roomRef.current = projectId ?? "__all__";
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -101,8 +105,10 @@ export default function RagChat({ projectId }: RagChatProps) {
       setLoading(true);
 
       const id = nextId.current++;
+      const askedRoom = roomRef.current;
       try {
         const response = await ragQuery(question, projectId);
+        if (roomRef.current !== askedRoom) return; // user switched rooms
         const answer = {
           id,
           role: "assistant" as const,
@@ -117,6 +123,7 @@ export default function RagChat({ projectId }: RagChatProps) {
         // (/rag/query) — a tab reload during the long local generation
         // can no longer lose it, so the client must not double-save.
       } catch (err) {
+        if (roomRef.current !== askedRoom) return;
         const answer = {
           id,
           role: "assistant" as const,

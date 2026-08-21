@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { NavLink, Outlet } from "react-router";
+import { NavLink, Outlet, useLocation } from "react-router";
 
 import { useUI } from "../contexts/UIContext";
 import { NAV_ITEMS } from "./nav";
@@ -24,6 +24,11 @@ export default function Layout() {
   const [sync, setSync] = useState<SyncStatus | null>(null);
   const [syncRunning, setSyncRunning] = useState(false);
   const { events, status } = useActivity();
+  const location = useLocation();
+  // v1.17.18.5 (audit2 F10): the header title was hardcoded "Dashboard" on
+  // every route — derive it from the active nav item instead.
+  const pageTitle =
+    NAV_ITEMS.find((item) => item.to === location.pathname)?.label ?? "Dashboard";
 
   const refreshSync = useCallback(() => {
     let active = true;
@@ -66,8 +71,7 @@ export default function Layout() {
     }
   }
 
-  const sidebar = (
-    <nav className="flex h-full flex-col gap-1 p-4">
+  const sidebar = (    <nav className="flex h-full flex-col gap-1 p-4">
       <div className="mb-4 flex items-center gap-2 px-2">
         <span className="text-xl text-indigo-500 dark:text-indigo-400">◉</span>
         <span className="text-lg font-semibold tracking-tight text-slate-900 dark:text-slate-100">
@@ -124,7 +128,7 @@ export default function Layout() {
             ☰
           </button>
           <h1 className="flex-1 text-sm font-semibold uppercase tracking-widest text-slate-500 dark:text-slate-400">
-            Dashboard
+            {pageTitle}
           </h1>
           {sync && (
             <SyncPill
@@ -194,7 +198,7 @@ function StatusBar({
 
       {ollama && tokensPerSecond !== null && (
         <span className="shrink-0 font-mono text-[11px] text-indigo-600 dark:text-indigo-400">
-          Ollama {String(ollama.data.purpose ?? "query")} · {tokensPerSecond}{" "}
+          Ollama {String(ollama.data?.purpose ?? "query")} · {tokensPerSecond}{" "}
           tok/s
         </span>
       )}

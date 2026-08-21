@@ -331,3 +331,36 @@ InternalError when multiple ChromaManager instances share a directory across
 tests) - each full run failed a *different* test once, then a complete clean
 652-pass run followed. Not introduced by these changes; worth its own look
 (test isolation for the chroma singleton).
+
+---
+
+## Fixes applied - v1.17.18.5 (fourth batch, 2026-08-21)
+
+| Item | Fix | Files | Tests |
+|------|-----|-------|-------|
+| S9 | Portfolio export derives the View Code link from the checkout's git origin (`indexer.origin_url`); no origin means no link - the hardcoded `jamesdileva/{display-name}` guess is gone | services/app_sessions.py | snippet tests updated + new no-origin case |
+| C5 (partial) | response models for /portfolio/summary and DELETE /security/findings; system.py's raw dicts deferred (largest surface, OpenAPI-only impact) | schemas/{portfolio,security}.py, api/v1/{portfolio,security}.py | API suites |
+| T4 | finsight fallback catches only TesterEnvError now - shell-render assertion failures surface as failed instead of being masked green by the direct-Flask retry | testers/finsight.py | tester suites |
+| T6 | search-filter feature adds a self-created show, filters by its UPPER-CASE name, asserts the matching row survives, then deletes it (was: type text, sleep, screenshot, green) | testers/features/tv_scheduler.py | fake-page harness test |
+| T7 | taxonomy restored at all six flagged sites: assertion failures raise TesterAssertionError (tv scroll checks, card-game balance, cg topic stat, demake upload-button states), demake pipeline deadline keeps TesterTimeoutError | testers/features/{cg,card_game,demake,tv_scheduler}.py | harness tests |
+| T11 | cg and workflow_toolkit declare ports=(8000,) like demake - consistent restart semantics (Run Build frees the app's own dev-server port for all three) | testers/cg.py, workflow_toolkit.py | automation test updated |
+| F5 | ActivityEvent.id optional/null + data nullable on live WS frames; ProjectFile already mirrors ProjectFileRead exactly | api/system.ts | tsc strict clean |
+| F6 | three race guards: Projects file-list request-id sequencing; RagChat drops answers that resolve after a room switch; Builds finish() re-entry guard kills duplicate completion toasts | pages/{Projects,RagChat,Builds} | vitest suite |
+| F10 (partial) | header title derived from the active route (was hardcoded Dashboard); Sessions dialogs close on Escape and carry aria-modal. Galaxy-view keyboard navigation still open. | components/Layout.tsx, pages/Sessions.tsx | Layout tests |
+| S10 | docs/desktop.md rules-of-thumb now warn that desktop-app testers inject real mouse/keyboard input | docs/desktop.md | n/a |
+
+**Verification:** backend 653 passed (coverage gate met), flake8/black/isort
+clean; frontend 131 passed, tsc clean; scripts/build.py --dist green,
+dashboard rebuilt and staged.
+
+### Deferred (need focused work or live-app verification)
+
+- **C6** sessions-list N+1 (needs batched/joined reads)
+- **C7** PATCH -> POST verb migration (API contract change + client update)
+- **C8-residual/C5** system.py raw-dict response models
+- **S8** port-kill ownership guard before force-killing declared ports
+- **T3/T10/T12** taskkill-helper consolidation, sleep->retries conversions,
+  slug-registry dedupe (touch live testers; verify against real apps)
+- **F7** scan-all progress UX with no project selected
+- **F10-residual** keyboard navigation for galaxy views; focus traps
+- **F8/F9** Sessions.tsx split + shared page boilerplate extraction

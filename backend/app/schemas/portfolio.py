@@ -34,3 +34,12 @@ class FeatureMatrix(BaseModel):
     projects: list[str] = []
     features: list[str] = ["build", "test", "docs", "security", "screenshots"]
     matrix: list[list[str]] = []
+
+
+class PortfolioSummary(BaseModel):
+    """Dashboard stats for GET /portfolio/summary (v1.17.18.5, audit2 C5)."""
+
+    projects: int
+    buildable: int
+    open_findings: int
+    avg_health: float

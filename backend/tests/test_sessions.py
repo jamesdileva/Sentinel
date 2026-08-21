@@ -601,6 +601,13 @@ def test_export_copies_and_builds_snippet(tmp_db, project, monkeypatch, tmp_path
     monkeypatch.setattr(settings, "portfolio_dir", tmp_path / "portfolio")
     source = tmp_path / "render.png"
     Image.new("RGB", (200, 100), (9, 8, 7)).save(source, "PNG")
+    # v1.17.18.5 (audit2 S9): the View Code link derives from the checkout's
+    # git origin — give the fixture project one.
+    (Path(project.path) / ".git").mkdir(parents=True, exist_ok=True)
+    (Path(project.path) / ".git" / "config").write_text(
+        '[remote "origin"]\n\turl = https://github.com/jamesdileva/demo-app.git\n',
+        encoding="utf-8",
+    )
     with DbSession(get_engine()) as db:
         app_session = _session(db, project.id, title="Ship the demo")
         shot = AppSessionService(db).register_screenshot(app_session.id, source)
@@ -609,8 +616,24 @@ def test_export_copies_and_builds_snippet(tmp_db, project, monkeypatch, tmp_path
     assert (tmp_path / "portfolio" / "images" / "sessions").exists()
     assert "demo-app — Ship the demo" in result["snippet"]
     assert "images/sessions/demo-app-" in result["snippet"]
-    assert "github.com/jamesdileva/demo-app" in result["snippet"]
+    assert "https://github.com/jamesdileva/demo-app" in result["snippet"]
     assert "openModal" in result["snippet"]
+
+
+def test_export_without_git_origin_omits_code_link(tmp_db, monkeypatch, tmp_path):
+    """v1.17.18.5 (audit2 S9): no git origin → no guessed repo link (the old
+    hardcoded jamesdileva/{display-name} guess was wrong for other owners)."""
+    monkeypatch.setattr(settings, "portfolio_dir", tmp_path / "portfolio")
+    source = tmp_path / "render.png"
+    Image.new("RGB", (200, 100), (9, 8, 7)).save(source, "PNG")
+    with DbSession(get_engine()) as db:
+        # Isolated checkout-free path: the shared demo-app fixture path may
+        # carry a leftover .git from the sibling test above.
+        project = _mk_project(db, "originless-app", path=str(tmp_path / "originless"))
+        app_session = _session(db, project.id)
+        shot = AppSessionService(db).register_screenshot(app_session.id, source)
+        result = AppSessionService(db).export_to_portfolio(app_session.id, shot.id)
+    assert "View Code" not in result["snippet"]
 
 
 def test_export_unknown_screenshot_raises(tmp_db, project):

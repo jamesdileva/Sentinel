@@ -16,7 +16,11 @@ canvas — the DOM boundary is the feature boundary.
 import time
 from pathlib import Path
 
-from app.testers._helpers import TesterEnvError
+from app.testers._helpers import (
+    TesterAssertionError,
+    TesterEnvError,
+    TesterTimeoutError,
+)
 from app.testers.features import Feature, FeatureContext
 
 APP_URL = "http://127.0.0.1:8000"
@@ -33,11 +37,12 @@ def _upload_starts_pipeline(ctx: FeatureContext) -> None:
     ctx.go(APP_URL)
     upload = page.locator("#upload-btn")
     if upload.is_enabled():
-        raise TesterEnvError("upload button should start disabled")
+        # v1.17.18.5 (audit2 T7): UI-state assertions, not env failures.
+        raise TesterAssertionError("upload button should start disabled")
     page.set_input_files("#file-input", str(fixture))
     upload.wait_for(state="visible", timeout=10000)
     if not upload.is_enabled():
-        raise TesterEnvError("upload button did not enable after choosing a file")
+        raise TesterAssertionError("upload button did not enable after choosing a file")
     ctx.step("fixture chosen — generate button enabled")
 
     upload.click()
@@ -54,7 +59,7 @@ def _upload_starts_pipeline(ctx: FeatureContext) -> None:
         page.wait_for_timeout(POLL_S * 1000)
     text = status.first.inner_text()
     if not text or "INITIALIZING" in text:
-        raise TesterEnvError(
+        raise TesterTimeoutError(
             f"pipeline did not leave INITIALIZING within {MAX_WAIT_S}s"
         )
     ctx.step(f"pipeline running via UI ({text})")

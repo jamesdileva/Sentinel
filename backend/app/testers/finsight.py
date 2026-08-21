@@ -16,7 +16,7 @@ window may open but nothing is clicked) — dinner-menu pattern (v1.17.17.1).
 """
 
 from app.testers import Tester
-from app.testers._helpers import TesterAssertionError, TesterContext, TesterEnvError
+from app.testers._helpers import TesterContext, TesterEnvError
 
 ELECTRON_CMD = "cd electron && electron ."
 PYTHON_CMD = "python app.py"
@@ -27,10 +27,11 @@ def run(ctx: TesterContext) -> None:
     ctx.launch(ELECTRON_CMD)
     try:
         ctx.http("GET", FLASK_URL, retries=6)
-    except (TesterEnvError, TesterAssertionError):
-        # electron shell could not reach the backend (env quirk) — run the
-        # Flask app directly; a stray backend already bound on :10000 still
-        # answers the retries.
+    except TesterEnvError:
+        # v1.17.18.5 (audit2 T4): only ENV failures (backend never came up)
+        # justify the direct-Flask fallback. Assertion failures (wrong body/
+        # status served through the shell) must surface as-is — swallowing
+        # them here masked a real renderer defect as green.
         ctx.launch(PYTHON_CMD)
         ctx.http("GET", FLASK_URL, retries=6)
 

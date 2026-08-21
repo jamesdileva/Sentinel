@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { getProjectFiles, listProjects } from "../api/projects";
 import type { Project, ProjectFile } from "../types";
@@ -19,6 +19,9 @@ export default function Projects() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [files, setFiles] = useState<ProjectFile[]>([]);
   const [error, setError] = useState<string | null>(null);
+  // v1.17.18.5 (audit2 F6): guards against a stale file-list response
+  // landing after the user has already switched projects.
+  const filesRequestRef = useRef(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -41,13 +44,17 @@ export default function Projects() {
   }, []);
 
   async function selectProject(project: Project) {
-    setSelectedId(project.id === selectedId ? null : project.id);
+    const nextSelected = project.id === selectedId ? null : project.id;
+    setSelectedId(nextSelected);
     setFiles([]);
-    if (project.id === selectedId) return;
+    if (nextSelected === null) return;
+    const requestId = ++filesRequestRef.current;
     try {
-      const rows = await getProjectFiles(project.id);
+      const rows = await getProjectFiles(nextSelected);
+      if (filesRequestRef.current !== requestId) return; // stale switch
       setFiles(rows);
     } catch (err) {
+      if (filesRequestRef.current !== requestId) return;
       setError(err instanceof Error ? err.message : "Cannot load files.");
     }
   }

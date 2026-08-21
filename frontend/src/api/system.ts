@@ -60,12 +60,13 @@ export async function getSyncStatus(): Promise<SyncStatus> {
 }
 
 export interface ActivityEvent {
-  id: string;
+  // Live WS frames have no id (only persisted history rows do) — audit2 F5.
+  id?: string | null;
   kind: string;
   message: string;
   detail: string | null;
-  /** Free-form event payload (e.g. ollama: model/purpose/tokens). */
-  data: Record<string, unknown>;
+  /** Free-form event payload; null on live WS frames without data. */
+  data: Record<string, unknown> | null;
   created_at: string;
 }
 

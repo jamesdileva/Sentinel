@@ -450,7 +450,8 @@ def test_build_runner_open_desktop_app_opens_no_browser(
     tmp_db, tmp_path, fake_subprocess
 ):
     """v1.17.13.4: a desktop app (Cg — Electron, no web_url) is launched
-    exactly as before: no ports freed, no browser opened."""
+    with no browser. v1.17.18.5 (audit2 T11): Cg now declares ports=(8000,)
+    like Demake/WFT, so its own dev-server port is freed before relaunch."""
     root = tmp_path / "cg-open"
     root.mkdir()
     with Session(connection.get_engine()) as session:
@@ -461,7 +462,7 @@ def test_build_runner_open_desktop_app_opens_no_browser(
         assert log.success is True
         assert log.launch_command == "cd renderer && npm run electron-dev"
         assert "App opened" not in (log.stdout or "")
-        assert "Freed ports" not in (log.stdout or "")
+        assert "Freed ports" in (log.stdout or "")
     assert _FakeSubprocess.startfile_calls == []
     popens = [c[1] for c in _FakeSubprocess.calls if c[0] == "popen"]
     assert popens == ["cd renderer && npm run electron-dev"]

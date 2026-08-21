@@ -11,7 +11,7 @@ from sqlmodel import Session
 from app.api.v1._deps import project_or_404
 from app.db.connection import get_session
 from app.repositories import SecurityRepository
-from app.schemas import SecurityFindingRead
+from app.schemas import SecurityClearRead, SecurityFindingRead
 from app.schemas.security import ScanResponse
 from app.services.job_scheduler import scheduler as job_scheduler
 
@@ -42,8 +42,10 @@ def list_findings(
     return SecurityRepository(session).get_by_project(project_id)
 
 
-@router.delete("/findings", status_code=200)
-def clear_resolved(project_id: str, session: Session = Depends(get_session)) -> dict:
+@router.delete("/findings", response_model=SecurityClearRead)
+def clear_resolved(
+    project_id: str, session: Session = Depends(get_session)
+) -> SecurityClearRead:
     """Delete a project's *resolved* findings (v1.17.7.7). Open findings are
     never touched. Returns the number of rows deleted — the resolved rows are
     the stale leftovers of previous scans that spam the timeline."""
@@ -51,4 +53,4 @@ def clear_resolved(project_id: str, session: Session = Depends(get_session)) -> 
     deleted = SecurityRepository(session).delete_resolved(project_id)
     # v1.17.18.4 (audit2 D7): the repository only flushes now — commit here.
     session.commit()
-    return {"deleted": deleted}
+    return SecurityClearRead(deleted=deleted)
