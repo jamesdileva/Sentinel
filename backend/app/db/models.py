@@ -83,10 +83,7 @@ class Dependency(SQLModel, table=True):
     project_id: str = Field(foreign_key="project.id", index=True)
     name: str
     version: str | None = None
-    latest_version: str | None = None
     type: str = "production"
-    vulnerable: bool = False
-    severity: Severity | None = None
     created_at: datetime.datetime = Field(default_factory=_utcnow)
 
     project: Project = Relationship(back_populates="dependencies")
@@ -117,10 +114,6 @@ class GitCommit(SQLModel, table=True):
     message: str
     author: str | None = None
     timestamp: datetime.datetime | None = None
-    added_files: list[str] | None = Field(default=None, sa_column=Column(JSON))
-    modified_files: list[str] | None = Field(default=None, sa_column=Column(JSON))
-    deleted_files: list[str] | None = Field(default=None, sa_column=Column(JSON))
-    feature_tags: list[str] | None = Field(default=None, sa_column=Column(JSON))
     created_at: datetime.datetime = Field(default_factory=_utcnow)
 
     project: Project = Relationship(back_populates="git_commits")
@@ -167,7 +160,6 @@ class KnowledgeSummary(SQLModel, table=True):
     content: str
     generated_at: datetime.datetime = Field(default_factory=_utcnow)
     model: str | None = None
-    confidence: float | None = None
 
     project: Project = Relationship(back_populates="knowledge_summaries")
 
@@ -241,25 +233,6 @@ class PortfolioScore(SQLModel, table=True):
     updated_at: datetime.datetime = Field(default_factory=_utcnow)
 
     project: Project = Relationship(back_populates="portfolio_score")
-
-
-class WorldSimState(SQLModel, table=True):
-    """Optional World Simulator state table. Separate from project data."""
-
-    id: str = Field(default_factory=_uuid, primary_key=True)
-    day_number: int = 0
-    events: dict = Field(default_factory=dict, sa_column=Column(JSON))
-    nations: dict = Field(default_factory=dict, sa_column=Column(JSON))
-    economy: dict = Field(default_factory=dict, sa_column=Column(JSON))
-    updated_at: datetime.datetime = Field(default_factory=_utcnow)
-
-
-class ConfigEntry(SQLModel, table=True):
-    """Application configuration stored in DB."""
-
-    key: str = Field(primary_key=True)
-    value: dict = Field(default_factory=dict, sa_column=Column(JSON))
-    updated_at: datetime.datetime = Field(default_factory=_utcnow)
 
 
 class SyncRun(SQLModel, table=True):

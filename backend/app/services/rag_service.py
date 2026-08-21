@@ -329,16 +329,26 @@ class RagService:
         return len(embeds)
 
     def ingest_git_commits(self, project: Project) -> int:
-        """Parse git history and embed commit messages into the git_commits collection."""
+        """Parse git history and embed commit messages into the git_commits
+        collection. v1.17.18.4 (audit2 S7): commits already present in the
+        collection are skipped — files have had an embedding_id skip since
+        v1.17.1, but commits were re-embedded on every index run of every
+        project, a repeated Ollama cost."""
         GitHistoryService(self.session).analyze_history(project)
         commits = GitCommitRepository(self.session).get_by_project(project.id)
+        ids = [f"{project.id}:{c.hash}" for c in commits]
+        existing = self.chroma.existing_ids("git_commits", ids)
         embeds: list[list[float]] = []
         docs: list[str] = []
         metas: list[dict[str, Any]] = []
-        for commit in commits:
+        out_ids: list[str] = []
+        for commit, id_ in zip(commits, ids):
+            if id_ in existing:
+                continue
             doc = f"{commit.message}"
             embeds.append(self._embed(doc))
             docs.append(doc)
+            out_ids.append(id_)
             timestamp = commit.timestamp.isoformat() if commit.timestamp else ""
             metas.append(
                 {
@@ -350,9 +360,12 @@ class RagService:
             )
         if not embeds:
             return 0
-        ids = [f"{project.id}:{c.hash}" for c in commits]
         self.chroma.upsert(
-            "git_commits", ids=ids, embeddings=embeds, documents=docs, metadatas=metas
+            "git_commits",
+            ids=out_ids,
+            embeddings=embeds,
+            documents=docs,
+            metadatas=metas,
         )
         return len(embeds)
 
@@ -749,15 +762,18 @@ class RagService:
         purpose: str = "query",
         max_tokens: int = 500,
     ) -> str:
-        """Generate, record deterministic metrics, and publish an Ollama event."""
+        """Generate, record deterministic metrics, and publish an Ollama event.
+
+        v1.17.18.4 (audit2 S6): the "fall back to the plain path" except only
+        ever made sense for injected test fakes — with a real LLM, `self._llm`
+        IS `self.ollama.generate`, so the fallback re-issued the identical
+        request that just failed (another wait up to ollama_timeout_seconds)
+        before raising. Fakes now short-circuit above; real failures raise."""
         if not self._uses_real_llm:
             return self._llm(prompt)
-        try:
-            result = self.ollama.generate_with_metrics(
-                prompt, purpose=purpose, max_tokens=max_tokens
-            )
-        except Exception:  # noqa: BLE001  (fall back to the plain path)
-            return self._llm(prompt)
+        result = self.ollama.generate_with_metrics(
+            prompt, purpose=purpose, max_tokens=max_tokens
+        )
         from app.services import activity_bus
         from app.services.system_service import OllamaStatus
 

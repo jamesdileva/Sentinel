@@ -10,10 +10,15 @@ class KnowledgeSummaryRepository(Repository):
     model = KnowledgeSummary
 
     def get_by_project(
-        self, project_id: str, summary_type: str | None = None
+        self,
+        project_id: str,
+        summary_type: str | None = None,
+        limit: int | None = None,
     ) -> list[KnowledgeSummary]:
         stmt = select(KnowledgeSummary).where(KnowledgeSummary.project_id == project_id)
         if summary_type is not None:
             stmt = stmt.where(KnowledgeSummary.type == summary_type)
         stmt = stmt.order_by(KnowledgeSummary.generated_at.desc())
+        if limit is not None:
+            stmt = stmt.limit(limit)
         return list(self.session.exec(stmt).all())

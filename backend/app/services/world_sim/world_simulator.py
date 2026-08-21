@@ -9,6 +9,7 @@ simulation state.
 
 import datetime
 import random
+import threading
 from typing import Callable
 
 from sqlmodel import Session, select
@@ -37,6 +38,15 @@ INITIAL_FOOD_MULTIPLIER = 3
 MIN_ABANDON_POPULATION = 5
 DISASTER_SEVERITY = {"flood": 6, "drought": 6, "plague": 8}
 DISASTER_TYPES = ("flood", "drought", "plague")
+
+# v1.17.18.4 (audit2 Q10): the world-sim tick beat runs advance_day/catch_up
+# in scheduler threads while POST /world-sim/* god tools run the same code in
+# FastAPI threadpool threads — all over the same engine with fresh sessions.
+# SQLite serializes the writes, not the read-modify-write logic, so two
+# interleaved cycles could both compute day = N+1 (duplicate events) or a
+# reset could resurrect settlements mid-delete. One process-wide lock around
+# every mutating method closes it; reads stay lock-free.
+_WORLD_MUTATION_LOCK = threading.Lock()
 
 _SETTLEMENT_FIELDS = (
     "id",
@@ -206,6 +216,10 @@ class WorldSimulatorService:
 
     def advance_day(self, days: int = 1) -> int:
         """Advance the world by `days` world-days (1 = one day)."""
+        with _WORLD_MUTATION_LOCK:
+            return self._advance_day_locked(days)
+
+    def _advance_day_locked(self, days: int) -> int:
         self.ensure_world()
         with Session(self.engine) as session:
             world = session.get(WorldSimStateRow, "world")
@@ -351,6 +365,10 @@ class WorldSimulatorService:
 
     def reset(self, seed: int | None = None) -> None:
         """Wipe the world and start again at day 0 with a (new) seed."""
+        with _WORLD_MUTATION_LOCK:
+            self._reset_locked(seed)
+
+    def _reset_locked(self, seed: int | None = None) -> None:
         with Session(self.engine) as session:
             world = session.get(WorldSimStateRow, "world")
             for table in (WorldSettlement, WorldRoad, WorldEventRow):
@@ -366,16 +384,21 @@ class WorldSimulatorService:
     def set_time_scale(self, scale: int) -> None:
         """Accelerate/decelerate: each tick interval advances `scale` days."""
         scale = max(1, min(scale, 10))
-        with Session(self.engine) as session:
-            world = session.get(WorldSimStateRow, "world")
-            world.time_scale = scale
-            session.commit()
+        with _WORLD_MUTATION_LOCK:
+            with Session(self.engine) as session:
+                world = session.get(WorldSimStateRow, "world")
+                world.time_scale = scale
+                session.commit()
 
     def trigger_disaster(self, settlement_id: str, disaster_type: str) -> bool:
         """God tool: force a disaster on a settlement. Returns False if the
         settlement is unknown or already abandoned."""
         if disaster_type not in DISASTER_TYPES:
             raise ValueError(f"Unknown disaster type: {disaster_type}")
+        with _WORLD_MUTATION_LOCK:
+            return self._trigger_disaster_locked(settlement_id, disaster_type)
+
+    def _trigger_disaster_locked(self, settlement_id: str, disaster_type: str) -> bool:
         self.ensure_world()
         with Session(self.engine) as session:
             world = session.get(WorldSimStateRow, "world")

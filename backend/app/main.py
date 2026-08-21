@@ -1,10 +1,12 @@
 """Project Sentinel — FastAPI application entry point.
 
-Sprint 1 scope: health endpoints, CORS, exception handling, CLI-compatible server.
+Sprint 1 scope: health endpoints, exception handling, CLI-compatible server.
 Sprint 2: database initialization on startup (lifespan).
 Sprint 3: background repository discovery scan on startup.
 Sprint 16: single-process runtime — the API also serves the built dashboard
-(SPA) from `backend/app/static`, and the in-process scheduler replaces Celery.
+(SPA) from `backend/app/static`, and the in-process scheduler replaces the
+deferred queue. Same-origin serving means there is no CORS surface at all
+(v1.17.18.4: docstring previously still promised CORS middleware).
 """
 
 import threading

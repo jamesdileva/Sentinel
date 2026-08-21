@@ -327,7 +327,14 @@ def config(
     if action == "show":
         typer.echo(json.dumps(settings.model_dump(mode="json"), indent=2, default=str))
     elif action == "set":
-        typer.echo("Config persistence not implemented yet.")
+        # v1.17.18.4 (audit2 C12): the old no-op exited 0, so scripts got
+        # success semantics for an action that did nothing.
+        typer.echo(
+            "Config persistence is not supported — set SENTINEL_* variables "
+            "in .env and restart (see .env.example).",
+            err=True,
+        )
+        raise typer.Exit(code=2)
     else:
         typer.echo(f"Unknown action: {action}. Use `show` or `set`.", err=True)
         raise typer.Exit(code=2)

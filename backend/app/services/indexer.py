@@ -10,10 +10,12 @@ import fnmatch
 import os
 import re
 import subprocess
+import threading
 from collections import defaultdict
 from collections.abc import Callable
 from pathlib import Path
 
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from app.core.config import settings
@@ -41,6 +43,10 @@ from app.services.command_runner import resolve_git
 from app.utils import detect_framework, detect_language, extract_build_commands
 
 logger = get_logger(__name__)
+
+# v1.17.18.4 (audit2 S3): serializes Project get-or-create across the
+# startup scan thread, the scheduled scan-all beat, and manual rescans.
+_project_create_lock = threading.Lock()
 
 _REQUIREMENT_RE = re.compile(
     r"^([A-Za-z0-9_.-]+)\s*(?:==|>=|<=|~=|!=|\^|~)?\s*([^\s#]*)?"
@@ -544,13 +550,21 @@ class IndexerService:
     def _deps_from_pyproject(
         path: Path,
     ) -> list[tuple[str, str | None, str]]:
+        """PEP 621 `dependencies = [...]` entries only (v1.17.18.4, audit2 S4).
+
+        The previous any-bare-quoted-line regex also swallowed `classifiers`
+        ("Programming Language :: Python :: 3") and `keywords` arrays as
+        production dependencies. Scoping to the dependencies array block is
+        deterministic and cannot misclassify sibling lists."""
         deps: list[tuple[str, str | None, str]] = []
         text = path.read_text(encoding="utf-8", errors="replace")
-        for match in re.finditer(
-            r'^\s*["\']([^"\']+)["\']\s*[,\]]?\s*$', text, re.MULTILINE
-        ):
-            raw = match.group(1)
-            name = re.split(r"==|>=|<=|~=|!=|!=|<|>|\[|;", raw)[0].strip()
+        block = re.search(
+            r"^\s*dependencies\s*=\s*\[(.*?)^\s*\]", text, re.MULTILINE | re.DOTALL
+        )
+        if block is None:
+            return deps
+        for raw in re.findall(r'["\']([^"\']+)["\']', block.group(1)):
+            name = re.split(r"==|>=|<=|~=|!=|<|>|\[|;|,", raw)[0].strip()
             if name and not name.startswith("python"):
                 deps.append((name, None, "production"))
         return deps
@@ -583,15 +597,26 @@ class IndexerService:
     # --- internals ----------------------------------------------------
 
     def _get_or_create_project(self, path: Path) -> Project:
-        project = self.projects.get_by_path(str(path))
-        if project is None:
-            project = Project(
-                name=_pretty_name(path.name),
-                path=str(path),
-                language="unknown",
-            )
-            self.session.add(project)
-            self.session.flush()
+        # v1.17.18.4 (audit2 S3): three entry points (startup scan thread,
+        # scheduled scan-all beat, manual rescan) can race on the same path —
+        # serialize get-or-create process-wide and recover from a duplicate
+        # insert by re-fetching the winner.
+        with _project_create_lock:
+            project = self.projects.get_by_path(str(path))
+            if project is None:
+                project = Project(
+                    name=_pretty_name(path.name),
+                    path=str(path),
+                    language="unknown",
+                )
+                self.session.add(project)
+                try:
+                    self.session.flush()
+                except IntegrityError:
+                    self.session.rollback()
+                    project = self.projects.get_by_path(str(path))
+                    if project is None:
+                        raise
         return project
 
     def _is_ignored(self, rel_path: Path) -> bool:

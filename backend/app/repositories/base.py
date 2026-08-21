@@ -9,6 +9,7 @@ services (Sprint 3+).
 
 from typing import Any, TypeVar
 
+from sqlalchemy import func
 from sqlmodel import Session, select
 
 from app.core.logging import get_logger
@@ -47,8 +48,13 @@ class Repository:
         return list(self.session.exec(stmt).all())
 
     def count(self) -> int:
-        """Count all rows."""
-        return len(self.session.exec(select(self.model)).all())
+        """Count all rows via SELECT COUNT(*) (v1.17.18.4, audit2 D6) — the
+        previous len(select(...).all()) materialized the whole table."""
+        return int(
+            self.session.exec(
+                select(func.count()).select_from(self.model)  # type: ignore[arg-type]
+            ).one()
+        )
 
     def add(self, instance: ModelT) -> ModelT:
         """Insert a row, flush, and return it with its generated fields."""

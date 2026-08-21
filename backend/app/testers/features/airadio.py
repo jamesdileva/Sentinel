@@ -1,11 +1,11 @@
-﻿"""Airadio screenshot feature â€” packaged Electron app, window-targeted only.
+"""Airadio screenshot feature — packaged Electron app, window-targeted only.
 
 The project ships an electron-builder package (`release\\win-unpacked`) whose
 window title is `ElmWave Network` (the renderer HTML <title>; the packaged
 BrowserWindow title is `WestWaveGem` but the page title wins). The app's UI
 is sparse and Streamlabs-dependent (no reliable layout anchors), so the
 feature asserts only what is deterministic: launching the packaged exe
-opens its window (attach by title, Rule 1 â€” only the declared window is
+opens its window (attach by title, Rule 1 — only the declared window is
 ever driven), the window paints non-blank content, and the process is
 cleaned up after the session. No clicks, no foreground moves, no mouse
 needed (v1.17.17.1).
@@ -30,7 +30,7 @@ SETTLE_S = 8  # allow the renderer to paint before the screenshot
 
 def _kill() -> None:
     """Kill any WestWaveGem instance this feature launched. The image name
-    is the app's own packaged exe â€” never a generic process."""
+    is the app's own packaged exe — never a generic process."""
     try:
         subprocess.run(
             ["taskkill", "/F", "/IM", "WestWaveGem Radio.exe"],
@@ -73,7 +73,7 @@ FEATURES = [
             "Streamlabs-dependent, so no layout anchors are asserted: a "
             "non-blank window capture is the honest completion signal "
             "(blank Chromium PrintWindow output fails the shot's blank "
-            "gate). No mouse or foreground moves â€” window-targeted only "
+            "gate). No mouse or foreground moves — window-targeted only "
             "(v1.17.17.1)."
         ),
         run=run,

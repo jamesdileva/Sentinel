@@ -5,15 +5,17 @@ in the API process (Ollama is local); indexing runs as an in-process
 scheduler job.
 """
 
+import threading
 from collections.abc import Iterator
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func
 from sqlmodel import Session, select
 
+from app.api.v1._deps import project_or_404
 from app.db.connection import get_session
 from app.db.models import ChatMessage, ProjectFile
-from app.repositories import KnowledgeSummaryRepository, ProjectRepository
+from app.repositories import KnowledgeSummaryRepository
 from app.schemas import (
     ChatMessageCreate,
     ChatMessageRead,
@@ -30,12 +32,11 @@ from app.services.rag_service import RagService
 
 router = APIRouter(tags=["rag"])
 
-
-def _project_or_404(project_id: str, session: Session) -> object:
-    project = ProjectRepository(session).get(project_id)
-    if project is None:
-        raise HTTPException(status_code=404, detail=f"Unknown project: {project_id}")
-    return project
+# v1.17.18.4 (audit2 C3): every in-flight generation pins one of AnyIO's
+# ~40 threadpool workers for up to ollama_timeout_seconds (1800s default).
+# A handful of concurrent queries used to starve every other sync endpoint.
+# Cap concurrent generations; excess requests get an honest 503 immediately.
+_LLM_SLOTS = threading.BoundedSemaphore(2)
 
 
 def get_rag_service(session: Session = Depends(get_session)) -> Iterator[RagService]:
@@ -74,10 +75,21 @@ def rag_query(
     v1.17.13: the assistant reply is persisted server-side into the project's
     chat room (`__all__` for the all-scope room) before the response is
     returned — a tab reload during the long local generation can no longer
-    lose the answer. The client still saves the question itself."""
-    response = rag.query(
-        payload.question, project_id=payload.project_id, top_k=payload.top_k
-    )
+    lose the answer. The client still saves the question itself.
+
+    v1.17.18.4 (audit2 C3): bounded to 2 concurrent generations; further
+    requests get 503 instead of silently pinning threadpool workers."""
+    if not _LLM_SLOTS.acquire(blocking=False):
+        raise HTTPException(
+            status_code=503,
+            detail="Another generation is already running — try again shortly",
+        )
+    try:
+        response = rag.query(
+            payload.question, project_id=payload.project_id, top_k=payload.top_k
+        )
+    finally:
+        _LLM_SLOTS.release()
     session.add(
         ChatMessage(
             project_id=payload.project_id or "__all__",
@@ -98,7 +110,7 @@ def rag_index(
     payload: RagIndexRequest, session: Session = Depends(get_session)
 ) -> JobEnvelope:
     """Enqueue knowledge ingestion for a project."""
-    project = _project_or_404(payload.project_id, session)
+    project = project_or_404(payload.project_id, session)
     job_id = job_scheduler.submit(
         "run_index_knowledge", args=[project.id, payload.with_summary]
     )
@@ -181,11 +193,14 @@ def rag_index_reset(session: Session = Depends(get_session)) -> JobEnvelope:
 def list_summaries(
     project_id: str,
     type: str | None = None,
+    limit: int = Query(200, ge=1, le=500),
     session: Session = Depends(get_session),
 ) -> list[object]:
     """AI-generated project summaries (provenance: model + generated_at)."""
-    _project_or_404(project_id, session)
-    return KnowledgeSummaryRepository(session).get_by_project(project_id, type)
+    project_or_404(project_id, session)
+    return KnowledgeSummaryRepository(session).get_by_project(
+        project_id, type, limit=limit
+    )
 
 
 @router.get("/rag/chat/{project_id}", response_model=list[ChatMessageRead])
@@ -201,14 +216,17 @@ def chat_history(
     schema change. Newest-last so the client renders the transcript in
     order. Cap: 500 messages per page."""
     if project_id != "__all__":
-        _project_or_404(project_id, session)
+        project_or_404(project_id, session)
+    # v1.17.18.4 (audit2 C9): select the NEWEST page (DESC + LIMIT) and
+    # re-reverse for display — the old ascending LIMIT returned the oldest
+    # messages, making everything past 500 rows unreachable.
     stmt = (
         select(ChatMessage)
         .where(ChatMessage.project_id == project_id)
-        .order_by(ChatMessage.created_at.asc(), ChatMessage.id.asc())
+        .order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
         .limit(max(1, min(limit, 500)))
     )
-    return session.exec(stmt).all()
+    return list(reversed(session.exec(stmt).all()))
 
 
 @router.post("/rag/chat/{project_id}", response_model=ChatMessageRead, status_code=201)
@@ -223,7 +241,7 @@ def chat_save(
     (`role="assistant"`) is persisted by /rag/query since v1.17.13 so a tab
     reload during generation cannot lose it."""
     if project_id != "__all__":
-        _project_or_404(project_id, session)
+        project_or_404(project_id, session)
     message = ChatMessage(
         project_id=project_id,
         role=payload.role,

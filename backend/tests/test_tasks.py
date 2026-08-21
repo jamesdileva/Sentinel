@@ -28,7 +28,12 @@ class FakeProject:
 def _seed_project(tmp_db, project_id: str = "p-fake", name: str = "Fake") -> Project:
     with Session(get_engine()) as session:
         project = Project(
-            id=project_id, name=name, path="does/not/exist", language="python"
+            id=project_id,
+            name=name,
+            # v1.17.18.4 (audit2 S3): project.path is unique now, so each
+            # seeded row needs its own path.
+            path=f"does/not/exist/{project_id}",
+            language="python",
         )
         session.add(project)
         session.commit()

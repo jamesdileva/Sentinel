@@ -45,6 +45,7 @@ logger = get_logger(__name__)
 
 GITHUB_API = "https://api.github.com"
 CLONE_TIMEOUT_SECONDS = 900  # a clone can legitimately take minutes
+_SYNC_RUN_KEEP = 50  # v1.17.18.4 (audit2 D8): retention for SyncRun rows
 
 
 class RepoSyncService:
@@ -333,6 +334,21 @@ def persist_sync_run(
                 )
             )
             session.commit()
+            # v1.17.18.4 (audit2 D8): one row accumulates per run and the only
+            # reader wants the latest — keep the newest 50, prune the rest.
+            stale_ids = list(
+                session.exec(
+                    select(SyncRun.id)
+                    .order_by(SyncRun.ran_at.desc())
+                    .offset(_SYNC_RUN_KEEP)
+                ).all()
+            )
+            for run_id in stale_ids:
+                row = session.get(SyncRun, run_id)
+                if row is not None:
+                    session.delete(row)
+            if stale_ids:
+                session.commit()
     except Exception:  # noqa: BLE001 — persistence must never break the run
         logger.exception("Failed to persist sync run status")
 
@@ -378,6 +394,13 @@ def run_sync(service: RepoSyncService | None = None) -> dict:
             logger.error("GitHub sync failed: %s", exc)
             persist_sync_run(status="error", detail=str(exc))
             return {"configured": True, "error": str(exc)}
+        except Exception as exc:  # noqa: BLE001
+            # v1.17.18.4 (audit2 S2): any unexpected failure must still leave a
+            # SyncRun row — otherwise the dashboard's last-sync pill keeps
+            # showing the previous successful run indefinitely.
+            logger.exception("GitHub sync failed unexpectedly")
+            persist_sync_run(status="error", detail=f"{exc.__class__.__name__}: {exc}")
+            return {"configured": True, "error": f"{exc.__class__.__name__}: {exc}"}
     finally:
         if owned:
             service.close()  # v1.17.18.3 (audit2 S1): only close what we built

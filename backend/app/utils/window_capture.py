@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import ctypes
 import ctypes.wintypes
+import os
 from pathlib import Path
 
 from PIL import Image
@@ -236,15 +237,21 @@ def _virtual_screen() -> _WindowRect:
 def _descends_from(
     pid: int, root: str, tree: dict[int, tuple[int, str | None]]
 ) -> bool:
-    """True when the process or any bounded ancestor's exe starts with root."""
-    root = root.casefold()
+    """True when the process or any bounded ancestor's exe lives under root.
+
+    v1.17.18.4 (audit2 T1): the prefix match now requires a path-separator
+    boundary, so root `C:\\...\\projects\\foo` no longer claims windows of
+    the sibling checkout `C:\\...\\projects\\foobar`."""
+    root = os.path.normpath(root).casefold()
     for _ in range(MAX_ANCESTOR_DEPTH + 1):
         entry = tree.get(pid)
         if entry is None:
             return False
         exe = entry[1]
-        if exe and exe.casefold().startswith(root):
-            return True
+        if exe:
+            exe_norm = os.path.normpath(exe).casefold()
+            if exe_norm == root or exe_norm.startswith(root + os.sep):
+                return True
         pid = entry[0]
     return False
 

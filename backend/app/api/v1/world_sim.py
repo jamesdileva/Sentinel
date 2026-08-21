@@ -2,7 +2,9 @@
 
 Polling-based (no websocket): state/history for the map UI, plus god tools
 (tick, reset, accelerate, disaster). All mutations run deterministically in
-the API process; background advancement happens via the Celery beat task.
+the API process; background advancement happens via the in-process
+`world-sim-tick` scheduler beat (v1.17.18.4: docstring said Celery — that
+queue was removed in Sprint 15).
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query

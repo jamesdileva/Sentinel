@@ -38,18 +38,3 @@ class ProjectFileRead(BaseModel):
     size_bytes: int | None = None
     summary: str | None = None
     created_at: datetime.datetime
-
-
-class ProjectDetail(ProjectRead):
-    files: list[ProjectFileRead] = Field(default_factory=list)
-
-
-class ProjectHealth(BaseModel):
-    """Health summary returned by GET /projects/{id}/health."""
-
-    project_id: str
-    health_score: float | None = None
-    build: str = "pending"
-    tests: str = "pending"
-    security: str = "pending"
-    docs_pct: int = 0

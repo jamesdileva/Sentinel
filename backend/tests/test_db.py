@@ -18,8 +18,9 @@ EXPECTED_TABLES = {
     "buildlog",
     "knowledgesummary",
     "portfolioscore",
-    "worldsimstate",
-    "configentry",
+    # v1.17.18.4 (audit2 D1): the dead `worldsimstate` (superseded by the
+    # isolated world DB) and `configentry` (never read/written) tables were
+    # removed from the models; init_db() drops leftovers from old DBs.
 }
 
 

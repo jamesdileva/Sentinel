@@ -14,4 +14,3 @@ class KnowledgeSummaryRead(BaseModel):
     content: str
     generated_at: datetime.datetime
     model: str | None = None
-    confidence: float | None = None

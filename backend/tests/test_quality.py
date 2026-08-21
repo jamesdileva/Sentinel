@@ -94,9 +94,6 @@ def test_project_repository_queries(tmp_db):
         repo.add(Project(name="p-two", path="/b", language="python", status="inactive"))
         assert repo.get_by_path("/a").id == one.id
         assert repo.get_by_path("/nope") is None
-        assert repo.get_by_name("p-one") is not None
-        assert repo.get_by_name("nope") is None
-        assert [p.name for p in repo.list_by_status("inactive")] == ["p-two"]
 
 
 # --- SecurityRepository --------------------------------------------------------
@@ -187,8 +184,8 @@ def test_dependency_repository(tmp_db):
         session.commit()
         repo = DependencyRepository(session)
         assert {d.name for d in repo.get_by_project(project.id)} == {"pkg-a", "pkg-b"}
-        assert repo.get_by_name(project.id, "pkg-a") is not None
-        assert repo.get_by_name(project.id, "nope") is None
+        # v1.17.18.4 (audit2 D5): the optional limit is honored.
+        assert len(repo.get_by_project(project.id, limit=1)) == 1
         repo.delete_by_project(project.id)
         assert repo.get_by_project(project.id) == []
 

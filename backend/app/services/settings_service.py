@@ -33,7 +33,8 @@ CATALOG: list[dict] = [
         "group": "Server",
         "field": "app_name",
     },
-    {"key": "SENTINEL_HOST", "label": "Bind host", "group": "Server", "field": "host"},
+    # v1.17.18.4 (audit2 C11): SENTINEL_HOST removed — dead setting; run.py
+    # always binds 127.0.0.1 (Rule 1).
     {"key": "SENTINEL_PORT", "label": "Port", "group": "Server", "field": "port"},
     {
         "key": "SENTINEL_VERSION",

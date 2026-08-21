@@ -29,7 +29,9 @@ class Settings(BaseSettings):
     # Single source of truth: app/__init__.py (CLI --version, health, release).
     version: str = __version__
 
-    host: str = "127.0.0.1"
+    # v1.17.18.4 (audit2 C11): the dead `host` setting was removed — run.py
+    # binds 127.0.0.1 by design (Rule 1: loopback only, no LAN exposure) and
+    # never read this value, so SENTINEL_HOST silently did nothing.
     # v1.17.8.1: 8420, not 8000 — the dev servers of indexed projects (Cg,
     # Demake Engine) default to uvicorn's 8000, so build→open can bind it.
     port: int = 8420

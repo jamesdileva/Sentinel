@@ -11,7 +11,7 @@ from app.schemas.build import (
     build_status_from_log,
 )
 from app.schemas.chat import ChatMessageCreate, ChatMessageRead
-from app.schemas.git import FeatureTimelineItem, GitCommitRead
+from app.schemas.git import GitCommitRead
 from app.schemas.job import JobEnvelope
 from app.schemas.knowledge import KnowledgeSummaryRead
 from app.schemas.observatory import (
@@ -24,9 +24,7 @@ from app.schemas.observatory import (
 )
 from app.schemas.portfolio import FeatureMatrix, PortfolioCandidate, PortfolioScoreRead
 from app.schemas.project import (
-    ProjectDetail,
     ProjectFileRead,
-    ProjectHealth,
     ProjectList,
     ProjectRead,
 )
@@ -79,7 +77,6 @@ __all__ = [
     "ChatMessageCreate",
     "ChatMessageRead",
     "FeatureMatrix",
-    "FeatureTimelineItem",
     "GalaxyGraph",
     "GalaxyLink",
     "GalaxyNode",
@@ -89,9 +86,7 @@ __all__ = [
     "KnowledgeSummaryRead",
     "PortfolioCandidate",
     "PortfolioScoreRead",
-    "ProjectDetail",
     "ProjectFileRead",
-    "ProjectHealth",
     "ProjectList",
     "ProjectRead",
     "RagIndexRequest",

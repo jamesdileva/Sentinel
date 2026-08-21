@@ -142,6 +142,46 @@ def _migrate_indexes(engine) -> None:
             logger.exception("Index migration failed: %s on %s", name, table)
     if created:
         logger.info("Created %d missing index(es)", created)
+    _migrate_unique_project_path(engine)
+
+
+def _migrate_unique_project_path(engine) -> None:
+    """v1.17.18.4 (audit2 S3): enforce one Project row per checkout path.
+    Best-effort — if a legacy DB somehow holds duplicate paths, creation
+    fails and is logged loudly instead of blocking startup; the indexer's
+    get-or-create lock still prevents new duplicates."""
+    try:
+        with engine.begin() as conn:
+            conn.exec_driver_sql(
+                "CREATE UNIQUE INDEX IF NOT EXISTS "
+                '"ix_project_path" ON "project" ("path")'
+            )
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "Could not create unique index on project.path — duplicate rows "
+            "likely exist; dedupe manually if project lookups misbehave",
+            exc_info=True,
+        )
+
+
+def _drop_dead_tables(engine) -> None:
+    """v1.17.18.4 (audit2 D1): reclaim the tombstone tables left behind by
+    removed features. `worldsimstate` was superseded by the isolated world
+    DB (world_sim_models.WorldSimStateRow); `configentry` never had a
+    reader or writer. Both are provably dead (grep-verified), so dropping
+    them is deterministic cleanup, not data loss."""
+    from sqlalchemy import inspect
+
+    inspector = inspect(engine)
+    for table in ("worldsimstate", "configentry"):
+        if not inspector.has_table(table):
+            continue
+        try:
+            with engine.begin() as conn:
+                conn.exec_driver_sql(f'DROP TABLE "{table}"')
+            logger.info("Dropped dead table %s", table)
+        except Exception:  # noqa: BLE001 — cleanup must not wedge startup
+            logger.exception("Failed to drop dead table %s", table)
 
 
 def check_schema_drift(engine=None) -> list[str]:
@@ -176,6 +216,7 @@ def init_db() -> None:
     SQLModel.metadata.create_all(engine)
     _migrate_columns(engine)
     _migrate_indexes(engine)
+    _drop_dead_tables(engine)
     drifted = check_schema_drift(engine)
     if drifted:
         logger.error(

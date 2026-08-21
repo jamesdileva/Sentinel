@@ -115,7 +115,7 @@ never reset, so one network blip during an Observatory load bricks those panels
 until a full page reload. **Fix:** reset `error` at the start of each fetch
 (two-line fixes).
 
-### Q10. World-sim beat vs god-tool read-modify-write race
+### Q10. World-sim beat vs god-tool read-modify-write race - **[FIXED v1.17.18.4]**
 `services/world_sim/world_simulator.py`: `advance_day` (:207-250), `reset`
 (:352-364), `set_time_scale` (:366-372), `trigger_disaster` (:374-416) each
 open fresh sessions over the same engine; the `world-sim-tick` beat runs them
@@ -132,29 +132,29 @@ tick resurrects settlements mid-delete. SQLite serializes writes, not logic.
 ### Backend API & core
 | # | Finding | Evidence |
 |---|---------|----------|
-| C1 | Six byte-identical copies of `_project_or_404` — should be one shared dependency | projects.py:18, builds.py:22, tests.py:20, testers.py:22, security.py:20, rag.py:32 |
+| C1 | ~~Six copies of `_project_or_404`~~ **[FIXED v1.17.18.4]** - shared `api/v1/_deps.py` — should be one shared dependency | projects.py:18, builds.py:22, tests.py:20, testers.py:22, security.py:20, rag.py:32 |
 | C2 | Negative `limit` bypasses clamp → negative LIMIT means "unlimited" in SQLite | system.py:62-66 (+ world_sim.py:44); contrast rag.py:201 and observatory's `Query(ge=1, le=1000)` |
-| C3 | `/rag/query` can pin a threadpool worker up to 1800 s (`ollama_timeout_seconds`) — a few concurrent queries starve all other sync endpoints | rag.py:58-85, config.py:46 |
-| C4 | `ChatMessageCreate.role` accepts any string; garbage roles persist and echo back | schemas/chat.py:13, rag.py:206-231 |
+| C3 | ~~`/rag/query` pins threadpool workers~~ **[FIXED v1.17.18.4]** (`ollama_timeout_seconds`) — a few concurrent queries starve all other sync endpoints | rag.py:58-85, config.py:46 |
+| C4 | ~~role accepts any string~~ **[FIXED v1.17.18.4]**; garbage roles persist and echo back | schemas/chat.py:13, rag.py:206-231 |
 | C5 | Raw-dict responses without models: all of system.py, portfolio summary, security clear_resolved | system.py:22-66, portfolio.py:48-54, security.py:52-58 |
 | C6 | Sessions list N+1: per-session project + checkpoint + screenshot queries = 3N+1 per dashboard poll | sessions.py:41-79 |
 | C7 | PATCH verb is the only non-GET/POST in the API (conventions say POST for state changes) | sessions.py:91 |
 | C8 | Project files endpoint unbounded (47k-file trees serialize tens of MB) | projects.py:38-44, repositories/file.py:12 |
-| C9 | Chat history orders ascending then LIMITs → returns **oldest** 500; newer messages unreachable past 500 rows | rag.py:197-202 |
+| C9 | ~~Chat history returns oldest 500~~ **[FIXED v1.17.18.4]** → returns **oldest** 500; newer messages unreachable past 500 rows | rag.py:197-202 |
 | C10 | Stale doc drift post-Sprint-15: "CORS" (main.py docstring), "Celery beat" (world_sim.py:5), "docker compose --profile ollama" ×2 (cli.py:128-134,195-201) | see refs |
-| C11 | `host` config dead (never read; run.py hardcodes 127.0.0.1); port defined independently in config.py:35 and run.py:173 | config.py:32,35 |
-| C12 | CLI `config set` accepts input then no-ops with exit 0 ("not implemented yet") | cli.py:308-321 |
+| C11 | ~~dead `host` setting~~ **[FIXED v1.17.18.4]** (removed from config + settings catalog; port resolved once in run.py per Q1); port defined independently in config.py:35 and run.py:173 — also resolved by Q1's single-resolution fix | config.py:32,35 |
+| C12 | ~~CLI config set no-op~~ **[FIXED v1.17.18.4]** ("not implemented yet") | cli.py:308-321 |
 
 ### Services
 | # | Finding | Evidence |
 |---|---------|----------|
 | S1 | ~~Systematic unclosed-httpx-client pattern~~ **[FIXED v1.17.18.3]**: `OllamaService.close()` now called at every construction site — system_service (lazy client + close in `report`), settings_service probe, triage summarize, rag (RagService.close via a yield dependency + CLI/tasks call sites), sync (`RepoSyncService.close` in run_sync/main.py probe); OllamaStatus no longer builds an unused pool for record_query-only callers | grep-verified |
-| S2 | Failed syncs leave no SyncRun row (only HTTPError/FileNotFoundError caught) → dashboard last-sync pill shows stale success forever | sync_service.py:195-230,364-374 |
-| S3 | Indexer get-or-create race on Project rows: three concurrent entry points can double-insert; `Project.path` has no unique constraint | indexer.py:585-595, models.py:40 |
-| S4 | pyproject classifier/keyword strings parsed as production dependencies (bare quoted-line regex; `::` not split) | indexer.py:549-555 |
-| S5 | `command_runner` reports the timeout ceiling as measured duration on success; post-kill `communicate(timeout=5)` can raise out of contract leaving BuildLog rows half-written | command_runner.py:127,133-134,140 |
-| S6 | RAG retry-on-doomed-path: fallback re-issues the same failing LLM request (another ≤1800 s wait); gate on real-vs-fake LLM | rag_service.py:750-755 |
-| S7 | Commit messages re-embedded on every index run (files have embedding_id skip; commits don't) — repeated Ollama cost | rag_service.py:333-352 |
+| S2 | ~~Failed syncs leave no SyncRun row~~ **[FIXED v1.17.18.4]** (only HTTPError/FileNotFoundError caught) → dashboard last-sync pill shows stale success forever | sync_service.py:195-230,364-374 |
+| S3 | ~~Indexer get-or-create race~~ **[FIXED v1.17.18.4]**: three concurrent entry points can double-insert; `Project.path` has no unique constraint | indexer.py:585-595, models.py:40 |
+| S4 | ~~pyproject classifiers parsed as deps~~ **[FIXED v1.17.18.4]** (bare quoted-line regex; `::` not split) | indexer.py:549-555 |
+| S5 | ~~`command_runner` duration + post-kill raise~~ **[FIXED v1.17.18.4]** on success; post-kill `communicate(timeout=5)` can raise out of contract leaving BuildLog rows half-written | command_runner.py:127,133-134,140 |
+| S6 | ~~RAG retry-on-doomed-path~~ **[FIXED v1.17.18.4]**: fallback re-issues the same failing LLM request (another ≤1800 s wait); gate on real-vs-fake LLM | rag_service.py:750-755 |
+| S7 | ~~Commit re-embedded every run~~ **[FIXED v1.17.18.4]** (files have embedding_id skip; commits don't) — repeated Ollama cost | rag_service.py:333-352 |
 | S8 | Build `_free_ports` force-kills *any* process on declared ports, no ownership check (Rule 2 adjacent) | build_runner.py:269-279 |
 | S9 | Hardcoded `github.com/jamesdileva/{name}` link assumes repo name == display name; wrong for juduncan/* checkouts | app_sessions.py:474 |
 | S10 | Desktop runner injects real keyboard/mouse into whatever has focus — user-initiated and guarded, but deserves a docs warning (a tester run while the user types types into their session) | desktop_runner.py:109-132,205-220 |
@@ -162,15 +162,15 @@ tick resurrects settlements mid-delete. SQLite serializes writes, not logic.
 ### Data layer
 | # | Finding | Evidence |
 |---|---------|----------|
-| D1 | Dead tables: `WorldSimState` (superseded by `WorldSimStateRow`), `ConfigEntry` — created every startup, never touched | models.py:243-251,254-259 |
-| D2 | Dead columns always-null in API: `Project.health_score`, `GitCommit.added/modified/deleted_files`+`feature_tags`, `Dependency.latest_version/vulnerable/severity`, `KnowledgeSummary.confidence` | models.py:45,120-123,86-89,170 vs their Read schemas |
-| D3 | Dead repo methods (only tests call them): `list_by_status`, `get_by_name`×2 | project.py:16-22, dependency.py:16-22 |
-| D4 | Dead schemas exported but unused: `ProjectDetail`, `ProjectHealth`, `FeatureTimelineItem` | schemas/project.py:43-55, git.py:23-29 |
-| D5 | Per-project queries without LIMIT: knowledge summaries, dependencies, files, security findings (build/test/git/session repos do cap correctly) | knowledge_summary.py:12-19, dependency.py:12-14, file.py:12-14, security.py:12-27 |
-| D6 | `Repository.count()` materializes the table instead of `SELECT COUNT(*)` | base.py:49-51 |
-| D7 | `SecurityRepository.delete_resolved` row-loops deletes and commits mid-method — the only repo that commits (contract violation, no rollback anywhere in app/) | security.py:33-41 |
-| D8 | SyncRun accumulates unbounded, reader only wants latest | models.py:262-277, sync_service.py:318-339 |
-| D9 | Latent: `ChatMessageRead.sources: list[str] = []` vs nullable column — persisted `None` would fail response validation | schemas/chat.py:21-25, models.py:222 |
+| D1 | ~~Dead tables~~ **[FIXED v1.17.18.4]**: `WorldSimState` (superseded by `WorldSimStateRow`), `ConfigEntry` — created every startup, never touched | models.py:243-251,254-259 |
+| D2 | ~~Dead columns~~ **[FIXED v1.17.18.4]** `Project.health_score`, `GitCommit.added/modified/deleted_files`+`feature_tags`, `Dependency.latest_version/vulnerable/severity`, `KnowledgeSummary.confidence` | models.py:45,120-123,86-89,170 vs their Read schemas |
+| D3 | ~~Dead repo methods~~ **[FIXED v1.17.18.4]**: `list_by_status`, `get_by_name`×2 | project.py:16-22, dependency.py:16-22 |
+| D4 | ~~Dead schemas~~ **[FIXED v1.17.18.4]**: `ProjectDetail`, `ProjectHealth`, `FeatureTimelineItem` | schemas/project.py:43-55, git.py:23-29 |
+| D5 | ~~Queries without LIMIT~~ **[FIXED v1.17.18.4]**: knowledge summaries, dependencies, files, security findings (build/test/git/session repos do cap correctly) | knowledge_summary.py:12-19, dependency.py:12-14, file.py:12-14, security.py:12-27 |
+| D6 | ~~`Repository.count()` materializes the table~~ **[FIXED v1.17.18.4]** — now `SELECT COUNT(*)` | base.py:49-51 |
+| D7 | ~~`SecurityRepository.delete_resolved` row-loops deletes and commits mid-method~~ **[FIXED v1.17.18.4]** — bulk DELETE, flush-only, caller commits (was the only repo that committed; no rollback anywhere in app/) | security.py:33-41 |
+| D8 | ~~SyncRun accumulates unbounded~~ **[FIXED v1.17.18.4]** | models.py:262-277, sync_service.py:318-339 |
+| D9 | ~~ChatMessageRead nullable mismatch~~ **[FIXED v1.17.18.4]** — persisted `None` would fail response validation | schemas/chat.py:21-25, models.py:222 |
 
 ### Parsers / testers / utils
 | # | Finding | Evidence |
@@ -193,8 +193,8 @@ tick resurrects settlements mid-delete. SQLite serializes writes, not logic.
 ### Frontend
 | # | Finding | Evidence |
 |---|---------|----------|
-| F1 | WebSocket reconnect only fires from `onclose` — a dead-without-FIN socket (sleep/resume) stays "live" forever; server heartbeat could serve as watchdog | hooks/useWebSocket.ts:70-81, api/v1/ws.py:33-35 |
-| F2 | Dev proxy lacks `ws: true` → dev never exercises the live WS path (prod unaffected) | vite.config.ts:9-14 |
+| F1 | ~~WebSocket liveness gap~~ **[FIXED v1.17.18.4]** — a dead-without-FIN socket (sleep/resume) stays "live" forever; server heartbeat could serve as watchdog | hooks/useWebSocket.ts:70-81, api/v1/ws.py:33-35 |
+| F2 | ~~Dev proxy lacks ws:true~~ **[FIXED v1.17.18.4]** → dev never exercises the live WS path (prod unaffected) | vite.config.ts:9-14 |
 | F3 | ~~BuildContext write-path is dead~~ **[FIXED v1.17.18.3]** — context deleted, tile now truthful (`trackJob`/`setJobStatus` never called) → Dashboard "Builds" tile permanently 0 while builds run. Wire Builds.tsx through it or delete it | contexts/BuildContext.tsx:22-35, Dashboard.tsx:48 |
 | F4 | ~~~700 dead lines~~ **[FIXED v1.17.18.3]** — dead subtree removed: unrouted WorldSimulatorPage + WorldGridMap + api/world_sim.ts; api/tests.ts imported nowhere (dead or missing feature); dead types Dependency/DependencyType/ProjectStatus; unused listSummaries/getHealth | pages/WorldSimulatorPage.tsx, components/WorldGridMap.tsx, api/world_sim.ts, api/tests.ts, types/index.ts:30-54, api/rag.ts:98-107, api/client.ts:38-41 |
 | F5 | Type drift: `ActivityEvent.id` non-null + `data` non-null vs live frames lacking id / null data; `ProjectFile` declares 3 phantom fields the API never returns | types/index.ts:19-28, api/system.ts:62-70, activity_bus.py:50-56 |
@@ -289,3 +289,45 @@ excluded from scope here by design.
 | Q5 | check_schema_drift(): compares live DB columns to model metadata after migrations; init_db logs loudly on drift and the new schema startup check surfaces it on /system (Rule 7 transparency) instead of failing to boot or silently 500-ing later. | db/connection.py, services/startup_check.py | test_check_schema_drift_detects_missing_column, test_startup_check_surfaces_schema_drift |
 | F3 | Dead BuildContext deleted (trackJob/setJobStatus had zero callers); Dashboard's permanently-0 Builds tile replaced with a truthful Buildable count from the portfolio summary already loaded by the page. | contexts/BuildContext.tsx (deleted), app.tsx, pages/Dashboard.tsx, Dashboard.test.tsx | vitest Dashboard suite updated |
 | F4 | ~790 lines of unreachable frontend removed: unrouted WorldSimulatorPage + WorldGridMap + api/world_sim.ts, never-imported api/tests.ts, dead types Dependency/DependencyType/ProjectStatus. ProjectFile type corrected to mirror ProjectFileRead exactly. Backend /tests and /world-sim endpoints untouched (still gated server-side). | pages/WorldSimulatorPage.tsx, components/WorldGridMap.tsx, api/world_sim.ts, api/tests.ts (all deleted), types/index.ts, Projects.test.tsx fixture | tsc --noEmit clean, vitest 131 pass |
+
+---
+
+## Fixes applied - v1.17.18.4 (third batch, 2026-08-21)
+
+Scope note on Q10: the world-sim *dead code* removed in v1.17.18.3 was
+frontend-only; the backend simulator is a live, settings-gated feature with
+routed endpoints and tests, so the race was fixed rather than the feature
+deleted.
+
+| Item | Fix | Files | Tests |
+|------|-----|-------|-------|
+| Q10 | Process-wide `_WORLD_MUTATION_LOCK` around every mutating method (advance_day/catch_up, reset, set_time_scale, trigger_disaster); reads stay lock-free. Closes the beat-vs-god-tool duplicate-day / resurrect-settlement races. | services/world_sim/world_simulator.py | existing world-sim suite |
+| S2 | run_sync catches unexpected exceptions and persists an error SyncRun - the dashboard last-sync pill can no longer show stale success after a crash | services/sync_service.py | existing sync tests |
+| S3 | `_project_create_lock` serializes Project get-or-create across startup scan / scan-all beat / manual rescan; IntegrityError recovery re-fetches the winner; best-effort UNIQUE index on project.path (logs loudly if legacy dupes block creation) | services/indexer.py, db/connection.py | fixture updates (unique path) |
+| S4 | `_deps_from_pyproject` now scopes to the PEP 621 `dependencies = [...]` array only - classifiers/keywords no longer become fake production dependencies | services/indexer.py | existing indexer dep tests |
+| S5 | command duration is measured (time.monotonic), not the timeout ceiling; post-kill `communicate(timeout=5)` TimeoutExpired is contained so run_command always returns a structured CommandResult | services/command_runner.py | existing runner tests |
+| S6 | removed the retry-on-doomed-path fallback in `_generate_with_metrics` (with a real LLM it re-issued the identical failing request); fakes short-circuit above as before | services/rag_service.py | rag service tests |
+| S7 | `ingest_git_commits` skips commits already embedded via new `ChromaManager.existing_ids()` - no more re-embedding all commit messages on every index run | services/rag_service.py, chroma_manager.py | rag indexing tests |
+| D1 | dead tables WorldSimState + ConfigEntry removed from models; init_db drops leftovers from old DBs (deterministic cleanup of grep-verified dead tables) | db/models.py, db/connection.py, tests/test_db.py | table-set assertions updated |
+| D2 | dead always-null columns removed: GitCommit added/modified/deleted_files + feature_tags, Dependency latest_version/vulnerable/severity, KnowledgeSummary confidence (+ their Read-schema fields). Project.health_score was NOT dead weight - it is now populated by compute_portfolio_score so the Projects page badge finally shows real data. Old DBs keep inert columns (no DROP needed). | db/models.py, schemas/{git,knowledge,project}.py, services/portfolio_service.py | suites green |
+| D3/D4 | dead repo methods (ProjectRepository.get_by_name/list_by_status, DependencyRepository.get_by_name) and dead schemas (ProjectDetail, ProjectHealth, FeatureTimelineItem) deleted with their exports | repositories/*, schemas/* | test_quality updated |
+| D5/C8 | optional LIMITs on per-project queries (files, dependencies, security findings, knowledge summaries); GET /projects/{id}/files capped via Query(500, ge=1, le=1000); summaries endpoint capped at 200 | repositories/*, api/v1/projects.py, api/v1/rag.py | limit assertions |
+| D6 | Repository.count() uses SELECT COUNT(*) instead of materializing the table | repositories/base.py | quality tests |
+| D7 | delete_resolved is one bulk DELETE, flush-only; the route commits (transaction ownership back with the caller) | repositories/security.py, api/v1/security.py | delete_resolved test |
+| D8 | SyncRun pruned to newest 50 rows on each persist | services/sync_service.py | sync tests |
+| D9 | ChatMessageRead no longer inherits non-null sources; read shape tolerates legacy NULL rows. C4 also here: role is Literal["user","assistant"] | schemas/chat.py | chat API tests |
+| C1 | shared project_or_404 dependency in api/v1/_deps.py replaces six byte-identical copies | api/v1/*.py | full API suite |
+| C3 | /rag/query bounded by a 2-slot semaphore; excess requests get an honest 503 immediately instead of silently pinning threadpool workers for up to 1800 s | api/v1/rag.py | rag API tests |
+| C9 | chat history selects the NEWEST page (DESC + LIMIT, re-reversed) - messages past 500 are reachable again | api/v1/rag.py | rag API tests |
+| C10/C11/C12 | doc drift fixed (main.py CORS, world_sim.py Celery); dead SENTINEL_HOST setting removed from config + settings catalog; CLI config set exits 2 with guidance instead of exit-0 no-op | main.py, api/v1/world_sim.py, core/config.py, services/settings_service.py, cli.py | settings/config/cli suites |
+| T1/T8/T9 | window_capture exe-prefix match requires a path-separator boundary (projects\foo no longer claims projects\foobar windows); airadio.py mojibake + BOM cleaned (byte-level fix); language_detector actually prunes node_modules/.venv/dist/etc as its docstring always promised | utils/window_capture.py, testers/features/airadio.py, utils/language_detector.py | parser/detector suites |
+| F1/F2 | WebSocket liveness watchdog: if nothing (incl. the 30 s server heartbeat) arrives within 75 s while "open", force-close triggers reconnect - no more false "live" badge; dev proxy gains ws:true so development exercises the live WS path | hooks/useWebSocket.ts, vite.config.ts | vitest suite |
+
+**Verification:** backend 652 passed (full suite incl. coverage gate); flake8/black/isort clean; frontend tsc clean + 131 tests pass; scripts/build.py --dist verified end-to-end and staged the rebuilt dashboard.
+
+**New tracking note (flake):** two single-run failures during this batch were
+a pre-existing order-dependent ChromaDB flake ("Nothing found on disk"
+InternalError when multiple ChromaManager instances share a directory across
+tests) - each full run failed a *different* test once, then a complete clean
+652-pass run followed. Not introduced by these changes; worth its own look
+(test isolation for the chroma singleton).

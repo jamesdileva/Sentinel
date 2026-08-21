@@ -169,6 +169,21 @@ class ChromaManager:
             for i in range(len(ids))
         ]
 
+    def existing_ids(self, collection: str, ids: list[str]) -> set[str]:
+        """Return the subset of `ids` already present in the collection.
+
+        v1.17.18.4 (audit2 S7): lets incremental ingestion skip re-embedding
+        documents whose vectors are already stored (the commit-ingest path
+        re-embedded every commit message on every index run)."""
+        if not ids:
+            return set()
+        with self._lock(collection):
+            try:
+                result = self.collection(collection).get(ids=ids)
+            except Exception as exc:  # noqa: BLE001 — translate then re-raise
+                self._guard(exc)
+        return set(result.get("ids", []))
+
     def delete_by_project(self, project_id: str) -> None:
         """Remove ALL embeddings of a project from every real collection.
 

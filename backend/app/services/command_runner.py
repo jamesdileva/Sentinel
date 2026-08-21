@@ -7,6 +7,7 @@ Runners never shell out through `os.system`; they always go through
 import os
 import shutil
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -117,6 +118,7 @@ def run_command(
             stderr=str(exc),
             duration_seconds=0.0,
         )
+    started = time.monotonic()
     try:
         stdout, stderr = proc.communicate(timeout=timeout)
         return CommandResult(
@@ -124,20 +126,29 @@ def run_command(
             exit_code=proc.returncode,
             stdout=stdout.decode("utf-8", errors="replace") if stdout else "",
             stderr=stderr.decode("utf-8", errors="replace") if stderr else "",
-            duration_seconds=float(timeout),
+            # v1.17.18.4 (audit2 S5): report the MEASURED duration — the
+            # old code reported the timeout ceiling on the success path too.
+            duration_seconds=round(time.monotonic() - started, 3),
         )
     except subprocess.TimeoutExpired:
         logger.warning(
             "Command timed out after %ds: %s — killing process tree", timeout, command
         )
         _kill_tree(proc.pid)
-        stdout, stderr = proc.communicate(timeout=5)
+        try:
+            stdout, stderr = proc.communicate(timeout=5)
+        except (subprocess.TimeoutExpired, OSError):
+            # v1.17.18.4 (audit2 S5): a stubborn child that ignores
+            # taskkill /T /F must not escape run_command's contract of
+            # always returning a structured result.
+            logger.warning("Post-kill drain timed out for: %s", command)
+            stdout, stderr = b"", b""
         return CommandResult(
             command=command,
             exit_code=-1,
             stdout=stdout.decode("utf-8", errors="replace") if stdout else "",
             stderr=stderr.decode("utf-8", errors="replace") if stderr else "",
-            duration_seconds=float(timeout),
+            duration_seconds=round(time.monotonic() - started, 3),
             timed_out=True,
         )
     except OSError as exc:
@@ -146,5 +157,5 @@ def run_command(
             exit_code=-1,
             stdout="",
             stderr=str(exc),
-            duration_seconds=0.0,
+            duration_seconds=round(time.monotonic() - started, 3),
         )

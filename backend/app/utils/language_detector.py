@@ -27,6 +27,21 @@ EXTENSION_TO_LANGUAGE: dict[str, str] = {
 # Extensions that never represent source code worth counting.
 _IGNORED_EXTENSIONS = {".json", ".md", ".lock"}
 
+# Vendor/dependency directories that are pruned during the walk rather than
+# counted — the docstring always promised this; the code now does it too
+# (v1.17.18.4, audit2 T9), matching discovery's noise-dir pruning.
+_IGNORED_DIRS = {
+    "node_modules",
+    ".venv",
+    "venv",
+    "__pycache__",
+    ".git",
+    "dist",
+    "build",
+    ".next",
+    "vendor",
+}
+
 
 def detect_language(path: str | Path) -> str:
     """Return the dominant programming language in a directory.
@@ -38,6 +53,8 @@ def detect_language(path: str | Path) -> str:
     root = Path(path)
     for file in root.rglob("*"):
         if file.is_dir() or file.suffix in _IGNORED_EXTENSIONS:
+            continue
+        if _IGNORED_DIRS.intersection(file.parts[:-1]):
             continue
         language = EXTENSION_TO_LANGUAGE.get(file.suffix.lower())
         if language == "tsx":
