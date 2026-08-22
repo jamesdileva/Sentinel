@@ -73,6 +73,10 @@ class OllamaService:
             "model": model,
             "prompt": prompt,
             "stream": False,
+            # v1.17.18.6 (audit2 RAG pass): keep the model resident so an
+            # occasional query doesn't pay a full load after Ollama's ~5-min
+            # default unload.
+            "keep_alive": settings.ollama_keep_alive,
             "options": {
                 "num_predict": max_tokens,
                 "temperature": temperature,
@@ -83,7 +87,15 @@ class OllamaService:
                 # v1.17.12.0: `num_ctx` is overridable — triage keeps it small
                 # (4096) because its packet is tiny and a big context slows
                 # generation for no gain.
-                "num_ctx": num_ctx or settings.ollama_num_ctx,
+                # v1.17.18.6: with ollama_dynamic_ctx, callers that don't pin
+                # a window get one sized to the actual prompt — KV-cache
+                # allocation scales with num_ctx, so a 4k-token chat query
+                # no longer prefills against a 32k window.
+                "num_ctx": (
+                    num_ctx
+                    if num_ctx is not None
+                    else self._fit_num_ctx(prompt, max_tokens)
+                ),
             },
         }
         try:
@@ -101,6 +113,21 @@ class OllamaService:
         except httpx.HTTPError as exc:
             logger.warning("Ollama generate failed: %s", exc)
             raise OllamaUnavailableError(f"Ollama generate failed: {exc}") from exc
+
+    @staticmethod
+    def _fit_num_ctx(prompt: str, max_tokens: int) -> int:
+        """Size the context window to the actual prompt (v1.17.18.6).
+
+        KV-cache allocation and prefill cost scale with num_ctx; a small
+        chat query against settings.ollama_num_ctx (32768) prefills an 8x
+        oversized window. Estimate tokens at a conservative 3 chars/token
+        (llama3 tokenizes code/English denser than 4), add the output
+        budget plus headroom, clamp to [4096, ollama_num_ctx] so tiny
+        prompts keep sane floors and huge summaries never truncate."""
+        if not settings.ollama_dynamic_ctx:
+            return settings.ollama_num_ctx
+        estimated = len(prompt) // 3 + max_tokens + 512
+        return max(4096, min(estimated, settings.ollama_num_ctx))
 
     def embed(self, text: str, model: str | None = None) -> list[float]:
         """Generate an embedding vector for text.
@@ -124,7 +151,12 @@ class OllamaService:
         zero then.
         """
         model = model or settings.embedding_model
-        payload = {"model": model, "input": text}
+        # keep_alive keeps nomic-embed-text resident too (audit2 RAG pass).
+        payload = {
+            "model": model,
+            "input": text,
+            "keep_alive": settings.ollama_keep_alive,
+        }
         try:
             response = self._client.post("/api/embed", json=payload)
             if response.status_code in (404, 405):

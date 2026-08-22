@@ -37,10 +37,41 @@ def test_generate_sends_prompt_and_options():
     assert payload["model"] == "gemma2"
     assert payload["prompt"] == "prompt text"
     assert payload["stream"] is False
+    assert payload["keep_alive"] == settings.ollama_keep_alive  # v1.17.18.6
     assert payload["options"]["num_predict"] == 123
     assert payload["options"]["temperature"] == 0.5
-    assert payload["options"]["num_ctx"] == settings.ollama_num_ctx  # v1.17.6.6
+    # v1.17.18.6: dynamic ctx sizes the window to the prompt (small prompt
+    # -> the 4096 floor), not the full 32768 allocation.
+    expected = OllamaService._fit_num_ctx("prompt text", 123)
+    assert payload["options"]["num_ctx"] == expected
+
+
+def test_dynamic_ctx_disabled_keeps_full_window(monkeypatch):
+    """ollama_dynamic_ctx=False restores the v1.17.6.6 behavior: every call
+    allocates settings.ollama_num_ctx regardless of prompt size."""
+    monkeypatch.setattr(settings, "ollama_dynamic_ctx", False)
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["payload"] = request.read()
+        return httpx.Response(200, json={"response": "ok"})
+
+    service = _service_with(handler)
+    service.generate("tiny")
+    import json
+
+    payload = json.loads(captured["payload"])
+    assert payload["options"]["num_ctx"] == settings.ollama_num_ctx
     service.close()
+
+
+def test_fit_num_ctx_bounds_and_scaling():
+    """Small prompts hit the 4096 floor; big prompts scale up but never past
+    ollama_num_ctx (a summary never truncates because of dynamic sizing)."""
+    small = OllamaService._fit_num_ctx("hi", 500)
+    assert small == 4096
+    huge = "x" * (200_000 * 3)  # ~200k estimated tokens — way over the cap
+    assert OllamaService._fit_num_ctx(huge, 1250) == settings.ollama_num_ctx
 
 
 def test_embed_uses_new_endpoint():

@@ -61,6 +61,18 @@ class Settings(BaseSettings):
     # grows past 500. 1250 tokens ~= 2-2.5 min on the laptop, inside the
     # 1800s timeout.
     ollama_summary_max_tokens: int = 1250
+    # v1.17.18.6 (audit2 RAG pass): Ollama unloads models after ~5 minutes
+    # idle by default — every occasional RAG query then pays a full model
+    # load (seconds to tens of seconds) before generation starts. Keeping
+    # llama3.1:8b resident makes follow-up queries start instantly.
+    ollama_keep_alive: str = "30m"
+    # v1.17.18.6: size num_ctx to the actual prompt instead of always
+    # allocating settings.ollama_num_ctx (32768). KV-cache allocation scales
+    # with num_ctx, so a 5-source chat query that needs ~4k of context ran
+    # its prefill against an 8x-too-large window. Estimated tokens use a
+    # conservative chars-per-token ratio and never exceed ollama_num_ctx;
+    # callers that pass an explicit num_ctx (triage) are unaffected.
+    ollama_dynamic_ctx: bool = True
 
     # Defaults to the current user's home directory instead of a hardcoded
     # path, so a fresh install on any machine (e.g. the laptop, user `james`)

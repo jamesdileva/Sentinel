@@ -97,6 +97,18 @@ CATALOG: list[dict] = [
         "field": "ollama_num_ctx",
     },
     {
+        "key": "SENTINEL_OLLAMA_KEEP_ALIVE",
+        "label": "Ollama keep alive",
+        "group": "AI",
+        "field": "ollama_keep_alive",
+    },
+    {
+        "key": "SENTINEL_OLLAMA_DYNAMIC_CTX",
+        "label": "Dynamic context sizing",
+        "group": "AI",
+        "field": "ollama_dynamic_ctx",
+    },
+    {
         "key": "SENTINEL_OLLAMA_SUMMARY_MAX_TOKENS",
         "label": "Summary max tokens",
         "group": "AI",

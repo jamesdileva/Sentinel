@@ -221,6 +221,38 @@ def test_search_returns_results_with_provenance(tmp_db, tmp_path):
     assert all(0.0 <= r.distance <= 1.0 for r in results)
 
 
+def test_diversify_caps_chunks_per_file():
+    """v1.17.18.6 (audit2 RAG pass): a chunked doc placing 4 pieces of the
+    same file into top-K is trimmed to 2 per file (nearest-first), so the
+    remaining slots surface diverse evidence. Pathless hits (summaries,
+    commits) are exempt."""
+    from app.services.rag_service import RagResult, _diversify
+
+    def result(distance, file_path):
+        return RagResult(
+            content=f"chunk at {distance}",
+            source="file_summaries",
+            project_id="p1",
+            file_path=file_path,
+            distance=distance,
+        )
+
+    sources = [
+        result(0.10, "README.md"),
+        result(0.11, "README.md"),
+        result(0.12, None),  # summary — exempt
+        result(0.13, "README.md"),  # third chunk of same file -> dropped
+        result(0.14, "src/app.py"),
+        result(0.15, "src/app.py"),
+        result(0.16, "docs/guide.md"),
+    ]
+    kept = _diversify(sources)
+    paths = [r.file_path or "" for r in kept]
+    assert paths.count("README.md") == 2
+    assert paths.count("") == 1
+    assert kept[-1].file_path == "docs/guide.md"  # diversity reached slot 5
+
+
 def test_query_returns_grounded_answer(tmp_db, tmp_path):
     project_id = _index_project(tmp_db)
     with Session(connection.get_engine()) as session:
@@ -720,6 +752,61 @@ def test_summary_regenerated_after_reset(tmp_db, tmp_path):
     assert first["project_summaries"] == 1
     assert reindex["project_summaries"] == 1  # row alone must not block rebuild
     assert len(rows) == 1  # the same row was reused, not duplicated
+
+
+def test_summary_regenerates_when_file_edited(tmp_db, tmp_path):
+    """v1.17.18.6.4 (audit2 follow-up): an architecture summary that predates
+    a file edit is stale — the next with-summary index regenerates it (row
+    reused, generated_at restamped) instead of answering from a summary of
+    long-gone code. Untouched projects keep their dedupe."""
+    import datetime as dt
+
+    from sqlmodel import select
+
+    from app.db.models import KnowledgeSummary, ProjectFile
+
+    project_id = _index_project(tmp_db)
+    with Session(connection.get_engine()) as session:
+        project = RagService.get_project(session, project_id)
+        rag = _rag(session, tmp_path)
+        assert rag.index_project(project, with_summary=True)["project_summaries"] == 1
+        second = rag.index_project(project, with_summary=True)
+        assert second["project_summaries"] == 0  # untouched -> deduped
+
+        # Simulate an edit: bump one file's mtime past the summary.
+        summary = session.exec(
+            select(KnowledgeSummary).where(
+                KnowledgeSummary.project_id == project_id,
+                KnowledgeSummary.type == "architecture",
+            )
+        ).first()
+        file_row = session.exec(
+            select(ProjectFile).where(ProjectFile.project_id == project_id)
+        ).first()
+        future_ns = int(
+            (
+                summary.generated_at.replace(tzinfo=dt.timezone.utc)
+                + dt.timedelta(days=1)
+            ).timestamp()
+            * 1e9
+        )
+        file_row.mtime_ns = future_ns
+        session.add(file_row)
+        session.commit()
+
+        third = rag.index_project(project, with_summary=True)
+        assert third["project_summaries"] == 1  # stale -> regenerated
+
+        refreshed = session.exec(
+            select(KnowledgeSummary).where(
+                KnowledgeSummary.project_id == project_id,
+                KnowledgeSummary.type == "architecture",
+            )
+        ).first()
+        # Reuse path restamps generated_at (v1.17.18.6.4).
+        assert refreshed.generated_at.replace(tzinfo=dt.timezone.utc) > dt.datetime.now(
+            dt.timezone.utc
+        ) - dt.timedelta(minutes=5)
 
 
 def test_summary_uses_dedicated_token_cap(tmp_db, tmp_path):

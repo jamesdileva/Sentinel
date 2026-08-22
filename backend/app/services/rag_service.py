@@ -62,6 +62,27 @@ _SUMMARY_COMMITS = 25
 _ALL_PROJECT_CAP = 24
 _QUERY_CONTEXT_BUDGET = 48_000
 
+# v1.17.18.6 (audit2 RAG pass): a chunked doc can place many near-identical
+# pieces of the SAME file into top-K, crowding out diverse evidence. Cap
+# chunks per file (nearest-first) so K slots cover K/2 different files.
+_MAX_CHUNKS_PER_FILE = 2
+
+
+def _diversify(sources: list[RagResult]) -> list[RagResult]:
+    """Trim nearest-first results to at most _MAX_CHUNKS_PER_FILE per file
+    (keyed by project+path; hits without a path — summaries, commits — are
+    exempt). Deterministic: preserves distance order."""
+    kept: list[RagResult] = []
+    counts: dict[tuple[str, str], int] = {}
+    for result in sources:
+        key = (result.project_id, result.file_path or "")
+        if result.file_path and counts.get(key, 0) >= _MAX_CHUNKS_PER_FILE:
+            continue
+        counts[key] = counts.get(key, 0) + 1
+        kept.append(result)
+    return kept
+
+
 # Deterministic-first answers (v1.17.13, Rule 3): a project-scoped overview
 # question ("what is this project about?") is answered straight from the
 # stored architecture summary — no embedding, no retrieval, no fresh
@@ -439,8 +460,15 @@ class RagService:
         so a row alone no longer blocks regeneration (post-reset re-indexes
         must rebuild the summary). `force=True` (CLI `--summary`) regenerates
         on explicit intent. A regenerated summary reuses the existing row.
+        v1.17.18.6.4 (audit2 follow-up): a summary also regenerates when any
+        indexed file's mtime moved past the summary's generated_at — without
+        this, answers cited a summary describing long-gone code.
         """
-        if not force and self._summary_is_embedded(project.id):
+        if (
+            not force
+            and self._summary_is_embedded(project.id)
+            and not self._summary_is_stale(project.id)
+        ):
             return 0
         context = self._file_summary_context(project)
         prompt = _PROJECT_SUMMARY_TEMPLATE.format(
@@ -456,6 +484,7 @@ class RagService:
         )
         if not content:
             return 0
+        now = datetime.datetime.now(datetime.timezone.utc)
         existing_rows = KnowledgeSummaryRepository(self.session).get_by_project(
             project.id, summary_type="architecture"
         )
@@ -471,6 +500,9 @@ class RagService:
                 model=settings.ollama_model,
             )
             self.session.add(summary)
+        # v1.17.18.6.4: stamp regeneration time even on the reuse path —
+        # staleness is measured against this field.
+        summary.generated_at = now.replace(tzinfo=None)
         self.session.commit()
         self.chroma.upsert(
             "project_summaries",
@@ -480,6 +512,31 @@ class RagService:
             metadatas=[{"project_id": project.id, "summary_type": "architecture"}],
         )
         return 1
+
+    def _summary_is_stale(self, project_id: str) -> bool:
+        """True when any indexed file changed after the architecture summary
+        was generated (v1.17.18.6.4). mtime_ns is epoch wall-clock time; the
+        comparison is against the stored naive-UTC generated_at."""
+        rows = KnowledgeSummaryRepository(self.session).get_by_project(
+            project_id, summary_type="architecture", limit=1
+        )
+        if not rows:
+            return False  # nothing exists to be stale
+        generated = rows[0].generated_at
+        if generated is None:
+            return True
+        if generated.tzinfo is None:
+            generated = generated.replace(tzinfo=datetime.timezone.utc)
+        files = ProjectFileRepository(self.session).get_by_project(project_id)
+        for record in files:
+            if record.mtime_ns is None:
+                continue
+            changed_at = datetime.datetime.fromtimestamp(
+                record.mtime_ns / 1e9, tz=datetime.timezone.utc
+            )
+            if changed_at > generated:
+                return True
+        return False
 
     def _summary_is_embedded(self, project_id: str) -> bool:
         """True when an architecture-summary embedding exists for the project.
@@ -661,6 +718,7 @@ class RagService:
             sources = self.search(question, project_id=project_id, top_k=top_k)
         else:
             sources = self._search_all_projects(question, top_k)
+        sources = _diversify(sources)
         if not sources:
             return RagResponse(
                 answer=(
