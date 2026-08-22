@@ -9,6 +9,19 @@ the laptop is retired). Full runbook: `docs/02` §13.4 (Sprint 15 native install
 > python explicitly (`backend\.venv\Scripts\python.exe` here — the repo-root
 > `.venv` on other machines).
 
+## Quick reference
+
+| Task | Command (repo root unless noted) |
+|---|---|
+| Start / restart the server | `backend\.venv\Scripts\python.exe run.py` |
+| …or just use the app | `desktop\dist\win-unpacked\Sentinel.exe` |
+| Update everything | `git pull` → restart server (or relaunch the app) |
+| Backup + off-disk copy | `backend\.venv\Scripts\python.exe -m app.cli backup --push D:\safe-place` *(from inside backend)* |
+| Restore after a crash | see **Crash recovery** below |
+| Verify + stage dashboard & frozen backend | `backend\.venv\Scripts\python.exe scripts\build.py --dist` |
+| Rebuild desktop installer too | `...\scripts\build.py --dist --desktop` → `desktop\dist\` |
+| Repo sync now / RAG reindex / knowledge reset | `sentinel sync`, `sentinel rag-index --all`, `sentinel rag-index --reset` *(CLI: `-m app.cli <cmd>` from inside backend)* |
+
 ## One-time setup
 
 ```powershell

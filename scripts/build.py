@@ -4,12 +4,16 @@
 Deterministic local verification + artifact build, no Docker:
   1. Backend: pytest, black --check, isort --check, flake8.
   2. Frontend: npm run build (tsc + vite), eslint via the project's lint script.
-  3. [--dist] Copy the built frontend into backend/static so the backend
-     serves the UI directly (native install, docs/laptop.md).
+  3. [--dist] Copy the built frontend into backend/static AND rebuild the
+     frozen backend bundle (desktop/resources/server-runtime) that the
+     desktop installer ships.
+  4. [--desktop] Build the Electron win-unpacked folder + NSIS installer
+     (desktop/dist) on top of the freshly built server bundle.
 
 Usage:
     python scripts/build.py            # verify everything, build nothing
-    python scripts/build.py --dist     # verify, then stage frontend into backend
+    python scripts/build.py --dist     # verify, stage frontend + server bundle
+    python scripts/build.py --dist --desktop   # ... + installer artifacts
     python scripts/build.py --skip-tests  # stage only, skip verification
 """
 
@@ -23,7 +27,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 BACKEND = ROOT / "backend"
 FRONTEND = ROOT / "frontend"
+DESKTOP = ROOT / "desktop"
 STATIC_TARGET = BACKEND / "app" / "static"
+SERVER_SPEC = DESKTOP / "server" / "sentinel-server.spec"
 
 _PY_BIN = BACKEND / ".venv" / "Scripts" / "python.exe"
 if not _PY_BIN.exists():
@@ -68,6 +74,40 @@ def build_frontend() -> int:
     return run(["npm", "run", "build"], cwd=FRONTEND)
 
 
+def build_server_bundle() -> int:
+    """Rebuild the frozen backend (PyInstaller onedir) that the desktop
+    installer ships. Skips with a loud note when PyInstaller isn't installed
+    so machines that never package still get a working --dist."""
+    if not SERVER_SPEC.exists():
+        print("No server spec — skipping frozen-backend build.")
+        return 0
+    if run_python(["-c", "import PyInstaller"]) != 0:
+        print(
+            "PyInstaller not installed — frozen backend NOT rebuilt "
+            "(installer would ship a stale server). Install with:\n"
+            f"  {BACKEND / '.venv' / 'Scripts' / 'python.exe'} -m pip install pyinstaller"
+        )
+        return 0
+    return run_python(
+        [
+            "-m",
+            "PyInstaller",
+            "--noconfirm",
+            "--distpath",
+            str(DESKTOP / "resources"),
+            "--workpath",
+            str(ROOT / "build" / "server"),
+            str(SERVER_SPEC),
+        ],
+        cwd=ROOT,
+    )
+
+
+def build_desktop() -> int:
+    """Electron win-unpacked + NSIS installer from the current bundle."""
+    return run(["npm", "run", "dist"], cwd=DESKTOP)
+
+
 def stage_frontend() -> int:
     """Copy the vite build output into backend/app/static for local serving."""
     dist = FRONTEND / "dist"
@@ -96,7 +136,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--dist",
         action="store_true",
-        help="Stage the built frontend into backend/app/static",
+        help="Stage the frontend + rebuild the frozen backend bundle",
+    )
+    parser.add_argument(
+        "--desktop",
+        action="store_true",
+        help="Build the Electron installer from the current server bundle "
+        "(implies rebuilding that bundle)",
     )
     parser.add_argument(
         "--skip-tests",
@@ -119,6 +165,13 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.dist:
         ok = stage_frontend() == 0 and ok
+        ok = build_server_bundle() == 0 and ok
+
+    # --desktop implies a fresh server bundle (the installer ships it).
+    if args.desktop and not args.dist:
+        ok = build_server_bundle() == 0 and ok
+    if args.desktop:
+        ok = build_desktop() == 0 and ok
 
     return 0 if ok else 1
 
