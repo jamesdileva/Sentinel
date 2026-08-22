@@ -125,6 +125,49 @@ def test_migrate_indexes_backfills_existing_db(tmp_db):
     assert "ix_projectfile_project_id" in names
 
 
+def test_drop_dead_columns_unblocks_dependency_inserts(tmp_db):
+    """v1.17.18.6 regression (found live 2026-08-22): a pre-cleanup DB still
+    has dependency.vulnerable as NOT NULL with no default, so every model
+    insert omitted it and the flush failed with IntegrityError +
+    PendingRollbackError on /sessions. init_db must drop the dead columns,
+    after which model inserts succeed."""
+    engine = connection.get_engine()
+    with engine.begin() as conn:
+        conn.exec_driver_sql("DROP TABLE dependency")
+        # The pre-cleanup shape: dead columns present, vulnerable NOT NULL.
+        conn.exec_driver_sql(
+            "CREATE TABLE dependency ("
+            "id VARCHAR(32) PRIMARY KEY NOT NULL, "
+            "project_id VARCHAR(32) NOT NULL, "
+            "name VARCHAR(100) NOT NULL, "
+            "version VARCHAR(40), "
+            "latest_version VARCHAR(40), "
+            "type VARCHAR(20) NOT NULL, "
+            "vulnerable BOOLEAN NOT NULL, "
+            "severity VARCHAR(10), "
+            "created_at DATETIME NOT NULL)"
+        )
+
+    connection.init_db()
+
+    live = {c["name"] for c in __import__("sqlalchemy").inspect(engine).get_columns("dependency")}
+    assert "vulnerable" not in live
+    assert "latest_version" not in live
+
+    from sqlmodel import Session
+
+    from app.db.models import Dependency, Project
+
+    with Session(engine) as session:
+        project = Project(name="dep-fix", path="/dep-fix", language="python")
+        session.add(project)
+        session.flush()
+        session.add(Dependency(project_id=project.id, name="zod", version="^4"))
+        session.commit()  # previously raised NOT NULL constraint failed
+
+    assert True
+
+
 def test_check_schema_drift_detects_missing_column(tmp_db):
     """v1.17.18.3 (audit2 Q5): a model column missing from the live DB is
     reported (the v1.17.1 class of silent drift), instead of degrading a

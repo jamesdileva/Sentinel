@@ -184,6 +184,46 @@ def _drop_dead_tables(engine) -> None:
             logger.exception("Failed to drop dead table %s", table)
 
 
+# v1.17.18.6: model columns removed in the audit2 data-layer cleanup that
+# still exist in live DBs. Nullable ones are inert — inserts simply omit
+# them. But `dependency.vulnerable` was created NOT NULL with no default,
+# so every Dependency insert on a pre-cleanup DB failed with an
+# IntegrityError until the column is dropped (found live, 2026-08-22).
+_DEAD_COLUMNS = (
+    ("dependency", ("latest_version", "vulnerable", "severity")),
+    ("gitcommit", ("added_files", "modified_files", "deleted_files", "feature_tags")),
+    ("knowledgesummary", ("confidence",)),
+)
+
+
+def _drop_dead_columns(engine) -> None:
+    """Drop removed-model columns from live databases (v1.17.18.6).
+
+    SQLite DROP COLUMN requires the column to be unreferenced by indexes,
+    constraints, triggers, or views — true for all of these."""
+    from sqlalchemy import inspect
+
+    inspector = inspect(engine)
+    for table, columns in _DEAD_COLUMNS:
+        if not inspector.has_table(table):
+            continue
+        live = {c["name"] for c in inspector.get_columns(table)}
+        for column in columns:
+            if column not in live:
+                continue
+            try:
+                with engine.begin() as conn:
+                    conn.exec_driver_sql(f'ALTER TABLE "{table}" DROP COLUMN "{column}"')
+                logger.info("Dropped dead column %s.%s", table, column)
+            except Exception:  # noqa: BLE001 — cleanup must not wedge startup
+                logger.exception(
+                    "Failed to drop dead column %s.%s — Dependency/insert "
+                    "writes may still fail until this is resolved",
+                    table,
+                    column,
+                )
+
+
 def check_schema_drift(engine=None) -> list[str]:
     """Compare the live DB schema to the model metadata (v1.17.18.3, audit2 Q5).
 
@@ -217,6 +257,7 @@ def init_db() -> None:
     _migrate_columns(engine)
     _migrate_indexes(engine)
     _drop_dead_tables(engine)
+    _drop_dead_columns(engine)
     drifted = check_schema_drift(engine)
     if drifted:
         logger.error(
