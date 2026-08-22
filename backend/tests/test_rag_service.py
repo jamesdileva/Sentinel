@@ -203,6 +203,41 @@ def test_index_project_populates_all_collections(tmp_db, tmp_path):
     assert counts["project_summaries"] == 1
 
 
+def test_build_log_ingestion_skips_unran_builds(tmp_db, tmp_path):
+    """v1.17.18.6.5 (found live judging Card Game results): skipped builds
+    ("No build command configured...") embedded pure noise that surfaced as
+    RAG sources. Only builds that actually ran are embedded now."""
+    import datetime as dt
+
+    from app.db.models import BuildLog
+
+    project_id = _index_project(tmp_db)
+    with Session(connection.get_engine()) as session:
+        session.add(
+            BuildLog(
+                project_id=project_id,
+                started_at=dt.datetime(2026, 8, 5, 10, 0, tzinfo=dt.timezone.utc),
+                success=True,
+                stdout="build completed",
+            )
+        )
+        session.add(
+            BuildLog(
+                project_id=project_id,
+                started_at=dt.datetime(2026, 8, 5, 10, 1, tzinfo=dt.timezone.utc),
+                success=None,
+                stdout="No build command configured for this project.",
+            )
+        )
+        session.commit()
+
+    with Session(connection.get_engine()) as session:
+        project = RagService.get_project(session, project_id)
+        rag = _rag(session, tmp_path)
+        n = rag.ingest_build_logs(project)
+    assert n == 1
+
+
 def test_search_returns_results_with_provenance(tmp_db, tmp_path):
     project_id = _index_project(tmp_db)
     with Session(connection.get_engine()) as session:
@@ -701,6 +736,27 @@ def test_reset_tolerates_internal_error_from_damaged_store():
     manager.reset("file_summaries")
     assert client.dropped == ["file_summaries"]
     assert manager._health_cache is None  # invalidated for the next probe
+
+
+def test_delete_ids_removes_specific_vectors():
+    """v1.17.18.6.5 (audit2 RAG pass): delete_ids retracts specific vectors
+    so ingestion can clean up rows whose source became ineligible."""
+    captured = {}
+
+    class _DeletableCollection:
+        def delete(self, ids=None):
+            captured["ids"] = ids
+
+        def count(self):
+            return 0
+
+    manager = _manager_with(_FakeClient(_DeletableCollection()))
+    manager.delete_ids("build_logs", ["junk-1", "junk-2"])
+    assert captured["ids"] == ["junk-1", "junk-2"]
+    # empty call is a no-op (no collection access at all)
+    manager.path  # still usable
+    manager.delete_ids("build_logs", [])
+    assert captured["ids"] == ["junk-1", "junk-2"]
 
 
 def test_summary_generated_once_per_project(tmp_db, tmp_path):
