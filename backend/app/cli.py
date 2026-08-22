@@ -5,6 +5,7 @@ implemented" alongside any deterministic information already available.
 """
 
 import json
+from pathlib import Path
 
 import typer
 
@@ -305,16 +306,23 @@ def initdb():
 @app.command()
 def backup(
     keep: int = typer.Option(7, "--keep", min=1, help="Backups to keep"),
+    push: Path | None = typer.Option(
+        None,
+        "--push",
+        help="Copy the finished zip to this directory (off-disk copy)",
+    ),
 ):
     """Snapshot db + chroma + screenshots + logs into data/backups/ (audit A1,
-    v1.17.18.1). User-initiated only — never scheduled (Rule 2)."""
+    v1.17.18.1). User-initiated only - never scheduled (Rule 2)."""
     from app.services.backup_service import create_backup
 
-    result = create_backup(keep=keep)
+    result = create_backup(keep=keep, push_dir=push)
     if result["skipped"]:
         typer.echo(f"Backup FAILED: {result['skipped']}", err=True)
         raise typer.Exit(code=1)
     typer.echo(f"Backup written to {result['path']} ({result['files']} files)")
+    if result.get("pushed_to"):
+        typer.echo(f"Pushed to {result['pushed_to']}")
 
 
 @app.command()

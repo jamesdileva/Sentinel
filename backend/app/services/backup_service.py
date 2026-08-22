@@ -9,6 +9,7 @@ backups and prunes the rest. User-initiated only (CLI `sentinel backup` or
 """
 
 import datetime
+import shutil
 import sqlite3
 import zipfile
 from pathlib import Path
@@ -54,10 +55,12 @@ def _add_dir(zf: zipfile.ZipFile, src_dir: Path, arc_root: str) -> int:
     return count
 
 
-def create_backup(keep: int = 7) -> dict:
+def create_backup(keep: int = 7, push_dir: str | Path | None = None) -> dict:
     """Snapshot db + chroma + screenshots + logs into one zip, prune old
-    backups. Returns stats; never raises (defensive — a backup failure must
-    not crash the CLI)."""
+    backups. When `push_dir` is set, the finished zip is copied there
+    (another drive / synced folder) so a dead system disk doesn't take the
+    backups with it — v1.17.18.6, crash-resilience follow-up. Returns stats;
+    never raises (defensive — a backup failure must not crash the CLI)."""
     stamp = datetime.datetime.now(datetime.timezone.utc)
     target = _zip_path(stamp)
     backups_dir().mkdir(parents=True, exist_ok=True)
@@ -85,6 +88,22 @@ def create_backup(keep: int = 7) -> dict:
 
     pruned = prune_backups(keep)
     stats["pruned"] = pruned
+
+    # v1.17.18.6 (crash-resilience): copy the finished zip off-disk. A copy
+    # failure is reported but never fails the backup itself.
+    stats["pushed_to"] = None
+    if push_dir:
+        try:
+            push_path = Path(push_dir)
+            push_path.mkdir(parents=True, exist_ok=True)
+            dest = push_path / target.name
+            shutil.copy2(target, dest)
+            stats["pushed_to"] = str(dest)
+            logger.info("Backup pushed to %s", dest)
+        except OSError:
+            logger.exception("Backup push to %s failed", push_dir)
+            stats["skipped"].append(f"push to {push_dir} failed")
+
     logger.info(
         "Backup created: %s (%d files); pruned %d old backup(s)",
         target.name,

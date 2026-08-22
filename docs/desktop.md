@@ -88,6 +88,29 @@ own location (works from `desktop\dist\win-unpacked\` inside a clone) or set
   WARNING in the server log = the SQLite writer is failing) — the panel
   re-seeds history on mount (v1.17.2).
 
+## Crash recovery (new machine / dead disk)
+
+The backup zip (`sentinel backup --push D:\somewhere-safe` from inside
+`backend`, or `scripts\backup.py --push`) contains **the fully indexed state**
+— SQLite (projects, sessions, scores, findings, chat, summaries) + the Chroma
+vectors + screenshots. Restoring it does NOT require re-indexing or
+re-embedding: embedding ids in the restored DB point at the restored vectors.
+
+```powershell
+git clone https://github.com/jamesdileva/Sentinel.git; cd Sentinel
+backend\.venv\Scripts\python.exe -m pip install -e "backend[dev]"
+# restore the newest backup zip's contents into .\data\  (sqlite\, chroma\,
+#   screenshots\ land exactly where they were)
+backend\.venv\Scripts\python.exe run.py
+```
+
+Not covered by the zip — reinstall on a fresh machine:
+- **Ollama** + model pull (`ollama pull llama3.1:8b nomic-embed-text`)
+- Anything that changed *after* the last backup is picked up incrementally on
+  the next scan/knowledge pass (edited files re-embed automatically).
+- The projects themselves live outside `data/` as git checkouts under
+  `SENTINEL_WATCH_DIRS` — clone/pull them as usual.
+
 ## Rules of thumb
 
 - **Never move the `data/` directory** while the server runs — it holds

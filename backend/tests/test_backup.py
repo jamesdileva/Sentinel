@@ -117,6 +117,46 @@ def test_create_backup_basic(tmp_path, monkeypatch):
         assert "sqlite/sentinel.db" in zf.namelist()
 
 
+def test_create_backup_push_copies_zip_off_disk(tmp_path, monkeypatch):
+    """v1.17.18.6 (crash-resilience): --push copies the finished zip to the
+    target directory; a copy failure is reported without failing the backup."""
+    db_path = tmp_path / "sentinel.db"
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("CREATE TABLE test (id INTEGER)")
+    conn.close()
+
+    def _patch(**_):
+        return None
+
+    monkeypatch.setattr(
+        "app.services.backup_service.settings",
+        type(
+            "S",
+            (),
+            {
+                "db_path": db_path,
+                "chroma_path": tmp_path / "chroma",
+            },
+        )(),
+    )
+    monkeypatch.setattr(
+        "app.services.backup_service.backups_dir",
+        lambda: tmp_path / "backups",
+    )
+    push_dir = tmp_path / "off-disk"
+
+    result = create_backup(keep=3, push_dir=push_dir)
+    assert result["skipped"] == []
+    pushed = Path(result["pushed_to"])
+    assert pushed.parent == push_dir
+    assert pushed.exists() and pushed.stat().st_size > 0
+
+    # a push failure (unwritable target) is reported, backup still succeeds
+    bad = create_backup(keep=3, push_dir=tmp_path / "sentinel.db" / "not-a-dir")
+    assert any("push" in s for s in bad["skipped"])
+    assert Path(bad["path"]).exists()
+
+
 def test_list_backups_empty(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "app.services.backup_service.settings",
