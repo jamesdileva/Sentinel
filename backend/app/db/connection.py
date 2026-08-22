@@ -213,7 +213,9 @@ def _drop_dead_columns(engine) -> None:
                 continue
             try:
                 with engine.begin() as conn:
-                    conn.exec_driver_sql(f'ALTER TABLE "{table}" DROP COLUMN "{column}"')
+                    conn.exec_driver_sql(
+                        f'ALTER TABLE "{table}" DROP COLUMN "{column}"'
+                    )
                 logger.info("Dropped dead column %s.%s", table, column)
             except Exception:  # noqa: BLE001 — cleanup must not wedge startup
                 logger.exception(

@@ -184,14 +184,35 @@ class PortfolioService:
     # --- component scores -----------------------------------------------------
 
     def _build_component(self, project: Project) -> tuple[float, str]:
-        if not self._has_build_command(project):
-            return 0.0, "pending"
+        """Build component (audit2 follow-up, v1.17.18.6.2).
+
+        Evidence, strongest first:
+        1. A BuildLog row ran green -> full weight "passing"; ran red ->
+           static only "failing" (explicit red dominates later green
+           evidence — mirrors the tests component).
+        2. No build history at all: a PASSED `Tester:` session is honest
+           build proof for projects whose build step is implicit (interpreted
+           apps, packaged Electron) — the tester launched the built app and
+           asserted real behavior (v1.17.18.0 gave tests the same credit).
+        3. Only a discovered command and nothing ran -> static "configured".
+        4. Nothing known -> "pending".
+
+        The old gate (`no build command -> pending`, before history was ever
+        consulted) hid proven builds behind a discovery miss: AG and Demake
+        Engine had green BuildLog rows but showed ✗."""
+        has_cmd = self._has_build_command(project)
+        proven_run = self._latest_tester_pass(project.id) is not None
         build = self._latest_build(project.id)
-        if build is not None and build.success is True:
-            return float(BUILD_STATIC + BUILD_PROVEN), "passing"
+
         if build is not None and build.success is False:
             return float(BUILD_STATIC), "failing"
-        return float(BUILD_STATIC), "configured"
+        if build is not None and build.success is True:
+            return float(BUILD_STATIC + BUILD_PROVEN), "passing"
+        if proven_run:
+            return float(BUILD_STATIC + BUILD_PROVEN), "passing"
+        if has_cmd:
+            return float(BUILD_STATIC), "configured"
+        return 0.0, "pending"
 
     def _test_component(self, project_id: str) -> tuple[float, str]:
         test = self._latest_test(project_id)

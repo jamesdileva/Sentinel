@@ -150,7 +150,10 @@ def test_drop_dead_columns_unblocks_dependency_inserts(tmp_db):
 
     connection.init_db()
 
-    live = {c["name"] for c in __import__("sqlalchemy").inspect(engine).get_columns("dependency")}
+    live = {
+        c["name"]
+        for c in __import__("sqlalchemy").inspect(engine).get_columns("dependency")
+    }
     assert "vulnerable" not in live
     assert "latest_version" not in live
 

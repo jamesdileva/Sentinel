@@ -30,6 +30,8 @@ from app.db.models import (
 from app.db.models import TestResult as TestResultRow
 from app.main import app
 from app.services.portfolio_service import (
+    BUILD_PROVEN,
+    BUILD_STATIC,
     PortfolioService,
     is_doc_path,
     is_test_file_path,
@@ -413,6 +415,90 @@ def test_red_test_result_dominates_tester_credit():
         )
         session.commit()
     assert svc._test_component(projects["gamma"].id) == (24.0, "failing")
+
+
+# ---------------------------------------------------------------------------
+# v1.17.18.6.2: tester-session BUILD credit (found live 2026-08-22: AG /
+# Demake / FinSight had green builds or passed tester runs but the matrix
+# showed pending because the component gated on a discoverable build command)
+# ---------------------------------------------------------------------------
+
+
+def _add_tester_pass(engine, project_id: str) -> None:
+    with Session(engine, expire_on_commit=False) as session:
+        session.add(
+            AppSession(
+                project_id=project_id,
+                title="Tester: app",
+                status=SessionStatus.PASSED,
+                ended_at=datetime.datetime(
+                    2026, 8, 6, 9, 0, tzinfo=datetime.timezone.utc
+                ),
+            )
+        )
+        session.commit()
+
+
+def test_build_component_green_log_without_command_passes():
+    """AG/Demake case: a green BuildLog exists but no build command is
+    discoverable today — history must be consulted regardless (was: pending)."""
+    engine = make_engine()
+    projects = seed(engine)
+    svc = make_service(engine)
+    gamma = projects["gamma"]
+    assert svc._build_component(gamma) == (0.0, "pending")
+    with Session(engine, expire_on_commit=False) as session:
+        session.add(
+            BuildLog(
+                project_id=gamma.id,
+                started_at=datetime.datetime(
+                    2026, 8, 5, 10, 0, tzinfo=datetime.timezone.utc
+                ),
+                success=True,
+            )
+        )
+        session.commit()
+    assert svc._build_component(gamma) == (
+        float(BUILD_STATIC + BUILD_PROVEN),
+        "passing",
+    )
+
+
+def test_build_component_tester_pass_credits_without_build_history():
+    """FinSight case: no BuildLog at all, but a passed Tester session launched
+    the built app — honest build proof -> full weight "passing"."""
+    engine = make_engine()
+    projects = seed(engine)
+    svc = make_service(engine)
+    gamma = projects["gamma"]
+    assert svc._build_component(gamma) == (0.0, "pending")
+    _add_tester_pass(engine, gamma.id)
+    assert svc._build_component(gamma) == (
+        float(BUILD_STATIC + BUILD_PROVEN),
+        "passing",
+    )
+
+
+def test_build_component_red_build_dominates_tester_pass():
+    """Symmetric with tests: an explicit red build stays "failing" even when
+    a passed tester session exists."""
+    engine = make_engine()
+    projects = seed(engine)
+    svc = make_service(engine)
+    gamma = projects["gamma"]
+    with Session(engine, expire_on_commit=False) as session:
+        session.add(
+            BuildLog(
+                project_id=gamma.id,
+                started_at=datetime.datetime(
+                    2026, 8, 5, 10, 0, tzinfo=datetime.timezone.utc
+                ),
+                success=False,
+            )
+        )
+        session.commit()
+    _add_tester_pass(engine, gamma.id)
+    assert svc._build_component(gamma) == (float(BUILD_STATIC), "failing")
 
 
 def test_screenshot_component_and_epoch():
