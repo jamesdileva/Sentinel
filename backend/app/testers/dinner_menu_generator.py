@@ -21,8 +21,10 @@ FLASK_PORT = "http://127.0.0.1:5000"
 
 def run(ctx: TesterContext) -> None:
     ctx.launch(FRONTEND_CMD)
-    ctx.wait(10)
-    ctx.http("GET", VITE_PORT)
+    # v1.17.18.6 (audit2 T10): bounded retries instead of a fixed sleep —
+    # Vite cold re-optimization races fixed waits on this machine (the
+    # Card-Game tester proved the retries pattern live).
+    ctx.http("GET", VITE_PORT, retries=4)
     ctx.launch(BACKEND_CMD)
     ctx.http("GET", FLASK_PORT, retries=4)
 

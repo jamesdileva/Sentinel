@@ -53,7 +53,11 @@ import subprocess
 from pathlib import Path
 
 from app.services.desktop_runner import DesktopApp
-from app.testers._helpers import TesterAssertionError, TesterEnvError
+from app.testers._helpers import (
+    TesterAssertionError,
+    TesterEnvError,
+    kill_by_image_name,
+)
 from app.testers.features import Feature, FeatureContext
 
 WINDOW_TITLE = r"^HFT Order Book$"
@@ -91,14 +95,7 @@ BUTTON_MIN_PIXELS = 1000
 
 
 def _kill_hft_tree() -> None:
-    try:
-        subprocess.run(
-            ["taskkill", "/IM", "hft.exe", "/T", "/F"],
-            capture_output=True,
-            timeout=15,
-        )
-    except (OSError, subprocess.SubprocessError):
-        pass
+    kill_by_image_name("hft.exe", tree=True)
 
 
 def run(ctx: FeatureContext) -> None:

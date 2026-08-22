@@ -601,7 +601,7 @@ def test_export_copies_and_builds_snippet(tmp_db, project, monkeypatch, tmp_path
     monkeypatch.setattr(settings, "portfolio_dir", tmp_path / "portfolio")
     source = tmp_path / "render.png"
     Image.new("RGB", (200, 100), (9, 8, 7)).save(source, "PNG")
-    # v1.17.18.5 (audit2 S9): the View Code link derives from the checkout's
+    # v1.17.18.6 (audit2 S9): the View Code link derives from the checkout's
     # git origin — give the fixture project one.
     (Path(project.path) / ".git").mkdir(parents=True, exist_ok=True)
     (Path(project.path) / ".git" / "config").write_text(
@@ -621,7 +621,7 @@ def test_export_copies_and_builds_snippet(tmp_db, project, monkeypatch, tmp_path
 
 
 def test_export_without_git_origin_omits_code_link(tmp_db, monkeypatch, tmp_path):
-    """v1.17.18.5 (audit2 S9): no git origin → no guessed repo link (the old
+    """v1.17.18.6 (audit2 S9): no git origin → no guessed repo link (the old
     hardcoded jamesdileva/{display-name} guess was wrong for other owners)."""
     monkeypatch.setattr(settings, "portfolio_dir", tmp_path / "portfolio")
     source = tmp_path / "render.png"
@@ -719,7 +719,8 @@ def test_api_full_flow(client, project, monkeypatch):
     assert response.status_code == 200
     assert len(response.json()) == 0
 
-    response = client.patch(f"/api/v1/sessions/{session_id}", json={"title": "Renamed"})
+    # v1.17.18.6 (audit2 C7): PATCH replaced by POST (conventions).
+    response = client.post(f"/api/v1/sessions/{session_id}", json={"title": "Renamed"})
     assert response.status_code == 200
     assert response.json()["title"] == "Renamed"
 

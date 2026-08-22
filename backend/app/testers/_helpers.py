@@ -13,6 +13,7 @@ Secrets rule: testers never carry credentials, and `cli()` never writes the
 `env` values into the app log — only the command line and captured output.
 """
 
+import subprocess
 import tempfile
 import time
 import uuid
@@ -30,6 +31,19 @@ from app.utils.headless_render import HeadlessRenderError, render_url
 logger = get_logger(__name__)
 
 APP_LOG = "[sentinel] App launched"
+
+
+def kill_by_image_name(name: str, tree: bool = False) -> None:
+    """Best-effort `taskkill /IM` for a tester's own packaged exe.
+
+    v1.17.18.6 (audit2 T3): replaces four per-tester copies of the same
+    try/except-pass taskkill block; failures are logged at debug instead of
+    vanishing. `tree=True` adds /T (whole process tree)."""
+    argv = ["taskkill", *(("/T",) if tree else ()), "/F", "/IM", name]
+    try:
+        subprocess.run(argv, capture_output=True, timeout=15)
+    except (OSError, subprocess.SubprocessError):
+        logger.debug("taskkill failed for %s", name, exc_info=True)
 
 
 class TesterAssertionError(Exception):

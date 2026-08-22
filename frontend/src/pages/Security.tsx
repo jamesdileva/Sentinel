@@ -36,6 +36,9 @@ export default function Security() {
   const [showResolved, setShowResolved] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // v1.17.18.6 (audit2 F7): honest feedback when scan-all runs with no
+  // project selected (no baseline exists to poll).
+  const [notice, setNotice] = useState<string | null>(null);
   // Baseline `last_scanned` snapshot taken when a scan was queued; the poll
   // loop compares against it so the tab refreshes when the scan completes.
   const [scanBaseline, setScanBaseline] = useState<string | null>(null);
@@ -44,6 +47,7 @@ export default function Security() {
     setScanBaseline(null);
     setScanning(false);
     setScanningAll(false);
+    setNotice(null);
     if (!projectId) {
       setFindings([]);
       return;
@@ -155,6 +159,11 @@ export default function Security() {
       if (baseline !== null) {
         setScanBaseline(baseline);
       } else {
+        // v1.17.18.6→5 (audit2 F7): with no project selected there is no
+        // baseline to poll — say so instead of silently re-enabling.
+        setNotice(
+          "Scan of all projects queued — select a project to watch its results; findings appear as each scan completes.",
+        );
         setScanningAll(false);
       }
     } catch (err) {
@@ -207,6 +216,11 @@ export default function Security() {
         {error && (
           <div className="mt-3 rounded-lg border border-red-300 bg-red-50 px-4 py-2 text-sm text-red-800 dark:border-red-800 dark:bg-red-950 dark:text-red-200">
             {error}
+          </div>
+        )}
+        {notice && !error && (
+          <div className="mt-3 rounded-lg border border-sky-300 bg-sky-50 px-4 py-2 text-sm text-sky-900 dark:border-sky-800 dark:bg-sky-950 dark:text-sky-200">
+            {notice}
           </div>
         )}
       </div>

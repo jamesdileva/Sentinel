@@ -25,8 +25,11 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+from app.core.logging import get_logger
 from app.testers import Tester
 from app.testers._helpers import TesterContext, TesterEnvError
+
+logger = get_logger(__name__)
 
 STATIC_CMD = (
     '"{}" -m rigging_engine.main static '
@@ -51,7 +54,7 @@ def _reclaim_previous_gui() -> None:
             timeout=15,
         )
     except (OSError, subprocess.SubprocessError):
-        pass
+        logger.debug("AG GUI reclaim taskkill failed", exc_info=True)
 
 
 def run(ctx: TesterContext) -> None:

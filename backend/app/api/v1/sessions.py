@@ -5,6 +5,8 @@ full-screen grabs stored locally and optionally exported to the user's
 portfolio repo (copy only — Sentinel never pushes, Rule 2).
 """
 
+from collections import defaultdict
+
 from fastapi import APIRouter, Depends, HTTPException, Response
 from fastapi.responses import FileResponse
 from sqlmodel import Session as DbSession
@@ -38,28 +40,50 @@ def _service(db: DbSession) -> AppSessionService:
 
 
 def _read(app_session, db: DbSession) -> SessionRead:
+    """Single-session read (create/detail/update paths)."""
+    return _read_batch([app_session], db)[0]
+
+
+def _read_batch(app_sessions, db: DbSession) -> list[SessionRead]:
+    """Build SessionReads with three queries TOTAL instead of 3N+1
+    (v1.17.18.6, audit2 C6): one IN query each for checkpoints,
+    screenshots, and projects."""
     service = AppSessionService(db)
-    project = ProjectRepository(db).get(app_session.project_id)
-    return SessionRead(
-        id=app_session.id,
-        project_id=app_session.project_id,
-        project_name=project.name if project else None,
-        title=app_session.title,
-        expected_output=app_session.expected_output,
-        actual_outcome=app_session.actual_outcome,
-        status=app_session.status.value,
-        started_at=app_session.started_at,
-        ended_at=app_session.ended_at,
-        log_slice=app_session.log_slice,
-        checkpoints=[
-            SessionCheckpointRead.model_validate(c)
-            for c in service.checkpoint_repo.by_session(app_session.id)
-        ],
-        screenshots=[
-            SessionScreenshotRead.model_validate(s)
-            for s in service.screenshot_repo.by_session(app_session.id)
-        ],
-    )
+    ids = [s.id for s in app_sessions]
+    checkpoints: dict[str, list] = defaultdict(list)
+    screenshots: dict[str, list] = defaultdict(list)
+    if ids:
+        for c in service.checkpoint_repo.by_sessions(ids):
+            checkpoints[c.session_id].append(c)
+        for sc in service.screenshot_repo.by_sessions(ids):
+            screenshots[sc.session_id].append(sc)
+    project_ids = {s.project_id for s in app_sessions}
+    projects = ProjectRepository(db).by_ids(project_ids) if project_ids else {}
+    return [
+        SessionRead(
+            id=s.id,
+            project_id=s.project_id,
+            project_name=(
+                projects[s.project_id].name if s.project_id in projects else None
+            ),
+            title=s.title,
+            expected_output=s.expected_output,
+            actual_outcome=s.actual_outcome,
+            status=s.status.value,
+            started_at=s.started_at,
+            ended_at=s.ended_at,
+            log_slice=s.log_slice,
+            checkpoints=[
+                SessionCheckpointRead.model_validate(c)
+                for c in checkpoints.get(s.id, [])
+            ],
+            screenshots=[
+                SessionScreenshotRead.model_validate(sc)
+                for sc in screenshots.get(s.id, [])
+            ],
+        )
+        for s in app_sessions
+    ]
 
 
 @router.post("", response_model=SessionRead, status_code=201)
@@ -75,7 +99,7 @@ def list_sessions(
     db: DbSession = Depends(get_session),
 ):
     service = _service(db)
-    return [_read(s, db) for s in service.list_sessions(project_id, status)]
+    return _read_batch(service.list_sessions(project_id, status), db)
 
 
 @router.get("/{session_id}", response_model=SessionRead)
@@ -87,10 +111,12 @@ def get_session_detail(session_id: str, db: DbSession = Depends(get_session)):
     return _read(app_session, db)
 
 
-@router.patch("/{session_id}", response_model=SessionRead)
+@router.post("/{session_id}", response_model=SessionRead)
 def update_session(
     session_id: str, body: SessionUpdate, db: DbSession = Depends(get_session)
 ):
+    """Update a session's title/outcome/status. v1.17.18.6 (audit2 C7): was
+    the API's only PATCH — conventions say state-changing actions use POST."""
     try:
         app_session = _service(db).update(
             session_id,

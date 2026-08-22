@@ -28,6 +28,9 @@ def run(ctx: TesterContext) -> None:
     if test_cmd:
         ctx.cli(test_cmd, timeout_s=600, expect_exit=0)
     ctx.launch(startup)
+    # Settle wait (audit2 T10): the default smoke has no known probe target
+    # — no URL, no window title contract — so a bounded sleep before the
+    # crash-signature scan is the honest option; documented, not hidden.
     ctx.wait(20)
     ctx.screenshot("app window after launch")
     for pattern in CRASH_PATTERNS:

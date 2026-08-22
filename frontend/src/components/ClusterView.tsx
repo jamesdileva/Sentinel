@@ -198,10 +198,19 @@ export default function ClusterView({ graph }: { graph: GalaxyGraph }) {
                 opacity={techLabelOpacity(t.id)}
                 transform={`rotate(-55 ${x} ${top + 22})`}
                 textAnchor="end"
-                className="cursor-pointer fill-slate-300 text-[10px]"
+                className="cursor-pointer fill-slate-300 text-[10px] focus:outline-none focus-visible:fill-white"
+                role="button"
+                tabIndex={0}
+                aria-label={`Toggle ${t.label} focus`}
                 onClick={() =>
                   setActive((current) => (current === t.id ? null : t.id))
                 }
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    setActive((current) => (current === t.id ? null : t.id));
+                  }
+                }}
               >
                 {t.label}
               </text>
@@ -242,10 +251,19 @@ export default function ClusterView({ graph }: { graph: GalaxyGraph }) {
                   paintOrder="stroke"
                   stroke="#0a0a0a"
                   strokeWidth={3}
-                  className="cursor-pointer fill-slate-300 text-[11px]"
+                  className="cursor-pointer fill-slate-300 text-[11px] focus:outline-none focus-visible:fill-white"
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`Toggle ${row.label} focus`}
                   onClick={() =>
                     setActive((current) => (current === row.id ? null : row.id))
                   }
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      setActive((current) => (current === row.id ? null : row.id));
+                    }
+                  }}
                 >
                   {row.label}
                 </text>

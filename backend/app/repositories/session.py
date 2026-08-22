@@ -1,6 +1,6 @@
 """AppSession repository (later.md Tier 1)."""
 
-from sqlmodel import select
+from sqlmodel import col, select
 
 from app.db.models import AppSession, SessionCheckpoint, SessionScreenshot
 from app.repositories.base import Repository
@@ -34,6 +34,18 @@ class SessionCheckpointRepository(Repository):
         )
         return list(self.session.exec(stmt).all())
 
+    def by_sessions(self, session_ids: list[str]) -> list[SessionCheckpoint]:
+        """One IN query for many sessions (v1.17.18.6, audit2 C6), each
+        session's checkpoints ordered oldest-first."""
+        if not session_ids:
+            return []
+        stmt = (
+            select(SessionCheckpoint)
+            .where(col(SessionCheckpoint.session_id).in_(session_ids))
+            .order_by(SessionCheckpoint.at.asc())
+        )
+        return list(self.session.exec(stmt).all())
+
 
 class SessionScreenshotRepository(Repository):
     model = SessionScreenshot
@@ -45,6 +57,17 @@ class SessionScreenshotRepository(Repository):
         return list(
             self.session.exec(stmt.order_by(SessionScreenshot.captured_at)).all()
         )
+
+    def by_sessions(self, session_ids: list[str]) -> list[SessionScreenshot]:
+        """One IN query for many sessions (v1.17.18.6, audit2 C6)."""
+        if not session_ids:
+            return []
+        stmt = (
+            select(SessionScreenshot)
+            .where(col(SessionScreenshot.session_id).in_(session_ids))
+            .order_by(SessionScreenshot.captured_at)
+        )
+        return list(self.session.exec(stmt).all())
 
     def older_than(self, days: int) -> list[SessionScreenshot]:
         """All screenshots captured before (now - days), oldest first."""

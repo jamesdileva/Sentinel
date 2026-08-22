@@ -105,7 +105,9 @@ export async function updateSession(
   sessionId: string,
   patch: Partial<SessionCreate> & { status?: SessionStatus },
 ): Promise<SessionRecord> {
-  const { data } = await api.patch<SessionRecord>(
+  // v1.17.18.6 (audit2 C7): PATCH replaced by POST — state-changing
+  // actions use POST per the project conventions.
+  const { data } = await api.post<SessionRecord>(
     `/v1/sessions/${sessionId}`,
     patch,
   );

@@ -364,3 +364,30 @@ dashboard rebuilt and staged.
 - **F7** scan-all progress UX with no project selected
 - **F10-residual** keyboard navigation for galaxy views; focus traps
 - **F8/F9** Sessions.tsx split + shared page boilerplate extraction
+
+---
+
+## Fixes applied - v1.17.18.6 (fifth batch, 2026-08-21)
+
+| Item | Fix | Files | Tests |
+|------|-----|-------|-------|
+| C6 | sessions list builds SessionReads with THREE queries total (IN queries for checkpoints, screenshots, projects) instead of 3N+1; repos gained by_sessions()/by_ids() batch methods; single-session reads share the same code path | api/v1/sessions.py, repositories/{session,project}.py | full sessions flow test |
+| C7 | PATCH /sessions/{id} replaced by POST (conventions: state changes use POST); frontend client updated to match | api/v1/sessions.py, frontend/src/api/sessions.ts | API test updated |
+| C5-residual | response models for all four remaining raw-dict endpoints: SystemOverview, SyncStatusRead, OllamaStatusRead, ActivityResponse (schemas/system.py mirrors the exact existing JSON) | schemas/system.py, api/v1/system.py | system tests |
+| S8 | _free_ports ownership guard: a listener is killed only when its executable lives under the project root (ctypes exe-path check); anything else holding the port is logged and left alone - another project's dev server can no longer be force-killed by a Run Build click | services/build_runner.py | automation test extended to cover the guard |
+| T3 | kill_by_image_name() in testers/_helpers replaces three per-tester try/except-pass taskkill copies (hft tester + feature, airadio feature); failures now log at debug instead of vanishing; ag's window-title reclaim logs too | testers/_helpers.py + 4 call sites | harness suites |
+| T10 | dinner-menu Vite probe uses bounded retries instead of a fixed 10 s sleep; cg topic-generation settle replaced by retrying the deterministic Molasses check; default-smoke and cg Electron waits documented as honest settles (no probe target exists) | testers/{dinner_menu_generator,cg,default_smoke}.py | tester suites |
+| T12 | features registry validates its slugs against TESTERS at import - drift fails loudly instead of silently mismatching (with an explicit FEATURE_ONLY_SLUGS allowlist for feature-only apps like Airadio) | testers/features/__init__.py | registry test |
+| F7 | scan-all with no project selected now shows an explicit notice ("queued - select a project to watch results") instead of silently re-enabling with zero feedback | pages/Security.tsx | vitest suite |
+| F10-residual | galaxy views keyboard-accessible: ClusterView tech/project labels and MetroView stations are tabIndex'd buttons with Enter/Space activation + focus styling | components/{ClusterView,MetroView}.tsx | vitest suite |
+
+**Verification:** backend 653 passed (coverage gate met), flake8/black/isort
+clean; frontend tsc clean + 131 tests pass.
+
+### Still deferred (deliberately)
+
+- **F8** Sessions.tsx split into components/sessions/* - pure structural
+  refactor of ~950 lines with zero behavior gain; best done as its own
+  focused change with the page tests as the safety net.
+- **F9** shared PageIntro/EmptyState/ProjectSelect/usePollUntil extraction -
+  touches six pages and their snapshots at once; same reasoning.

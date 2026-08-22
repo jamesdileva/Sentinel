@@ -20,7 +20,7 @@ import time
 from pathlib import Path
 
 from app.services.desktop_runner import DesktopApp
-from app.testers._helpers import TesterEnvError
+from app.testers._helpers import TesterEnvError, kill_by_image_name
 from app.testers.features import Feature, FeatureContext
 
 WINDOW_TITLE = r"^ElmWave Network$"  # verified live 2026-08-20 (page <title>)
@@ -31,14 +31,7 @@ SETTLE_S = 8  # allow the renderer to paint before the screenshot
 def _kill() -> None:
     """Kill any WestWaveGem instance this feature launched. The image name
     is the app's own packaged exe — never a generic process."""
-    try:
-        subprocess.run(
-            ["taskkill", "/F", "/IM", "WestWaveGem Radio.exe"],
-            capture_output=True,
-            timeout=15,
-        )
-    except (OSError, subprocess.SubprocessError):
-        pass
+    kill_by_image_name("WestWaveGem Radio.exe")
 
 
 def run(ctx: FeatureContext) -> None:

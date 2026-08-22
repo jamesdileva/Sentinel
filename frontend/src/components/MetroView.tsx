@@ -219,11 +219,22 @@ export default function MetroView({ graph, height = 520 }: { graph: GalaxyGraph;
                 data-id={station.project.id}
                 opacity={stationOpacity(station)}
                 className={drag?.id === station.project.id ? "cursor-grabbing" : "cursor-grab"}
+                role="button"
+                tabIndex={0}
+                aria-label={`${station.project.label} station`}
                 onClick={() =>
                   setActive((current) =>
                     current === station.project.id ? null : station.project.id,
                   )
                 }
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    setActive((current) =>
+                      current === station.project.id ? null : station.project.id,
+                    );
+                  }
+                }}
                 onMouseEnter={() => setHovered(station.project.id)}
                 onMouseLeave={() => setHovered(null)}
                 onPointerDown={(e) => onPointerDown(station, e)}

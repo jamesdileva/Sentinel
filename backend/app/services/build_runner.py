@@ -27,12 +27,25 @@ from app.db.models import BuildLog, Project
 from app.repositories import ProjectRepository
 from app.services.command_runner import run_command
 from app.utils.command_extractor import extract_build_commands, project_venv_python
+from app.utils.window_capture import _process_exe_path
 
 logger = get_logger(__name__)
 
 
 def _slug(name: str) -> str:
     return re.sub(r"[^\w.-]+", "-", name.strip()) or "project"
+
+
+def _pid_owned_by_project(pid: str, project_root: str) -> bool:
+    """True when the PID's executable lives under the project root (audit2 S8).
+    Unresolvable PIDs are treated as not-owned — the kill is skipped and
+    logged, never guessed."""
+    exe = _process_exe_path(int(pid))
+    if exe is None:
+        return False
+    root = os.path.normpath(project_root).casefold()
+    exe_norm = os.path.normpath(exe).casefold()
+    return exe_norm == root or exe_norm.startswith(root + os.sep)
 
 
 class BuildRunner:
@@ -137,7 +150,7 @@ class BuildRunner:
         then open the browser at the tester's web_url (v1.17.13.4)."""
         ports = tuple(facts.ports) if facts else ()
         if ports:
-            killed = self._free_ports(ports)
+            killed = self._free_ports(ports, project_root=project.path)
             log.stdout = (
                 f"{log.stdout or ''}\nFreed ports for restart: "
                 f"{', '.join(map(str, killed)) if killed else 'none listening'}"
@@ -240,13 +253,20 @@ class BuildRunner:
             return False, str(exc)
 
     @staticmethod
-    def _free_ports(ports: tuple[int, ...]) -> list[int]:
+    def _free_ports(
+        ports: tuple[int, ...], project_root: str | None = None
+    ) -> list[int]:
         """Kill every listener on the app's ports so the fresh launch binds
         them (v1.17.13.4 restart semantics — build->open means the current
         code, not an orphan instance that drifted to another port).
         Windows: `netstat -ano` to find the PIDs, `taskkill /F` to stop
         them. Returns the PIDs actually killed (empty on no listeners or
-        tool failure — a busy port then simply makes the app bind another)."""
+        tool failure — a busy port then simply makes the app bind another).
+
+        v1.17.18.6 (audit2 S8): with a project_root, a listener is only
+        killed when its executable actually lives under that directory —
+        an unrelated process that happens to hold the port (another
+        project's dev server, anything else) is reported and left alone."""
         if not ports:
             return []
         try:
@@ -268,6 +288,16 @@ class BuildRunner:
                         listeners[int(local[1])] = parts[4]
         killed = []
         for pid in sorted({p for p in listeners.values()}):
+            if project_root is not None and not _pid_owned_by_project(
+                pid, project_root
+            ):
+                logger.warning(
+                    "Refusing to free port held by PID %s — its executable is "
+                    "not under %s (not this project's server)",
+                    pid,
+                    project_root,
+                )
+                continue
             try:
                 subprocess.run(
                     ["taskkill", "/F", "/PID", pid],

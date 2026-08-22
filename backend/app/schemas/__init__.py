@@ -58,6 +58,16 @@ from app.schemas.session import (
     SessionScreenshotRead,
     SessionUpdate,
 )
+from app.schemas.system import (
+    ActivityEventRead,
+    ActivityResponse,
+    ComponentStatusRead,
+    OllamaRecentQuery,
+    OllamaStatusRead,
+    SyncLastRun,
+    SyncStatusRead,
+    SystemOverview,
+)
 from app.schemas.test import TestResultRead, TestRunResponse
 from app.schemas.tester import TesterDescriptor, TesterRunRequest
 from app.schemas.triage import TriageEvidence, TriageFrame, TriageRead, TriageSourceLine
@@ -77,11 +87,14 @@ from app.schemas.world_sim import (
 )
 
 __all__ = [
+    "ActivityEventRead",
+    "ActivityResponse",
     "ArchitectureNode",
     "BuildLogRead",
     "BuildTrigger",
     "ChatMessageCreate",
     "ChatMessageRead",
+    "ComponentStatusRead",
     "FeatureMatrix",
     "GalaxyGraph",
     "GalaxyLink",
@@ -90,6 +103,8 @@ __all__ = [
     "JobEnvelope",
     "JobStatus",
     "KnowledgeSummaryRead",
+    "OllamaRecentQuery",
+    "OllamaStatusRead",
     "PortfolioCandidate",
     "PortfolioScoreRead",
     "PortfolioSummary",
@@ -115,6 +130,9 @@ __all__ = [
     "SessionScreenshotCreate",
     "SessionScreenshotRead",
     "SessionUpdate",
+    "SyncLastRun",
+    "SyncStatusRead",
+    "SystemOverview",
     "TestResultRead",
     "TestRunResponse",
     "TesterDescriptor",

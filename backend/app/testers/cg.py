@@ -40,13 +40,16 @@ def run(ctx: TesterContext) -> None:
     ctx.http("GET", f"{PORT}/health", expect_body="healthy")
     ctx.http("GET", f"{PORT}/", expect_body="AI Documentary Studio")
     ctx.http("POST", f"{PORT}/api/topics/generate")
-    ctx.wait(4)
-    # Mock LLM's fixed MOCK_TOPICS make this deterministic.
-    ctx.http("GET", f"{PORT}/api/topics", expect_body="Molasses")
+    # v1.17.18.6 (audit2 T10): bounded retries on the deterministic check
+    # instead of a fixed settle-sleep (mock topics are deterministic).
+    ctx.http("GET", f"{PORT}/api/topics", retries=6, expect_body="Molasses")
     ctx.checkpoint("mock topic generation verified")
 
     ctx.launch(ELECTRON_CMD)
-    # Cold Electron boot: tsc electron build + vite dev server + wait-on + spawn.
+    # Cold Electron boot: tsc electron build + vite dev server + wait-on +
+    # spawn. No deterministic probe target exists for the packaged window
+    # (HTTP is refused by design), so a bounded settle remains — documented
+    # rather than disguised (audit2 T10).
     ctx.wait(45)
     ctx.screenshot("Electron window after launch")
     # The renderer's `/api/pipeline/jobs/{id}` calls 404 against the server's
@@ -72,5 +75,5 @@ TESTER = Tester(
     ),
     run=run,
     project_slug="Cg",
-    ports=(8000,),  # v1.17.18.5 (audit2 T11): declared like demake/wft
+    ports=(8000,),  # v1.17.18.6 (audit2 T11): declared like demake/wft
 )

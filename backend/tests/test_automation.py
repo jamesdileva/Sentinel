@@ -12,6 +12,7 @@ from sqlmodel import Session, select
 from app.db import connection
 from app.db.models import Project, ProjectFile, SecurityFinding
 from app.main import app
+from app.services import build_runner
 from app.services.build_runner import BuildRunner
 from app.services.command_runner import CommandResult
 from app.services.indexer import IndexerService
@@ -393,11 +394,13 @@ def _project_named(session, name: str, startup: str, root) -> Project:
 
 
 def test_build_runner_open_frees_ports_launches_extras_and_opens_browser(
-    tmp_db, tmp_path, fake_subprocess
+    tmp_db, tmp_path, fake_subprocess, monkeypatch
 ):
     """v1.17.13.4: build->open for a browser-served app (Card-Game) kills
     listeners on its declared ports, launches the stored startup plus the
-    extra backend server, and opens the default browser at the web_url."""
+    extra backend server, and opens the default browser at the web_url.
+    v1.17.18.6 (audit2 S8): only PIDs whose exe lives under the project are
+    killed — a drift port owned by something else is left alone."""
     fake_subprocess.netstat_out = (
         "TCP    0.0.0.0:5173    0.0.0.0:0    LISTENING    11111\n"
         "TCP    [::1]:3000      [::]:0       LISTENING    22222\n"
@@ -406,6 +409,14 @@ def test_build_runner_open_frees_ports_launches_extras_and_opens_browser(
     )
     root = tmp_path / "card-game-open"
     root.mkdir()
+
+    def _fake_exe(pid: int) -> str | None:
+        pid = int(pid)
+        if pid in (11111, 22222):
+            return str(root / ".venv" / "Scripts" / "python.exe")
+        return str(tmp_path / "unrelated" / "elsewhere.exe")
+
+    monkeypatch.setattr(build_runner, "_process_exe_path", _fake_exe)
     with Session(connection.get_engine()) as session:
         project = _project_named(
             session, "Card-Game", "cd frontend && npm run dev", root
@@ -420,7 +431,7 @@ def test_build_runner_open_frees_ports_launches_extras_and_opens_browser(
     assert ["netstat", "-ano"] in commands
     assert ["taskkill", "/F", "/PID", "11111"] in commands
     assert ["taskkill", "/F", "/PID", "22222"] in commands
-    # a drift port (5174) is not the app's — never killed
+    # a drift port (5174) is not the app's - never killed (S8 ownership guard)
     assert all(c != ["taskkill", "/F", "/PID", "33333"] for c in commands)
     popens = [c[1] for c in _FakeSubprocess.calls if c[0] == "popen"]
     assert popens == ["cd frontend && npm run dev", "cd backend && node server.js"]
@@ -450,7 +461,7 @@ def test_build_runner_open_desktop_app_opens_no_browser(
     tmp_db, tmp_path, fake_subprocess
 ):
     """v1.17.13.4: a desktop app (Cg — Electron, no web_url) is launched
-    with no browser. v1.17.18.5 (audit2 T11): Cg now declares ports=(8000,)
+    with no browser. v1.17.18.6 (audit2 T11): Cg now declares ports=(8000,)
     like Demake/WFT, so its own dev-server port is freed before relaunch."""
     root = tmp_path / "cg-open"
     root.mkdir()

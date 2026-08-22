@@ -66,7 +66,11 @@ from app.testers.features import (  # noqa: E402
 
 
 def _build_registry() -> dict[str, list[Feature]]:
-    return {
+    # v1.17.18.6 (audit2 T12): the keys must match Tester.project_slug values
+    # in the testers registry — a typo or renamed app previously drifted
+    # silently; now it fails loudly at import. Adding an app still means one
+    # entry here plus its tester entry (the mapping module->slug is inherent).
+    registry = {
         "Ag": ag.FEATURES,
         "Airadio": airadio.FEATURES,
         "Algo-Trader": algo_trader.FEATURES,
@@ -78,6 +82,18 @@ def _build_registry() -> dict[str, list[Feature]]:
         "Tv-Scheduler": tv_scheduler.FEATURES,
         "Workflow-Toolkit": workflow_toolkit.FEATURES,
     }
+    from app.testers import TESTERS
+
+    # Feature-only apps: no smoke tester exists (the Airadio UI has no
+    # deterministic assertions beyond presence), so its slug lives only here.
+    FEATURE_ONLY_SLUGS = frozenset({"Airadio"})
+    unknown = set(registry) - set(TESTERS) - FEATURE_ONLY_SLUGS
+    if unknown:
+        raise RuntimeError(
+            f"feature registry slugs missing from TESTERS: {sorted(unknown)} "
+            "- fix or remove the entries (or add to FEATURE_ONLY_SLUGS)"
+        )
+    return registry
 
 
 FEATURES: dict[str, list[Feature]] = _build_registry()

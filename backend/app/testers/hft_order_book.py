@@ -25,7 +25,6 @@ is a self-created entity of the session, so killing it is session
 cleanup, not a user action).
 """
 
-import subprocess
 import time
 
 from PIL import ImageGrab
@@ -35,6 +34,7 @@ from app.testers._helpers import (
     TesterAssertionError,
     TesterContext,
     TesterTimeoutError,
+    kill_by_image_name,
 )
 from app.utils.window_capture import capture_window_content, find_project_window
 
@@ -44,14 +44,7 @@ MIN_GRAY_LEVELS = 8
 
 
 def _kill_launched_tree() -> None:
-    try:
-        subprocess.run(
-            ["taskkill", "/T", "/F", "/IM", "hft.exe"],
-            capture_output=True,
-            timeout=15,
-        )
-    except (OSError, subprocess.SubprocessError):
-        pass
+    kill_by_image_name("hft.exe", tree=True)
 
 
 def _wait_for_window(ctx: TesterContext) -> tuple[int, tuple[int, int, int, int]]:
