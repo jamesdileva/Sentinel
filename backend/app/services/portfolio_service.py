@@ -93,6 +93,12 @@ def is_doc_path(path: str) -> bool:
     return "/docs/" in f"/{normalized}"
 
 
+def _is_readme(path: str) -> bool:
+    """True when the file is a README (any location, any doc extension)."""
+    leaf = (path or "").replace("\\", "/").rsplit("/", 1)[-1].lower()
+    return leaf == "readme" or leaf.startswith("readme.")
+
+
 def is_test_file_path(path: str) -> bool:
     """True for conventional test files: tests/ dirs, test_*.py, *_test.py,
     *.test.ts(x)/js, *.spec.ts(x)/js, __tests__/."""
@@ -245,13 +251,32 @@ class PortfolioService:
             return float(WEIGHTS["security"]), "clean"
         return max(0.0, WEIGHTS["security"] - penalty), "findings"
 
-    def _docs_component(self, project_id: str) -> tuple[float, int]:
+    def _docs_component(self, project_id: str) -> tuple[float, int, str]:
+        """Docs verdict from PRESENCE, not density (v1.17.18.6).
+
+        The old rule (✓ needs ≥50% of indexed files to be markdown) marked
+        well-documented code-heavy projects ✗ — a 200-file repo with a
+        README and a docs/ dir scored ~2%. Now:
+        - "passing" ✓: README present AND at least one other doc file
+        - "partial" ⚠: some docs but no README (or README alone)
+        - "pending" ✗: no documentation at all
+        `documentation_pct` stays as the informational density figure."""
         files = self._files(project_id)
         if not files:
-            return 0.0, 0
-        doc_count = sum(1 for f in files if is_doc_path(f.path))
-        pct = int(round(100.0 * doc_count / len(files)))
-        return round(WEIGHTS["docs"] * pct / 100.0, 1), pct
+            return 0.0, 0, "pending"
+        doc_files = [f for f in files if is_doc_path(f.path)]
+        pct = int(round(100.0 * len(doc_files) / len(files)))
+        if not doc_files:
+            return 0.0, pct, "pending"
+        has_readme = any(_is_readme(f.path) for f in doc_files)
+        has_more = len(doc_files) > (1 if has_readme else 0)
+        if has_readme:
+            status = "passing" if has_more else "partial"
+            points = (
+                float(WEIGHTS["docs"]) if status == "passing" else WEIGHTS["docs"] / 2
+            )
+            return points, pct, status
+        return WEIGHTS["docs"] / 2, pct, "partial"
 
     # --- caching --------------------------------------------------------------
 
@@ -316,7 +341,7 @@ class PortfolioService:
         build, build_status = self._build_component(project)
         tests, test_status = self._test_component(project.id)
         security, security_status = self._security_component(project)
-        docs, docs_pct = self._docs_component(project.id)
+        docs, docs_pct, docs_status = self._docs_component(project.id)
         screenshots_available = self._screenshots_available(project.id)
         screenshots = float(WEIGHTS["screenshots"]) if screenshots_available else 0.0
         return {
@@ -325,6 +350,7 @@ class PortfolioService:
             "test_status": test_status,
             "security_status": security_status,
             "docs_pct": docs_pct,
+            "docs_status": docs_status,
             "screenshots_available": screenshots_available,
         }
 
@@ -342,6 +368,7 @@ class PortfolioService:
         row.test_status = components["test_status"]
         row.security_status = components["security_status"]
         row.documentation_pct = components["docs_pct"]
+        row.documentation_status = components["docs_status"]
         row.screenshots_available = components["screenshots_available"]
         row.portfolio_score = components["score"]
         row.updated_at = datetime.datetime.now(timezone.utc)
@@ -384,7 +411,7 @@ class PortfolioService:
                 [
                     self._pass_symbol(row.build_status),
                     self._pass_symbol(row.test_status),
-                    self._docs_symbol(row.documentation_pct),
+                    self._docs_symbol(row.documentation_status),
                     self._security_symbol(row.security_status),
                     # v1.17.18.0: real data — was a hardcoded ✗ stub
                     "✓" if row.screenshots_available else "✗",
@@ -435,7 +462,7 @@ class PortfolioService:
             missing.append("tests")
         if row.security_status == "pending":
             missing.append("security")
-        if row.documentation_pct == 0:
+        if getattr(row, "documentation_status", "pending") == "pending":
             missing.append("docs")
         if not row.screenshots_available:
             missing.append("screenshots")
@@ -448,10 +475,19 @@ class PortfolioService:
             return "⚠"
         return "✗"
 
-    def _docs_symbol(self, pct: int) -> str:
-        if pct >= DOCS_GREEN_PCT:
+    def _docs_symbol(self, status_or_pct) -> str:
+        """Docs cell. v1.17.18.6: prefers the presence-based
+        `documentation_status`; falls back to the density percentage for
+        score rows cached before the migration."""
+        if isinstance(status_or_pct, str):
+            if status_or_pct == "passing":
+                return "✓"
+            if status_or_pct == "partial":
+                return "⚠"
+            return "✗"
+        if status_or_pct >= DOCS_GREEN_PCT:
             return "✓"
-        if pct > 0:
+        if status_or_pct > 0:
             return "⚠"
         return "✗"
 

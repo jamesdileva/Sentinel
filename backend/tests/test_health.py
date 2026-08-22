@@ -28,6 +28,20 @@ def test_spa_fallback_serves_dashboard_when_built(client):
     assert "<!doctype html" in resp.text.lower()
 
 
+def test_index_html_sent_no_cache(client):
+    """v1.17.18.6: the HTML shell is served with `no-cache` so browsers
+    revalidate after a rebuild — a cached shell used to hide new deployments
+    (hashed /assets files stay cacheable; only the entry document matters)."""
+    if not _dashboard_built():
+        import pytest
+
+        pytest.skip("no dashboard build staged")
+    resp = client.get("/")
+    assert resp.headers["cache-control"] == "no-cache"
+    fallback = client.get("/some/unknown/route")
+    assert fallback.headers["cache-control"] == "no-cache"
+
+
 def test_health_structured(client):
     resp = client.get("/health")
     assert resp.status_code == 200

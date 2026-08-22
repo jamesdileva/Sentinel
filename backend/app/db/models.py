@@ -227,6 +227,10 @@ class PortfolioScore(SQLModel, table=True):
     build_status: str = "pending"
     test_status: str = "pending"
     documentation_pct: int = 0
+    # v1.17.18.6 (audit2 follow-up): presence-based docs verdict ("passing" /
+    # "partial" / "pending") — the density percentage alone marked well-
+    # documented projects ✗ just for having lots of code.
+    documentation_status: str = Field(default="pending")
     security_status: str = "pending"
     screenshots_available: bool = False
     portfolio_score: float = 0.0

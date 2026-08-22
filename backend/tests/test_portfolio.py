@@ -197,6 +197,53 @@ def test_is_doc_path():
     assert not is_doc_path("")
 
 
+def test_docs_component_presence_tiers():
+    """v1.17.18.6: docs verdict is presence-based — README+other doc passes,
+    README alone (or docs without README) is partial, nothing is pending.
+    Density no longer punishes code-heavy projects."""
+    from app.services.portfolio_service import WEIGHTS
+
+    engine = make_engine()
+    projects = seed(engine)
+    svc = make_service(engine)
+    # gamma has no files at all
+    assert svc._docs_component(projects["gamma"].id) == (0.0, 0, "pending")
+
+    from app.db.models import ProjectFile
+
+    with Session(engine, expire_on_commit=False) as session:
+        # delta: a single stray markdown, no README -> partial
+        delta = Project(name="delta", path="/repo/delta", language="python")
+        session.add(delta)
+        session.flush()
+        session.add(
+            ProjectFile(
+                project_id=delta.id,
+                path="notes.mdx",
+                absolute_path="/r/notes.mdx",
+            )
+        )
+        session.commit()
+
+    svc = make_service(engine)
+    points, pct, status = svc._docs_component(projects["beta"].id)
+    assert (points, status) == (WEIGHTS["docs"] / 2, "partial")  # README alone
+    points, pct, status = svc._docs_component(delta.id)
+    assert (points, status) == (WEIGHTS["docs"] / 2, "partial")
+    points, _, status = svc._docs_component(projects["alpha"].id)
+    assert (points, status) == (float(WEIGHTS["docs"]), "passing")
+
+
+def test_is_readme_helper():
+    from app.services.portfolio_service import _is_readme
+
+    assert _is_readme("README.md")
+    assert _is_readme("readme")
+    assert _is_readme("docs/readme.markdown")
+    assert not _is_readme("src/main.py")
+    assert not _is_readme("guides/reading-list.md")
+
+
 # ---------------------------------------------------------------------------
 # scoring
 # ---------------------------------------------------------------------------
@@ -206,9 +253,9 @@ def test_health_score_healthy_project():
     engine = make_engine()
     projects = seed(engine)
     svc = make_service(engine)
-    # build 30 + tests 30 + security 20 + docs 15*50% + screenshots 5
-    # = 92.5 (v1.17.18.0 weights 30/30/20/15/5)
-    assert svc.compute_health_score(projects["alpha"]) == 92.5
+    # build 30 + tests 30 + security 20 + docs 15 (README + docs/ = passing,
+    # v1.17.18.6 presence-based) + screenshots 5 = 100
+    assert svc.compute_health_score(projects["alpha"]) == 100.0
 
 
 def test_health_score_broken_project():
@@ -216,8 +263,9 @@ def test_health_score_broken_project():
     projects = seed(engine)
     svc = make_service(engine)
     # build 21 (static survives failed run) + tests 24 (static) + security 10
-    # (critical unresolved) + docs 15*33% + no screenshots = 60.0
-    assert svc.compute_health_score(projects["beta"]) == 60.0
+    # (critical unresolved) + docs 7.5 (README alone -> partial, presence-
+    # based v1.17.18.6) + no screenshots = 62.5
+    assert svc.compute_health_score(projects["beta"]) == 62.5
 
 
 def test_health_score_untouched_project_is_zero():
@@ -237,9 +285,10 @@ def test_compute_portfolio_score_upserts_row():
     assert first.build_status == "passing"
     assert first.test_status == "passing"
     assert first.security_status == "clean"
-    assert first.documentation_pct == 50
+    assert first.documentation_pct == 50  # density kept as an informational figure
+    assert first.documentation_status == "passing"  # v1.17.18.6 presence verdict
     assert first.screenshots_available is True
-    assert first.portfolio_score == 92.5
+    assert first.portfolio_score == 100.0
 
 
 def test_scores_persists_all_projects():
@@ -272,7 +321,7 @@ def test_score_row_is_cached_until_sources_change():
             )
         ).first()
         assert original is not None
-        assert original.portfolio_score == 92.5
+        assert original.portfolio_score == 100.0
 
     # No sources changed -> cached row untouched (same id/timestamp content).
     row = svc._fresh_row(projects["alpha"])
@@ -291,8 +340,9 @@ def test_score_row_is_cached_until_sources_change():
         session.commit()
     row = svc._fresh_row(projects["alpha"])
     assert row.build_status == "failing"
-    # static 21 survives + tests 30 + security 20 + docs 7.5 + screenshots 5
-    assert row.portfolio_score == 83.5
+    # static 21 survives + tests 30 + security 20 + docs passing 15 +
+    # screenshots 5 = 91.0
+    assert row.portfolio_score == 91.0
 
 
 def test_summary_counts():
@@ -303,7 +353,7 @@ def test_summary_counts():
     assert summary["projects"] == 3
     assert summary["buildable"] == 2  # alpha + beta have commands.build
     assert summary["open_findings"] == 1  # only beta's unresolved critical
-    assert summary["avg_health"] == round((92.5 + 60.0 + 0.0) / 3, 1)
+    assert summary["avg_health"] == round((100.0 + 62.5 + 0.0) / 3, 1)
 
 
 def test_clean_scan_flips_pending_to_clean():
@@ -537,8 +587,9 @@ def test_screenshot_component_and_epoch():
         session.commit()
     row = svc._fresh_row(projects["beta"])
     assert row.screenshots_available is True
-    # 21 build + 24 tests + 10 security + 5 docs + 5 screenshots = 65.0
-    assert row.portfolio_score == 65.0
+    # 21 build + 24 tests + 10 security + 7.5 partial docs (README alone)
+    # + 5 screenshots = 67.5
+    assert row.portfolio_score == 67.5
 
 
 def test_refresh_all_scores_recomputes_cached_rows():
@@ -566,7 +617,7 @@ def test_refresh_all_scores_recomputes_cached_rows():
             )
         ).first()
         assert row.screenshots_available is True
-        assert row.portfolio_score == 92.5
+        assert row.portfolio_score == 100.0
 
 
 # ---------------------------------------------------------------------------
@@ -580,7 +631,7 @@ def test_best_candidates_ranked_with_missing():
     svc = make_service(engine)
     ranked = svc.get_best_candidates(min_score=0)
     assert [c.project_name for c in ranked] == ["alpha", "beta", "gamma"]
-    assert ranked[0].score == 92.5
+    assert ranked[0].score == 100.0
     assert ranked[0].missing == []
     assert ranked[2].score == 0.0
     assert set(ranked[2].missing) == {
@@ -597,7 +648,8 @@ def test_best_candidates_min_score_filter():
     seed(engine)
     svc = make_service(engine)
     assert [c.project_name for c in svc.get_best_candidates(min_score=70)] == ["alpha"]
-    assert svc.get_best_candidates(min_score=95) == []
+    # alpha now scores a full 100 under presence-based docs
+    assert [c.project_name for c in svc.get_best_candidates(min_score=95)] == ["alpha"]
 
 
 def test_feature_matrix_symbols():
@@ -647,7 +699,7 @@ def test_api_scores(api_client):
     rows = response.json()
     assert len(rows) == 3
     assert all("portfolio_score" in row for row in rows)
-    assert max(row["portfolio_score"] for row in rows) == 92.5
+    assert max(row["portfolio_score"] for row in rows) == 100.0
 
 
 def test_api_best_candidates(api_client):
@@ -673,4 +725,4 @@ def test_api_summary(api_client):
     assert body["projects"] == 3
     assert body["buildable"] == 2
     assert body["open_findings"] == 1
-    assert body["avg_health"] == 50.8
+    assert body["avg_health"] == 54.2

@@ -13,6 +13,8 @@ class PortfolioScoreRead(BaseModel):
     build_status: str
     test_status: str
     documentation_pct: int
+    # v1.17.18.6: presence-based docs verdict (passing/partial/pending).
+    documentation_status: str = "pending"
     security_status: str
     screenshots_available: bool
     portfolio_score: float

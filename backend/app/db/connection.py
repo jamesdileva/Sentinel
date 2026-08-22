@@ -69,6 +69,11 @@ def _migrate_columns(engine) -> None:
         ),
         (("projectfile",), "mtime_ns", "BIGINT"),  # v1.17.7.1
         (("buildlog",), "launch_command", "VARCHAR(500)"),  # v1.17.8.0
+        (
+            ("portfolioscore",),
+            "documentation_status",
+            "VARCHAR(20) NOT NULL DEFAULT 'pending'",  # v1.17.18.6
+        ),
     )
     inspector = __import__("sqlalchemy").inspect(engine)
     for table_names, column, column_type in _MIGRATIONS:

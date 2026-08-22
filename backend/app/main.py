@@ -171,9 +171,13 @@ app = FastAPI(
 
 @app.get("/", tags=["system"])
 def root():
-    """Serve the dashboard; health JSON only when no build exists."""
+    """Serve the dashboard; health JSON only when no build exists.
+
+    v1.17.18.6: index.html is served with `no-cache` so browsers always
+    revalidate the entry document after a rebuild — hashed /assets files
+    stay cacheable, but a stale cached shell used to hide new deployments."""
     if DASHBOARD_INDEX is not None and DASHBOARD_INDEX.is_file():
-        return FileResponse(DASHBOARD_INDEX)
+        return FileResponse(DASHBOARD_INDEX, headers={"Cache-Control": "no-cache"})
     return {"status": "ok"}
 
 
@@ -267,8 +271,10 @@ if DASHBOARD_DIR is not None:
     def spa_fallback(full_path: str) -> FileResponse:
         candidate = (DASHBOARD_DIR / full_path).resolve()
         if candidate.is_file() and candidate.is_relative_to(DASHBOARD_DIR.resolve()):
+            if candidate.name == "index.html":
+                return FileResponse(candidate, headers={"Cache-Control": "no-cache"})
             return FileResponse(candidate)
-        return FileResponse(DASHBOARD_INDEX)
+        return FileResponse(DASHBOARD_INDEX, headers={"Cache-Control": "no-cache"})
 
     logger.info("Serving dashboard from %s", DASHBOARD_DIR)
 else:
