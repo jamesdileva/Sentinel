@@ -46,3 +46,7 @@ Thumbs.db
 
 # Scratchpad
 docs/later.md
+
+# Desktop packaging artifacts
+desktop/resources/
+desktop/build/

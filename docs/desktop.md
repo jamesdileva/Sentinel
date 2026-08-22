@@ -77,6 +77,25 @@ started server keeps running. It finds the checkout by walking up from its
 own location (works from `desktop\dist\win-unpacked\` inside a clone) or set
 `SENTINEL_ROOT`. A second launch just refocuses the first window.
 
+### Desktop shell + installer (Phase 2 packaging, v1.17.18.6)
+
+`desktop/dist/` holds both artifacts (built with `npm run dist` inside
+`desktop/`):
+
+- `win-unpacked\Sentinel.exe` — portable launcher
+- `Sentinel Setup <version>.exe` — per-user installer (Start Menu shortcut)
+
+Since Phase 2 the **backend ships frozen inside the installer**
+(PyInstaller onedir under `resources\server-runtime\`), so a machine needs
+no repo, no venv, and no Python — install, click Sentinel. On first run it
+spawns the bundled server and stores state under
+`%APPDATA%\Sentinel\data\` (SQLite, Chroma, screenshots). Restore a backup
+zip into that folder after a crash (see Crash recovery).
+
+Development checkouts still prefer the repo venv (`run.py` flow above) when
+the shell runs unpackaged; `SENTINEL_PORT` / `SENTINEL_ROOT` env vars work
+in both modes.
+
 - Dashboard: `http://127.0.0.1:8420` · System page: `/system`
 - **The staged dashboard ships inside the release commit** (`backend/app/static`
   is versioned, v1.16.2) — `git pull` alone updates the dashboard; you never

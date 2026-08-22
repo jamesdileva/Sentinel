@@ -26,6 +26,28 @@ const STARTUP_TIMEOUT_MS = 90_000;
 
 let backendChild = null; // set only when THIS shell spawned the backend
 
+/**
+ * Phase 2 (v1.17.18.6): when packaged, the backend ships frozen inside
+ * resources/server-runtime/ — no repo, venv, or Python install required.
+ * Its data lives per-machine under %APPDATA%/Sentinel/data (Program Files
+ * is not writable); the dev flow keeps using the repo checkout + venv.
+ */
+function bundledServerPath() {
+  if (!app.isPackaged) return null;
+  return path.join(process.resourcesPath, "server-runtime", "sentinel-server.exe");
+}
+
+function frozenDataEnv() {
+  const dataDir = path.join(app.getPath("userData"), "data");
+  return {
+    ...process.env,
+    SENTINEL_PORT: PORT,
+    SENTINEL_DB_PATH: path.join(dataDir, "sqlite", "sentinel.db"),
+    SENTINEL_CHROMA_PATH: path.join(dataDir, "chroma"),
+    SENTINEL_WORLD_SIM_DB_PATH: path.join(dataDir, "world_sim", "world.db"),
+  };
+}
+
 function findRepoRoot() {
   const candidates = [];
   if (process.env.SENTINEL_ROOT) candidates.push(process.env.SENTINEL_ROOT);
@@ -72,13 +94,28 @@ async function waitForBackend(timeoutMs) {
 }
 
 function startBackend(repoRoot) {
+  // Phase 2: packaged shells spawn the frozen server; dev runs use the venv.
+  const bundled = bundledServerPath();
+  if (bundled && fs.existsSync(bundled)) {
+    const child = spawn(bundled, [], {
+      cwd: path.dirname(bundled),
+      windowsHide: true,
+      stdio: "ignore",
+      env: frozenDataEnv(),
+    });
+    child.on("error", (err) => {
+      dialog.showErrorBox("Sentinel — backend failed to start", String(err));
+    });
+    return child;
+  }
+
   const python = venvPython(repoRoot);
   if (!python) {
     dialog.showErrorBox(
       "Sentinel — venv not found",
       `No backend virtualenv was found under:\n${repoRoot}\n\n` +
         "Create it once per machine (docs/desktop.md):\n" +
-        "  backend\\.venv\\Scripts\\python.exe -m venv .venv\n" +
+        "  backend\\.venv\\Scripts\\python.exe -m pip install -e \"backend[dev]\"\n" +
         "(or point SENTINEL_ROOT at your checkout)."
     );
     return null;

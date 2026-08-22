@@ -9,6 +9,8 @@ deferred queue. Same-origin serving means there is no CORS surface at all
 (v1.17.18.4: docstring previously still promised CORS middleware).
 """
 
+import os
+import sys
 import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -46,9 +48,16 @@ logger = get_logger(__name__)
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 # Dev convenience: a fresh clone with no staged build yet can serve frontend/dist.
 DEV_DIST = Path(__file__).resolve().parent.parent.parent.parent / "frontend" / "dist"
+# Frozen backend (Phase 2 packaging, v1.17.18.6): static ships as bundled data
+# at <_MEIPASS>/app/static.
+FROZEN_STATIC = Path(getattr(sys, "_MEIPASS", "")) / "app" / "static"
 
 DASHBOARD_DIR = (
-    STATIC_DIR if STATIC_DIR.is_dir() else (DEV_DIST if DEV_DIST.is_dir() else None)
+    STATIC_DIR
+    if STATIC_DIR.is_dir()
+    else (FROZEN_STATIC if FROZEN_STATIC.is_dir() else None) or (
+        DEV_DIST if DEV_DIST.is_dir() else None
+    )
 )
 DASHBOARD_INDEX = (
     Path(DASHBOARD_DIR) / "index.html" if DASHBOARD_DIR is not None else None

@@ -1,14 +1,14 @@
 {
   "name": "sentinel-desktop",
   "productName": "Sentinel",
-  "version": "1.17.18.6",
+  "version": "1.17.18",
   "description": "Desktop shell for the Sentinel home server - attaches to a running backend or spawns one via the project venv.",
   "main": "main.js",
   "private": true,
   "scripts": {
     "start": "electron .",
-    "dist": "electron-builder --win --dir",
-    "installer": "electron-builder --win nsis"
+    "dist": "electron-builder --win",
+    "dist-dir": "electron-builder --win --dir"
   },
   "devDependencies": {
     "electron": "^33.2.0",
@@ -18,14 +18,24 @@
     "appId": "com.sentinel.desktop",
     "productName": "Sentinel",
     "directories": {
-      "output": "dist"
+      "output": "dist",
+      "buildResources": "."
     },
     "files": [
       "main.js",
       "package.json"
     ],
+    "extraResources": [
+      {
+        "from": "resources/server-runtime",
+        "to": "server-runtime"
+      }
+    ],
     "win": {
-      "target": "dir"
+      "target": [
+        { "target": "dir" },
+        { "target": "nsis" }
+      ]
     }
   }
 }
