@@ -199,6 +199,18 @@ class ChromaManager:
                     self._guard(exc)
         self._invalidate_health()
 
+    def delete_ids(self, collection: str, ids: list[str]) -> None:
+        """Delete specific ids from one collection (v1.17.18.6: lets
+        ingestion retract vectors whose source rows became ineligible —
+        e.g. skipped-build boilerplate in build_logs)."""
+        if not ids:
+            return
+        with self._lock(collection):
+            try:
+                self.collection(collection).delete(ids=ids)
+            except Exception as exc:  # noqa: BLE001 — translate then re-raise
+                self._guard(exc)
+
     def count(self, collection: str) -> int:
         with self._lock(collection):
             try:

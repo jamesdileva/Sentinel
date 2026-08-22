@@ -427,9 +427,17 @@ class RagService:
         )
 
     def ingest_build_logs(self, project: Project) -> int:
+        """Embed recent build outputs. v1.17.18.6: skipped builds (success
+        is None — "no build command configured" boilerplate) are excluded;
+        they embedded pure noise that surfaced as RAG sources (found live
+        judging Card Game query results)."""
         logs = BuildLogRepository(self.session).get_by_project(
             project.id, _RECENT_LIMIT
         )
+        # Retract vectors for skipped builds so previously-embedded noise
+        # ("No build command configured...") disappears on the next run.
+        skipped_ids = [log.id for log in logs if log.success is None]
+        self.chroma.delete_ids("build_logs", skipped_ids)
         return self._upsert_simple(
             "build_logs",
             project,
@@ -446,6 +454,7 @@ class RagService:
                     "id": log.id,
                 }
                 for log in logs
+                if log.success is not None  # skip never-ran / no-op builds
             ],
         )
 
