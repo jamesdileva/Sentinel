@@ -34,12 +34,19 @@ interface LinkPair {
   color: string;
 }
 
-const REPULSION = 2600;
-const LINK_DISTANCE = 105;
+const REPULSION = 3600;
+const LINK_DISTANCE = 120;
 const LINK_STRENGTH = 0.06;
 const CENTER_PULL = 0.02;
 const DAMPING = 0.8;
 const ITERATIONS = 320;
+// v1.17.18.6 polish: nodes feel an inward push inside this band instead of
+// being hard-clamped onto the border (edge-pinned planets artifact).
+const EDGE_PAD = 52;
+
+// Resizable canvas heights (user-tunable; width always follows container).
+const HEIGHT_PRESETS = { compact: 400, normal: 560, tall: 720 } as const;
+type HeightPreset = keyof typeof HEIGHT_PRESETS;
 
 function dominantTechColor(graph: GalaxyGraph, projectId: string): string {
   let bestTech: string | null = null;
@@ -147,47 +154,110 @@ function simulate(
       link.target.vx -= dx * f;
       link.target.vy -= dy * f;
     }
-    const margin = 26;
+    const margin = 10;
     for (const n of nodes) {
       n.vx += (cx - n.x) * CENTER_PULL * alpha;
       n.vy += (cy - n.y) * CENTER_PULL * alpha;
+      // soft boundary (polish): inward push in the edge band, no hard clamp
+      if (n.x < EDGE_PAD) n.vx += (EDGE_PAD - n.x) * 0.09;
+      if (n.x > width - EDGE_PAD) n.vx -= (n.x - (width - EDGE_PAD)) * 0.09;
+      if (n.y < EDGE_PAD) n.vy += (EDGE_PAD - n.y) * 0.09;
+      if (n.y > height - EDGE_PAD) n.vy -= (n.y - (height - EDGE_PAD)) * 0.09;
       n.vx *= DAMPING;
       n.vy *= DAMPING;
       n.x += n.vx;
       n.y += n.vy;
+      // last-resort containment only
       n.x = Math.max(margin, Math.min(width - margin, n.x));
       n.y = Math.max(margin, Math.min(height - margin, n.y));
     }
+  }
+  // polish: resolve circle overlaps so nodes stop stacking (the screenshot's
+  // merged purple pair). Half-overlap separation, a few relaxation passes.
+  for (let pass = 0; pass < 50; pass++) {
+    let moved = false;
+    for (let i = 0; i < nodes.length; i++) {
+      const a = nodes[i];
+      for (let j = i + 1; j < nodes.length; j++) {
+        const b = nodes[j];
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const minDist = a.r + b.r + 8;
+        const d2 = dx * dx + dy * dy;
+        if (d2 >= minDist * minDist || d2 === 0) continue;
+        const d = Math.sqrt(d2);
+        const push = (minDist - d) / 2;
+        const ux = dx / d || 0.1;
+        const uy = dy / d || 0.1;
+        a.x -= ux * push;
+        a.y -= uy * push;
+        b.x += ux * push;
+        b.y += uy * push;
+        moved = true;
+      }
+    }
+    if (!moved) break;
   }
 }
 
 export default function GalaxyView({ graph }: { graph: GalaxyGraph }) {
   const wrapRef = useRef<HTMLDivElement | null>(null);
-  const [size, setSize] = useState({ w: 900, h: 560 });
+  const [size, setSize] = useState<{ w: number; h: number }>({
+    w: 900,
+    h: HEIGHT_PRESETS.normal,
+  });
+  const [preset, setPreset] = useState<HeightPreset>("normal");
   const [active, setActive] = useState<string | null>(null);
   const [hovered, setHovered] = useState<string | null>(null);
 
-  // Responsive sizing: the SVG viewBox is set to actual container pixels so
-  // window resizes scale the whole map instead of clipping it (the fixed
-  // pixel canvases of the old views were why shrinking broke them).
+  // Responsive sizing: width follows the container; height is user-tunable
+  // (Compact/Normal/Tall). The SVG viewBox is set to actual pixels so
+  // window resizes scale the map instead of clipping it.
   useEffect(() => {
     const el = wrapRef.current;
     if (!el || typeof ResizeObserver === "undefined") return;
     const ro = new ResizeObserver(() => {
       const w = el.clientWidth;
-      if (w > 0) {
-        setSize({ w, h: Math.max(440, Math.min(720, Math.round(w * 0.62))) });
-      }
+      if (w > 0) setSize((prev) => ({ ...prev, w }));
     });
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
+
+  useEffect(() => {
+    setSize((prev) => ({ ...prev, h: HEIGHT_PRESETS[preset] }));
+  }, [preset]);
 
   const { nodes, links } = useMemo(() => {
     const sim = buildSim(graph, size.w, size.h);
     simulate(sim.nodes, sim.links, size.w, size.h);
     return sim;
   }, [graph, size]);
+
+  // polish: greedy label placement — hide a project label that would
+  // overlap an already-placed one (bigger nodes keep priority), fixing the
+  // stacked "Jamesdileva…"/"Dinner Menu" labels from the first pass.
+  const labelVisible = useMemo(() => {
+    const visible = new Map<string, boolean>();
+    const placed: Array<{ x0: number; x1: number; y0: number; y1: number }> = [];
+    for (const sim of nodes) {
+      if (sim.node.kind !== "project") continue;
+      const halfW = sim.node.label.length * 3.3 + 8;
+      const box = {
+        x0: sim.x - halfW,
+        x1: sim.x + halfW,
+        y0: sim.y + sim.r,
+        y1: sim.y + sim.r + 15,
+      };
+      const clash = placed.some(
+        (p) =>
+          !(box.x1 < p.x0 || box.x0 > p.x1 || box.y1 < p.y0 || box.y0 > p.y1),
+      );
+      visible.set(sim.id, !clash);
+      if (!clash) placed.push(box);
+    }
+    return visible;
+  }, [nodes]);
 
   const nodesById = useMemo(
     () => new Map<string, GalaxyNode>(graph.nodes.map((n) => [n.id, n])),
@@ -227,12 +297,45 @@ export default function GalaxyView({ graph }: { graph: GalaxyGraph }) {
   return (
     <div className="flex items-start gap-4">
       <div ref={wrapRef} className="min-w-0 flex-1">
+        <div className="mb-2 flex items-center justify-between">
+          <p className="text-[11px] text-neutral-500">
+            click a node to focus · hover to preview
+          </p>
+          <div
+            className="flex gap-1 text-[11px]"
+            role="group"
+            aria-label="Map height"
+          >
+            {(Object.keys(HEIGHT_PRESETS) as HeightPreset[]).map((key) => (
+              <button
+                key={key}
+                onClick={() => setPreset(key)}
+                aria-pressed={preset === key}
+                className={`rounded px-2 py-0.5 capitalize ${
+                  preset === key
+                    ? "bg-neutral-700 text-white"
+                    : "text-neutral-500 hover:text-neutral-300"
+                }`}
+              >
+                {key}
+              </button>
+            ))}
+          </div>
+        </div>
         <svg
           viewBox={`0 0 ${size.w} ${size.h}`}
-          className="w-full select-none rounded-lg border border-neutral-800 bg-neutral-950"
+          style={{ height: size.h }}
+          className="w-full select-none rounded-lg border border-neutral-800"
           role="img"
           aria-label="Force-directed map of projects and shared technologies"
         >
+          <defs>
+            <radialGradient id="galaxy-bg" cx="50%" cy="42%" r="78%">
+              <stop offset="0%" stopColor="#12172b" />
+              <stop offset="100%" stopColor="#0a0a0a" />
+            </radialGradient>
+          </defs>
+          <rect x={0} y={0} width={size.w} height={size.h} fill="url(#galaxy-bg)" />
           {links.map((link, i) => {
             const lit =
               active !== null &&
@@ -253,8 +356,11 @@ export default function GalaxyView({ graph }: { graph: GalaxyGraph }) {
           {[...nodes].reverse().map((sim) => {
             const node = sim.node;
             const lit = isLit(sim.id);
+            const labelClash = labelVisible.get(sim.id) === false;
             const showLabel =
-              node.kind === "project" || hovered === sim.id || sim.id === active;
+              (node.kind === "project" && !labelClash) ||
+              hovered === sim.id ||
+              sim.id === active;
             return (
               <g
                 key={node.id}

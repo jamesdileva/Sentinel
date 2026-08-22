@@ -391,3 +391,40 @@ clean; frontend tsc clean + 131 tests pass.
   focused change with the page tests as the safety net.
 - **F9** shared PageIntro/EmptyState/ProjectSelect/usePollUntil extraction -
   touches six pages and their snapshots at once; same reasoning.
+
+---
+
+## Follow-up fixes - v1.17.18.6.1 through .6.7 (2026-08-22)
+
+Shipped after the audit2 fix batches, driven by live testing:
+
+- **.6.1** hotfix: dependency.vulnerable NOT NULL column from pre-cleanup DBs
+  broke every Dependency insert (PendingRollbackError on /sessions) -
+  _drop_dead_columns() migration added; regression test reproduces the
+  legacy schema.
+- **.6.2** feature-matrix build column ignored proven builds behind a
+  discovery miss (_build_component gated on has_build_command before reading
+  history). Evidence order now: green BuildLog > red BuildLog dominates >
+  passed Tester session counts as build proof (same credit tests got in .0).
+  Verified against live DB copy: Ag/Demake/Finsight -> passing.
+- **.6.3** edited files re-embed: the scanner re-parsed content changes but
+  left embedding_id set, so Chroma served stale vectors forever.
+  _upsert_file clears embedding_id on edit; arch summaries regenerate when
+  file mtimes pass generated_at (reuse path restamps it too).
+- **.6.4** RAG pass: keep_alive=30m (no model reload per occasional query);
+  ollama_dynamic_ctx sizes num_ctx to the prompt instead of always 32768;
+  source diversity cap (max 2 chunks/file).
+- **.6.5** RAG hygiene: skipped builds (success=None boilerplate) no longer
+  embedded; delete_ids() retracts their old vectors on the next index run.
+- **.6.6** Observatory: force-directed GalaxyView replaces metro+families as
+  the primary (now only) project-graph view - responsive SVG, FocusPanel
+  integration, soft boundary + collision relaxation + label dedupe, height
+  presets, ~200-line deterministic simulation, zero new dependencies.
+- **.6.7** portfolio docs verdict is presence-based (documentation_status:
+  passing/partial/pending + migration) instead of the >=50%-density rule
+  that marked documented projects X; index.html/SPA shell now sent
+  Cache-Control: no-cache (cached browser shells hid rebuilds).
+
+Still open / deliberate deferrals: sessions-list PATCH-era verb cleanup is
+done; remaining known items are the Chroma test-order flake and optional
+DPI-awareness work for window captures on scaled displays.

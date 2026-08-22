@@ -620,6 +620,50 @@ def test_refresh_all_scores_recomputes_cached_rows():
         assert row.portfolio_score == 100.0
 
 
+def test_refresh_all_scores_survives_scoring_error(monkeypatch):
+    """v1.17.18.6: a scoring hiccup must never break startup — the refresh
+    logs and returns instead of raising out of the lifespan."""
+    engine = make_engine()
+    seed(engine)
+
+    def boom(self, project):
+        raise RuntimeError("scoring hiccup")
+
+    monkeypatch.setattr(PortfolioService, "compute_portfolio_score", boom)
+    refresh_all_scores(engine=engine)  # must not raise
+
+
+def test_source_epoch_includes_last_indexed():
+    """A fresh `last_indexed` stamp advances the source epoch, invalidating
+    cached score rows after a rescan."""
+    engine = make_engine()
+    projects = seed(engine)
+    svc = make_service(engine)
+    alpha = projects["alpha"]
+    before = svc._source_epoch(alpha)
+    with Session(engine, expire_on_commit=False) as session:
+        project = session.get(Project, alpha.id)
+        assert project is not None
+        project.last_indexed = datetime.datetime.now(
+            datetime.timezone.utc
+        ) + datetime.timedelta(hours=1)
+        session.commit()
+        # _source_epoch reads the passed object's attribute — pass the
+        # refreshed instance, not the stale pre-seed snapshot.
+        after = svc._source_epoch(project)
+    assert after > before
+
+
+def test_docs_symbol_legacy_pct_fallback():
+    """Rows cached before the documentation_status migration still carry a
+    density int — the symbol helper keeps honoring it (✓ ≥50, ⚠ >0, ✗ 0)."""
+    svc = make_service(make_engine())
+    assert svc._docs_symbol(50) == "✓"
+    assert svc._docs_symbol(90) == "✓"
+    assert svc._docs_symbol(5) == "⚠"
+    assert svc._docs_symbol(0) == "✗"
+
+
 # ---------------------------------------------------------------------------
 # candidates + matrix
 # ---------------------------------------------------------------------------

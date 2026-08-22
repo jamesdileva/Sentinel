@@ -40,6 +40,10 @@ def test_index_html_sent_no_cache(client):
     assert resp.headers["cache-control"] == "no-cache"
     fallback = client.get("/some/unknown/route")
     assert fallback.headers["cache-control"] == "no-cache"
+    # requesting index.html by name takes the static-file branch, which also
+    # sends no-cache for the shell
+    named = client.get("/index.html")
+    assert named.headers["cache-control"] == "no-cache"
 
 
 def test_health_structured(client):
