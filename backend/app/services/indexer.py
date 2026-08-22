@@ -778,6 +778,11 @@ class IndexerService:
             and row.size_bytes == stat.st_size
         ):
             return row
+        # v1.17.18.6.3 (audit2 follow-up): the file CHANGED on disk, so its
+        # stored knowledge vector is stale. Clear the flag so the next
+        # knowledge-index pass re-embeds exactly this file (the Chroma
+        # upsert overwrites by id — no full rebuild needed).
+        edited = row is not None
         parsed = parse_file_for_project(absolute, project.language, project.framework)
         if row is None:
             row = ProjectFile(project_id=project.id, path=rel.as_posix())
@@ -785,6 +790,8 @@ class IndexerService:
         row.language = parsed.language if parsed else None
         row.size_bytes = stat.st_size
         row.mtime_ns = stat.st_mtime_ns
+        if edited and row.embedding_id is not None:
+            row.embedding_id = None
         self.session.add(row)
         return row
 

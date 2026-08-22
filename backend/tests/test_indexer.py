@@ -946,6 +946,53 @@ def test_update_incremental_only_changes_files(tmp_db):
         new_file.unlink()
 
 
+def test_edited_file_reembeds_on_next_knowledge_index(tmp_db):
+    """v1.17.18.6.3 (audit2 follow-up): an edited file's stale embedding flag
+    is cleared on rescan, so the next knowledge-index pass re-embeds exactly
+    that file — while untouched files keep their skip flag."""
+    import os
+    import time as _time
+
+    svc = _service(tmp_db)
+    project = svc.index_project(PY_PROJECT)
+
+    with Session(connection.get_engine()) as session:
+        rows = {
+            f.path: f for f in ProjectFileRepository(session).get_by_project(project.id)
+        }
+        target_path = next(p for p in rows if p.endswith("main.py"))
+        other_path = next(p for p in rows if p != target_path)
+        # Simulate a completed knowledge pass: everything embedded.
+        for row in rows.values():
+            row.embedding_id = row.id
+            session.add(row)
+        session.commit()
+
+    # Edit main.py on disk (content AND mtime must move).
+    edited = PY_PROJECT / target_path
+    original = edited.read_text(encoding="utf-8")
+    try:
+        edited.write_text(
+            original + "\n# edited for staleness test\n", encoding="utf-8"
+        )
+        stat = edited.stat()
+        os.utime(edited, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000))
+        _time.sleep(0)  # mtime_ns already bumped explicitly above
+
+        svc = _service(tmp_db)
+        svc.index_project(PY_PROJECT)
+
+        with Session(connection.get_engine()) as session:
+            files = {
+                f.path: f
+                for f in ProjectFileRepository(session).get_by_project(project.id)
+            }
+        assert files[target_path].embedding_id is None  # re-embed pending
+        assert files[other_path].embedding_id is not None  # fast-path kept
+    finally:
+        edited.write_text(original, encoding="utf-8")
+
+
 @pytest.mark.skipif(shutil.which("git") is None, reason="git not installed")
 def test_git_indexes_tracked_files_only(tmp_db, tmp_path):
     """v1.17.7.3: in a real git checkout the file list comes from
