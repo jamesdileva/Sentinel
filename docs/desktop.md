@@ -63,6 +63,20 @@ backend\.venv\Scripts\python.exe run.py                # start / restart the ser
 backend\.venv\Scripts\python.exe -m app.cli sync   # immediate repo sync if impatient (run from inside backend)
 ```
 
+### Desktop shell (v1.17.18.6 — no more console)
+
+`desktop/dist/win-unpacked/Sentinel.exe` is an Electron shell around the
+same server (built with `npm run dist` inside `desktop/`). On launch it:
+
+- **attaches** to a backend already serving on `127.0.0.1:8420`, or
+- **spawns one** via `run.py` through the project venv (hidden window — no
+  console ever appears), waits for `/health`, then opens the dashboard.
+
+Quitting the window stops only a backend *this shell spawned*; an externally
+started server keeps running. It finds the checkout by walking up from its
+own location (works from `desktop\dist\win-unpacked\` inside a clone) or set
+`SENTINEL_ROOT`. A second launch just refocuses the first window.
+
 - Dashboard: `http://127.0.0.1:8420` · System page: `/system`
 - **The staged dashboard ships inside the release commit** (`backend/app/static`
   is versioned, v1.16.2) — `git pull` alone updates the dashboard; you never
