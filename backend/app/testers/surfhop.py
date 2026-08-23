@@ -175,8 +175,11 @@ def run(ctx: TesterContext) -> None:
     if not _shot_window(ctx, "velocity main menu", 20.0):
         raise TesterAssertionError("could not capture main menu window")
 
-    ctx.wait_log("[smoke] PLAYER_SPAWNED", _SPAWN_DEADLINE_S)
-    ctx.wait(2.0)  # land mid stage-pause dwell for stable framing
+    # Gate on RUN_STARTED (emitted when simulated input begins) and shoot a
+    # few seconds into the run so the frame shows real motion, not the
+    # frozen spawn pose.
+    ctx.wait_log("[smoke] RUN_STARTED", _SPAWN_DEADLINE_S)
+    ctx.wait(4.0)
     if not _shot_window(ctx, "gameplay in map", 30.0):
         raise TesterAssertionError("could not capture gameplay window")
 
