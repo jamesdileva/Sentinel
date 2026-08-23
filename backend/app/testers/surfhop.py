@@ -9,11 +9,16 @@ Verified ground truth (2026-08-23, v1.17.19.x era):
   `--smoke-hold=15` keeps the window alive post-RESULT so staged
   screenshots are not a race against self-exit. No packaged exe exists yet
   (deferred to release), so auto_launch must stay False.
+- window capture: Godot's process exe lives under the winget install dir,
+  NOT the project dir, so `find_project_window` (exe-path prefix match)
+  finds nothing and app_sessions.capture records nothing. This tester
+  therefore locates the window BY TITLE (`^Velocity`, from project.godot
+  config/name) and registers captures via ctx.screenshot_file.
 - port: none (single-process game).
 - fallback: `smoke:headless` script variant skips rendering; this tester
   always runs windowed because its value IS the visual evidence.
-- cleanup: the app exits by itself; a best-effort `taskkill /T /IM` on the
-  Godot engine image catches a hung hold window.
+- cleanup: the app exits by itself; best-effort taskkill of Godot_v*.exe
+  catches a hung hold window.
 - sandbox notes: first run writes user://save/settings.cfg; achievements
   unlock locally during runs (harmless). Stage gates read the app log —
   `[smoke] <STAGE>=OK` lines printed by scripts/game/Game.gd.
@@ -23,15 +28,34 @@ Stages asserted (each gated on the app log, then screenshotted):
 The full headless test suite (406 checks) runs first via ctx.cli.
 """
 
+import ctypes
+import ctypes.wintypes
+import re
+import subprocess
+import tempfile
+import time
+from pathlib import Path
+
+from PIL import Image
+
 from app.testers import Tester
 from app.testers._helpers import (
     TesterAssertionError,
     TesterContext,
     TesterEnvError,
-    kill_by_image_name,
+    TesterTimeoutError,
 )
+from app.utils.window_capture import _window_rect, _is_blank, capture_window_content
 
-GODOT_IMAGE_PREFIX = "Godot_v"
+_WINDOW_TITLE_RE = re.compile(r"^Velocity")
+_MENU_DEADLINE_S = 90
+_SPAWN_DEADLINE_S = 120
+_RESULT_DEADLINE_S = 180
+_GODOT_IMAGE_PREFIX = "Godot_v"
+
+_ENUMPROC = ctypes.WINFUNCTYPE(
+    ctypes.c_bool, ctypes.wintypes.HWND, ctypes.wintypes.LPARAM
+)
 
 
 def _commands(ctx: TesterContext) -> dict:
@@ -52,15 +76,83 @@ def _require(commands: dict, key: str) -> str:
     return value
 
 
+def _find_game_window() -> tuple[int, tuple] | None:
+    """(hwnd, rect) of the largest visible top-level window titled
+    'Velocity' (Godot titles windows with project.godot config/name)."""
+    user32 = ctypes.windll.user32
+    hits: list[tuple[int, tuple]] = []
+
+    @_ENUMPROC
+    def _enum(hwnd: int, _lparam: int) -> bool:
+        if not user32.IsWindowVisible(hwnd) or user32.IsIconic(hwnd):
+            return True
+        length = user32.GetWindowTextLengthW(hwnd)
+        if length == 0:
+            return True
+        buf = ctypes.create_unicode_buffer(length + 1)
+        user32.GetWindowTextW(hwnd, buf, length + 1)
+        if _WINDOW_TITLE_RE.match(buf.value or ""):
+            rect = _window_rect(hwnd)
+            if rect and (rect[2] - rect[0]) * (rect[3] - rect[1]) > 0:
+                hits.append((hwnd, rect))
+        return True
+
+    user32.EnumWindows(_enum, 0)
+    if not hits:
+        return None
+    return max(hits, key=lambda h: (h[1][2] - h[1][0]) * (h[1][3] - h[1][1]))
+
+
+def _shot_window(ctx: TesterContext, label: str, timeout_s: float) -> bool:
+    """Wait for the game window, PrintWindow-capture it, register the PNG.
+    Returns False when no non-blank capture lands within the budget."""
+    deadline = time.time() + timeout_s
+    tmp_path = ""
+    try:
+        while time.time() < deadline:
+            found = _find_game_window()
+            if found is not None:
+                hwnd, rect = found
+                image = capture_window_content(hwnd, rect)
+                if image is not None and not _is_blank(image):
+                    tmp_path = str(tempfile.gettempdir())
+                    tmp_path = tmp_path + f"\\velocity-shot-{int(time.time()*1000)}.png"
+                    image.save(tmp_path)
+                    ctx.screenshot_file(tmp_path, label)
+                    return True
+            time.sleep(1.5)
+        return False
+    finally:
+        if tmp_path:
+            Path(tmp_path).unlink(missing_ok=True)
+
+
+def _wait_log(ctx: TesterContext, marker: str, timeout_s: int) -> None:
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        if ctx.log_contains(marker):
+            ctx.checkpoint(f"log matched: {marker}")
+            return
+        time.sleep(1)
+    raise TesterTimeoutError(f"marker not seen within {timeout_s}s: {marker!r}")
+
+
 def _kill_hung_hold() -> None:
     """Best-effort cleanup if the hold window outlives the harness."""
-    import subprocess
-
-    subprocess.run(
-        ["taskkill", "/T", "/F", "/IM", GODOT_IMAGE_PREFIX + "*"],
-        capture_output=True,
-        timeout=15,
-    )
+    try:
+        listing = subprocess.run(
+            ["tasklist", "/FO", "CSV", "/NH"], capture_output=True, timeout=15
+        ).stdout.decode("utf-8", errors="replace")
+        for line in listing.splitlines():
+            if line.startswith(f'"{GODOT_IMAGE_PREFIX}'):
+                pid = line.rstrip('"').split('","')[-1].rstrip('"')
+                subprocess.run(
+                    ["taskkill", "/T", "/F", "/PID", pid],
+                    capture_output=True,
+                    timeout=15,
+                )
+    except (OSError, subprocess.SubprocessError):
+        pass
 
 
 def run(ctx: TesterContext) -> None:
@@ -77,20 +169,24 @@ def run(ctx: TesterContext) -> None:
     ctx.mark_log()
     ctx.launch(startup)
 
-    # 3. Stage-gated visual evidence. Each gate polls the app log, so slow
-    # boots stretch the budget instead of racing a fixed sleep.
-    ctx.wait_log("[smoke] MENU_SHOWN", timeout_s=90)
-    ctx.screenshot("velocity main menu")
+    # 3. Stage-gated visual evidence: gate on the app-log milestone, then
+    # title-based window capture (exe-path matching cannot see Godot).
+    _wait_log(ctx, "[smoke] MENU_SHOWN", _MENU_DEADLINE_S)
+    if not _shot_window(ctx, "velocity main menu", 20.0):
+        ctx.checkpoint("menu shot skipped (no window yet)")
+        ctx.screenshot("main menu")
 
-    ctx.wait_log("[smoke] PLAYER_SPAWNED", timeout_s=120)
+    _wait_log(ctx, "[smoke] PLAYER_SPAWNED", _SPAWN_DEADLINE_S)
     ctx.wait(4.0)  # let the map render + gameplay motion start
-    ctx.screenshot("gameplay in map")
+    if not _shot_window(ctx, "gameplay in map", 30.0):
+        raise TesterAssertionError("could not capture gameplay window")
 
     # 4. Hard success assertion (default smoke only scans crash patterns).
-    ctx.wait_log("[smoke] RESULT=OK", timeout_s=180)
+    _wait_log(ctx, "[smoke] RESULT=OK", _RESULT_DEADLINE_S)
     if ctx.log_contains("[smoke] RESULT=FAIL"):
         raise TesterAssertionError("smoke pass reported RESULT=FAIL")
-    ctx.screenshot("smoke pass hold window")
+    if not _shot_window(ctx, "smoke pass hold window", 12.0):
+        ctx.checkpoint("hold-window shot skipped (app already exited)")
 
 
 TESTER = Tester(
@@ -99,8 +195,8 @@ TESTER = Tester(
         "Run the full headless test suite (406 checks), then launch the "
         "windowed self-driving smoke pass: assert MENU_SHOWN, "
         "PLAYER_SPAWNED and RESULT=OK from the app log, capturing "
-        "screenshots of the main menu, in-map gameplay and the hold "
-        "window along the way."
+        "title-targeted screenshots of the main menu, in-map gameplay and "
+        "the hold window along the way."
     ),
     run=run,
     project_slug="Surfhop",
