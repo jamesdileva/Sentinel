@@ -9,7 +9,6 @@ deferred queue. Same-origin serving means there is no CORS surface at all
 (v1.17.18.4: docstring previously still promised CORS middleware).
 """
 
-import os
 import sys
 import threading
 from contextlib import asynccontextmanager
@@ -55,9 +54,8 @@ FROZEN_STATIC = Path(getattr(sys, "_MEIPASS", "")) / "app" / "static"
 DASHBOARD_DIR = (
     STATIC_DIR
     if STATIC_DIR.is_dir()
-    else (FROZEN_STATIC if FROZEN_STATIC.is_dir() else None) or (
-        DEV_DIST if DEV_DIST.is_dir() else None
-    )
+    else (FROZEN_STATIC if FROZEN_STATIC.is_dir() else None)
+    or (DEV_DIST if DEV_DIST.is_dir() else None)
 )
 DASHBOARD_INDEX = (
     Path(DASHBOARD_DIR) / "index.html" if DASHBOARD_DIR is not None else None
@@ -156,6 +154,15 @@ async def lifespan(_: FastAPI):
         swept = AppSessionService(startup_session).sweep_expired_screenshots()
     if swept:
         logger.info("Screenshot retention sweep removed %d expired file(s)", swept)
+    from app.repositories.build import BuildLogRepository
+
+    with Session(get_engine()) as startup_session:
+        orphans = BuildLogRepository(startup_session).mark_orphaned_as_failed()
+    if orphans:
+        logger.info(
+            "Marked %d orphaned build job(s) as failed (abandoned by restart)",
+            orphans,
+        )
     run_startup_checks()
     if settings.scheduler_enabled:
         scheduler.start()
