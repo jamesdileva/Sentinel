@@ -147,6 +147,7 @@ def test_registry_has_expected_slugs():
         "Ag",
         "Airadio",
         "Algo-Trader",
+        "Betsim",
         "Card-Game",
         "Cg",
         "Demake-Engine",
@@ -536,9 +537,11 @@ def test_all_registered_features_pass_against_fake_page(tmp_db):
     proves the scripts exercise a real (stubbed) Playwright API surface
     without a browser, and keeps their run() bodies covered. Native
     features are excluded: they construct a DesktopApp engine (their own
-    window contract) and are covered by the fake-desktop tests above."""
+    window contract) and are covered by the fake-desktop tests above.
+    Electron features are excluded for the same reason (CDP launch
+    contract) and are covered by the dedicated Betsim test below."""
     for slug, features in FEATURES.items():
-        web = [f for f in features if not f.native]
+        web = [f for f in features if not f.native and not f.electron]
         if not web:
             continue
         with DbSession(get_engine()) as db:
@@ -575,7 +578,13 @@ def test_all_registered_features_pass_against_fake_page(tmp_db):
                     monkey.undo()
             else:
                 service, app_session = _run_features(
-                    db, project, web, slug=slug, stub_page=_GenericPage()
+                    db,
+                    project,
+                    web,
+                    slug=slug,
+                    stub_page=(
+                        _HiLoFriendlyPage() if slug == "Card-Game" else _GenericPage()
+                    ),
                 )
             db.refresh(app_session)
             assert app_session.status.value == "passed", (
@@ -584,6 +593,102 @@ def test_all_registered_features_pass_against_fake_page(tmp_db):
             )
             labels = [c.label for c in app_session.checkpoints]
             assert f"feature pass: {web[0].name}" in labels
+
+
+# --------------------------------------------------------------- electron
+
+
+class _BetsimPage:
+    """Fake CDP-attached page for the Betsim electron features. Unlike the
+    generic page, count() is honest: the onboarding walkthrough's
+    `while next.count(): click()` loop terminates because each Next click
+    consumes one of three remaining buttons (a permanent count()>0 here hung
+    the suite — found 2026-08-23)."""
+
+    def __init__(self):
+        self.launched = _StubBrowser(self)
+        self.next_remaining = 3
+
+        class _Response:
+            ok = True
+
+        class _Request:
+            def get(self, url, **kw):
+                return _Response()
+
+        self.request = _Request()
+
+    def get_by_role(self, role="", name="", exact=False):
+        return _BetsimLocator(self, name)
+
+    def get_by_label(self, label, exact=False):
+        return _BetsimLocator(self)
+
+    def get_by_text(self, text, exact=False):
+        return _BetsimLocator(self)
+
+    def get_by_placeholder(self, placeholder):
+        return _BetsimLocator(self)
+
+    def locator(self, selector, has_text=None, has=None):
+        return _BetsimLocator(self)
+
+    def set_default_timeout(self, ms):
+        return None
+
+    def screenshot(self, path):
+        im = Image.new("RGB", (320, 200))
+        pixels = im.load()
+        for xx in range(320):
+            for yy in range(200):
+                pixels[xx, yy] = (xx % 256, (xx + yy) % 256, 80)
+        im.save(path)
+
+
+class _BetsimLocator:
+    def __init__(self, page, name=""):
+        self.page = page
+        self.name = name
+        self.first = self
+
+    def wait_for(self, state="visible", timeout=30000):
+        return None
+
+    def count(self):
+        if self.name == "Next":
+            return self.page.next_remaining
+        return 1
+
+    def click(self, **kw):
+        if self.name == "Next":
+            self.page.next_remaining -= 1
+
+    def inner_text(self):
+        return "42"
+
+
+def test_betsim_electron_features_run_against_fake_cdp_page(tmp_db):
+    """The Betsim electron features run to completion against a fake
+    CDP-attached page: onboarding dismissal (bounded Next loop), backend
+    health poll, workspace simulation, and the full screen tour."""
+    from app.testers.features import betsim as betsim_features
+
+    with DbSession(get_engine()) as db:
+        project = _mk_project(db, "Betsim")
+        service, app_session = _run_features(
+            db,
+            project,
+            betsim_features.FEATURES,
+            slug="Betsim",
+            stub_page=_BetsimPage(),
+        )
+        db.refresh(app_session)
+        assert app_session.status.value == "passed", app_session.actual_outcome
+        labels = [c.label for c in app_session.checkpoints]
+        for feature in betsim_features.FEATURES:
+            assert f"feature pass: {feature.name}" in labels
+        assert any("onboarding dismissed" in label for label in labels)
+        assert any("backend healthy" in label for label in labels)
 
 
 # --------------------------------------------------------------- native
@@ -1105,6 +1210,21 @@ class _GenericLocator:
 
     def is_enabled(self):
         return self.page._file_chosen
+
+
+class _EnabledRoleLocator(_GenericLocator):
+    """Role buttons read as enabled: Card-Game's Hi-Lo picks whichever side
+    (Higher/Lower) reports enabled, which is true on real pages (base 2-99).
+    The generic page's is_enabled() is tied to its file-upload state for the
+    Demake contract and reads False everywhere."""
+
+    def is_enabled(self):
+        return True
+
+
+class _HiLoFriendlyPage(_GenericPage):
+    def get_by_role(self, role="", name="", exact=False):
+        return _EnabledRoleLocator(self)
 
 
 class _StubPage:
