@@ -36,16 +36,15 @@ import tempfile
 import time
 from pathlib import Path
 
-from PIL import Image, ImageGrab
+from PIL import ImageGrab
 
 from app.testers import Tester
 from app.testers._helpers import (
     TesterAssertionError,
     TesterContext,
     TesterEnvError,
-    TesterTimeoutError,
 )
-from app.utils.window_capture import _window_rect, _is_blank, capture_window_content
+from app.utils.window_capture import _is_blank, _window_rect, capture_window_content
 
 _WINDOW_TITLE_RE = re.compile(r"^Velocity")
 _MENU_DEADLINE_S = 90
@@ -140,7 +139,7 @@ def _kill_hung_hold() -> None:
             ["tasklist", "/FO", "CSV", "/NH"], capture_output=True, timeout=15
         ).stdout.decode("utf-8", errors="replace")
         for line in listing.splitlines():
-            if line.startswith(f'"{GODOT_IMAGE_PREFIX}'):
+            if line.startswith(f'"{_GODOT_IMAGE_PREFIX}'):
                 pid = line.rstrip('"').split('","')[-1].rstrip('"')
                 subprocess.run(
                     ["taskkill", "/T", "/F", "/PID", pid],

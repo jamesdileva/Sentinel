@@ -65,8 +65,6 @@ def _dismiss_onboarding(ctx: FeatureContext) -> None:
 
 def _wait_backend_healthy(ctx: FeatureContext) -> None:
     """The exe spawns uvicorn itself; give it up to 30s to bind :8000."""
-    import time
-
     deadline = time.monotonic() + 30
     while time.monotonic() < deadline:
         try:
