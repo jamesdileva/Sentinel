@@ -175,6 +175,14 @@ def run(ctx: TesterContext) -> None:
     if not _shot_window(ctx, "velocity main menu", 20.0):
         raise TesterAssertionError("could not capture main menu window")
 
+    ctx.wait_log("[smoke] MAP_SELECT_SHOWN", _MENU_DEADLINE_S)
+    if not _shot_window(ctx, "map select screen", 20.0):
+        raise TesterAssertionError("could not capture map select window")
+
+    ctx.wait_log("[smoke] SETTINGS_SHOWN", _MENU_DEADLINE_S)
+    if not _shot_window(ctx, "settings menu", 20.0):
+        raise TesterAssertionError("could not capture settings window")
+
     # Gate on RUN_STARTED (emitted when simulated input begins) and shoot a
     # few seconds into the run so the frame shows real motion, not the
     # frozen spawn pose.
