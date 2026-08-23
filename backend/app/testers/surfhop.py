@@ -36,7 +36,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageGrab
 
 from app.testers import Tester
 from app.testers._helpers import (
@@ -104,8 +104,10 @@ def _find_game_window() -> tuple[int, tuple] | None:
 
 
 def _shot_window(ctx: TesterContext, label: str, timeout_s: float) -> bool:
-    """Wait for the game window, PrintWindow-capture it, register the PNG.
-    Returns False when no non-blank capture lands within the budget."""
+    """Wait for the game window, capture it, register the PNG. PrintWindow
+    can return blank frames for GPU-composited Vulkan content (the same
+    limitation the HFT tester docstrings) — fall back to a screen crop of
+    the window rect. Returns False when no usable capture lands in budget."""
     deadline = time.time() + timeout_s
     tmp_path = ""
     try:
@@ -114,9 +116,13 @@ def _shot_window(ctx: TesterContext, label: str, timeout_s: float) -> bool:
             if found is not None:
                 hwnd, rect = found
                 image = capture_window_content(hwnd, rect)
+                if image is None or _is_blank(image):
+                    image = ImageGrab.grab(bbox=rect)
                 if image is not None and not _is_blank(image):
-                    tmp_path = str(tempfile.gettempdir())
-                    tmp_path = tmp_path + f"\\velocity-shot-{int(time.time()*1000)}.png"
+                    tmp_path = str(
+                        Path(tempfile.gettempdir())
+                        / f"velocity-shot-{int(time.time() * 1000)}.png"
+                    )
                     image.save(tmp_path)
                     ctx.screenshot_file(tmp_path, label)
                     return True
@@ -125,16 +131,6 @@ def _shot_window(ctx: TesterContext, label: str, timeout_s: float) -> bool:
     finally:
         if tmp_path:
             Path(tmp_path).unlink(missing_ok=True)
-
-
-def _wait_log(ctx: TesterContext, marker: str, timeout_s: int) -> None:
-    deadline = time.time() + timeout_s
-    while time.time() < deadline:
-        if ctx.log_contains(marker):
-            ctx.checkpoint(f"log matched: {marker}")
-            return
-        time.sleep(1)
-    raise TesterTimeoutError(f"marker not seen within {timeout_s}s: {marker!r}")
 
 
 def _kill_hung_hold() -> None:
@@ -160,7 +156,11 @@ def run(ctx: TesterContext) -> None:
     test_cmd = _require(commands, "test")
     startup = _require(commands, "startup")
     if "--smoke-hold" not in startup:
-        startup += " --smoke-hold=15"
+        startup += " --smoke-hold=60"
+    if "--smoke-stage-pause" not in startup:
+        # Dwell on each milestone so screenshots catch the actual stage
+        # (the auto-driven menu otherwise lasts under a second).
+        startup += " --smoke-stage-pause=2.5"
 
     # 1. Full deterministic suite (406 checks) before any GUI work.
     ctx.cli(test_cmd, timeout_s=900, expect_exit=0)
@@ -171,21 +171,20 @@ def run(ctx: TesterContext) -> None:
 
     # 3. Stage-gated visual evidence: gate on the app-log milestone, then
     # title-based window capture (exe-path matching cannot see Godot).
-    _wait_log(ctx, "[smoke] MENU_SHOWN", _MENU_DEADLINE_S)
+    ctx.wait_log("[smoke] MENU_SHOWN", _MENU_DEADLINE_S)
     if not _shot_window(ctx, "velocity main menu", 20.0):
-        ctx.checkpoint("menu shot skipped (no window yet)")
-        ctx.screenshot("main menu")
+        raise TesterAssertionError("could not capture main menu window")
 
-    _wait_log(ctx, "[smoke] PLAYER_SPAWNED", _SPAWN_DEADLINE_S)
-    ctx.wait(4.0)  # let the map render + gameplay motion start
+    ctx.wait_log("[smoke] PLAYER_SPAWNED", _SPAWN_DEADLINE_S)
+    ctx.wait(2.0)  # land mid stage-pause dwell for stable framing
     if not _shot_window(ctx, "gameplay in map", 30.0):
         raise TesterAssertionError("could not capture gameplay window")
 
     # 4. Hard success assertion (default smoke only scans crash patterns).
-    _wait_log(ctx, "[smoke] RESULT=OK", _RESULT_DEADLINE_S)
+    ctx.wait_log("[smoke] RESULT=OK", _RESULT_DEADLINE_S)
     if ctx.log_contains("[smoke] RESULT=FAIL"):
         raise TesterAssertionError("smoke pass reported RESULT=FAIL")
-    if not _shot_window(ctx, "smoke pass hold window", 12.0):
+    if not _shot_window(ctx, "hold window after pass", 15.0):
         ctx.checkpoint("hold-window shot skipped (app already exited)")
 
 
