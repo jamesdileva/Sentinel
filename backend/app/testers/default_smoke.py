@@ -23,6 +23,16 @@ def run(ctx: TesterContext) -> None:
     commands = ctx.project.stack.get("commands") if ctx.project.stack else None
     startup = (commands or {}).get("startup") or ""
     if not startup:
+        # Stale-index fallback (mirrors TesterRunner.resolve and
+        # BuildRunner.run_build): a project indexed before its manifest
+        # existed persists an empty stack, but resolve() already decided
+        # this app is launchable via live discovery — re-discover here too
+        # so execution agrees with resolution.
+        from app.utils.command_extractor import extract_build_commands
+
+        commands = extract_build_commands(ctx.project.path)
+        startup = (commands or {}).get("startup") or ""
+    if not startup:
         raise TesterEnvError("No startup command — not launchable")
     test_cmd = (commands or {}).get("test")
     if test_cmd:

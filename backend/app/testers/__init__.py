@@ -55,6 +55,7 @@ from app.testers import (  # noqa: E402
     dinner_menu_generator,
     finsight,
     hft_order_book,
+    surfhop,
     tv_scheduler,
     workflow_toolkit,
 )
@@ -71,6 +72,7 @@ def _build_registry() -> dict[str, Tester]:
         dinner_menu_generator.TESTER,
         finsight.TESTER,
         hft_order_book.TESTER,
+        surfhop.TESTER,
         tv_scheduler.TESTER,
         workflow_toolkit.TESTER,
     ]
