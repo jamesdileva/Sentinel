@@ -30,7 +30,8 @@ from app.testers._helpers import (
 )
 
 LAUNCH_CMD = "cd backend && .venv\\Scripts\\python -m uvicorn app.main:app --port 8000"
-BASE_URL = "http://127.0.0.1:8000/api/v1"
+ROOT_URL = "http://127.0.0.1:8000"
+BASE_URL = f"{ROOT_URL}/api/v1"
 
 
 def _post(ctx: TesterContext, path: str, payload: dict) -> httpx.Response:
@@ -79,8 +80,10 @@ def _cleanup(ctx: TesterContext, item_id: str) -> None:
 
 def run(ctx: TesterContext) -> None:
     ctx.launch(LAUNCH_CMD, env={"PYTHONPATH": ""})
-    ctx.http("GET", f"{BASE_URL}/health", expect_body="healthy", retries=6)
-    ctx.http("GET", "http://127.0.0.1:8000/", expect_body='"status":"ok"')
+    # /health is mounted at the app ROOT, not under /api/v1 (live-fix
+    # 2026-08-22: /api/v1/health answered 404 and failed the run).
+    ctx.http("GET", f"{ROOT_URL}/health", expect_body="healthy", retries=6)
+    ctx.http("GET", f"{ROOT_URL}/", expect_body='"status":"ok"')
 
     # One tokened item drives every POST group; unique per run so parallel
     # sessions never collide and the corpus stays untouched after cleanup.

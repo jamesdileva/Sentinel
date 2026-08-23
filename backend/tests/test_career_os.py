@@ -105,13 +105,19 @@ def _patch_http(monkeypatch, search_hits=True):
     calls = {"deleted": [], "launched": []}
 
     class FakeUvicornResp:
-        status_code = 200
-
-        def __init__(self, url):
-            self.text = "healthy" if "health" in url else '"status":"ok"'
+        def __init__(self, status_code, text):
+            self.status_code = status_code
+            self.text = text
 
     def fake_request(method, url, timeout=None, **kw):
-        return FakeUvicornResp(url)
+        # Path-faithful: /health lives at the ROOT only — a tester that
+        # probes /api/v1/health must see the same 404 the real app serves
+        # (live-fix 2026-08-22: a substring match masked exactly that bug).
+        if url.rstrip("/").endswith(":8000/health"):
+            return FakeUvicornResp(200, "healthy")
+        if url.rstrip("/") == "http://127.0.0.1:8000":
+            return FakeUvicornResp(200, '"status":"ok"')
+        return FakeUvicornResp(404, '{"detail":"Not Found"}')
 
     def fake_post(url, json=None, timeout=None, **kw):
         if "knowledge-items" in url:
