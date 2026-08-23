@@ -4,6 +4,37 @@
 > Sentinel-wide working notes live at the top; newest entries at the bottom
 > of the changelog unless otherwise dated.
 
+## 2026-08-23 — Builds tab stuck "Working..." (orphaned BuildLog rows) + suite hang
+
+- **Root cause (Surfhop, found live):** `POST /builds/run` creates the
+  `BuildLog` row immediately, but the scheduler pool is 2 shared workers —
+  a build queued behind knowledge indexing that loses the race against an
+  app restart is discarded silently (`job_scheduler.shutdown(wait=False)`,
+  no DB cleanup). The row keeps `completed_at IS NULL`; status derivation
+  (`schemas/build.py`) reports any such row as "running" forever, and
+  `Builds.tsx:86-93` resume-polling re-sticks "Working…" on every page
+  load. No startup sweep existed for `BuildLog`.
+- **Fix:** `BuildLogRepository.mark_orphaned_as_failed()` (exit_code=-1,
+  success=False, "Aborted: Sentinel restarted...") wired into the lifespan
+  in `main.py` next to the screenshot sweep; every restart now self-heals
+  all projects. The stale Surfhop row was also healed directly in SQLite.
+  Tests: `backend/tests/test_build_repository.py`.
+- **Suite hang fixed en route:** the full backend suite dead-locked at ~20%
+  in `test_all_registered_features_pass_against_fake_page` — Betsim's
+  onboarding dismissal loops `while next.count(): click()` and the generic
+  fake page's locator always reported count()==2. Electron features are now
+  excluded from the generic sweep (own CDP launch contract, like native)
+  with a dedicated `_BetsimPage` fake whose Next-count actually drains;
+  Card-Game HiLo gets `_HiLoFriendlyPage` because role buttons must read
+  enabled. Stale registry slug sets refreshed (`Betsim`, `Surfhop`).
+- **Lint debt from parallel tester commits cleaned:** surfhop.py referenced
+  undefined `GODOT_IMAGE_PREFIX` (F821 — would crash hold-window cleanup;
+  ground truth `Godot_v*.exe` confirmed in surfhop/tools/godot.cmd), plus
+  dead imports in surfhop/betsim and an unused `os` in main.py.
+- **Known pre-existing debt:** pytest coverage gate reads 87.32% vs the
+  90% fail-under (recent low-covered tester modules); everything else
+  (pytest, black, isort, flake8 --max-line-length=100) is green.
+
 ## 2026-08-22 — Card-Game: full gameplay coverage (API + click-through)
 
 - **Tier-1 (`testers/card_game.py`):** after the health checks the smoke now
