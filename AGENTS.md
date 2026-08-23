@@ -1,4 +1,36 @@
-# AGENTS.md — Project Sentinel Rules for AI Agents
+# AGENTS.md
+
+> [!NOTE]
+> Sentinel-wide working notes live at the top; newest entries at the bottom
+> of the changelog unless otherwise dated.
+
+## 2026-08-22 — Card-Game: full gameplay coverage (API + click-through)
+
+- **Tier-1 (`testers/card_game.py`):** after the health checks the smoke now
+  drives the real HTTP API end to end with a throwaway `api_tester_<ns>`
+  account (httpx, cookie jar): register → login → invalid-bet 400 → spin →
+  coinflip → highlow start+guess → open-crate basic → unknown-crate-type
+  400. Asserts status codes and key JSON fields.
+- **Features (`features/card_game.py`) grew from 1 to 4:** existing slots
+  spin plus new Coin Flip round, Hi-Lo round, and BASIC crate opening
+  (Store tab → reveal modal → Nice). Register+login extracted into a shared
+  `_register_and_login(ctx)` helper.
+- **Locator refresh after the app's HUD/tabs layout pass:** balance moved to
+  a sticky HUD bar — features now use `[data-testid="balance"]` (the app
+  added the hook for us) instead of the removed `div.text-xl.font-bold.mb-2`.
+  Game switcher tabs are substring-matched by name (`Coin Flip`, `Hi-Lo`,
+  `Store`); flip/spin buttons match `Flip $…` / `🎰 $…` via regex.
+- **Two gotchas hit during the live E2E run:**
+  1. The app's new auth validation rejects hyphens AND caps usernames at 20
+     chars — throwaway names are `tester_<ns % 10^9>` /
+     `api_tester_<ns % 10^9>` now.
+  2. Features share one Playwright page: feature #1's dialog listener stays
+     attached and double-dismisses feature #2's register alert ("Cannot
+     dismiss dialog which is already handled"). `_on_dialog` is idempotent
+     now (try/except around dismiss; the event flag is what counts).
+- Verified live against dev servers (:5173/:3000): API block + all 4
+  features pass with non-blank screenshots; flake8/black/isort clean;
+  backend/tests/test_testers.py 40 passed. — Project Sentinel Rules for AI Agents
 
 These are the project's constitution. They must be upheld in every decision, change, and commit.
 
