@@ -152,7 +152,7 @@ def test_registry_has_expected_slugs():
         "Demake-Engine",
         "Dinner-Menu-Generator",
         "Hft-Order-Book",
-        "ResMaker",
+        "Resmaker",
         "Tv-Scheduler",
         "Workflow-Toolkit",
     }
@@ -557,7 +557,7 @@ def test_all_registered_features_pass_against_fake_page(tmp_db):
                 )
                 fixture.parent.mkdir(parents=True, exist_ok=True)
                 fixture.write_text("name,hours\n", encoding="utf-8")
-            if slug == "ResMaker":
+            if slug == "Resmaker":
                 # the feature owns a backend process — stub its health poll
                 # so the fake page drives the whole flow without a spawn.
                 import app.testers.features.career_os as cos

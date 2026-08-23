@@ -1,15 +1,20 @@
-"""Career OS integration tests (Sprint 33 pattern — ResMaker).
+"""Career OS integration tests (Sprint 33 pattern — Resmaker).
 
 Covers the Tier 1 HTTP tester (launch + GET smokes + POST surface with
 create/cleanup semantics) and the Tier 2 electron feature (backend
 ownership, UI click-through steps) against fakes only — no real server,
-no real subprocess, no real browser.
+no real subprocess, no real browser. Hermetic like every other suite:
+tmp_db points settings.db_path at a temp SQLite, so nothing here ever
+touches the real sentinel.db (live-fix: the first version skipped the
+fixture and wrote ~64 junk projects + RUNNING sessions into the real DB).
 """
 
 import pytest
 from PIL import Image
 from sqlmodel import Session as DbSession
 
+from app.core.config import settings
+from app.db import connection
 from app.db.connection import get_engine
 from app.db.models import Project
 from app.services import app_sessions as svc
@@ -21,11 +26,28 @@ from app.testers._helpers import (
 )
 from app.testers.features import FEATURES
 
+
+@pytest.fixture()
+def tmp_db(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "db_path", tmp_path / "data" / "sqlite" / "test.db")
+    _dispose_engine()
+    connection.init_db()
+    yield tmp_path / "data" / "sqlite" / "test.db"
+    _dispose_engine()
+
+
+def _dispose_engine() -> None:
+    engine = connection._engine
+    connection._engine = None
+    if engine is not None:
+        engine.dispose()
+
+
 # ------------------------------------------------------------------ registry
 
 
 def test_career_os_tester_registered():
-    tester = TESTERS["ResMaker"]
+    tester = TESTERS["Resmaker"]
     assert tester.kind == "custom"
     # The packaged exe must NOT auto-launch before an HTTP-only tester.
     assert tester.auto_launch is False
@@ -33,7 +55,7 @@ def test_career_os_tester_registered():
 
 
 def test_career_os_feature_registered():
-    features = FEATURES["ResMaker"]
+    features = FEATURES["Resmaker"]
     assert len(features) == 1
     feature = features[0]
     assert feature.electron is True
@@ -55,10 +77,10 @@ class _FakeResp:
 
 
 @pytest.fixture()
-def career_os_project(tmp_path):
+def career_os_project(tmp_db, tmp_path):
     with DbSession(get_engine()) as db:
         project = Project(
-            name="ResMaker",
+            name="Resmaker",
             path=str(tmp_path / "ResMaker"),
             repo_url="",
             language="python",
@@ -394,5 +416,5 @@ def test_tier2_runs_against_fake_page_via_runner(tmp_db, monkeypatch):
     backend spawn; this mirrors that wiring at the registry level."""
     # registry consistency is enforced loudly at import — reaching here
     # means the tester slug and feature key agree.
-    assert "ResMaker" in TESTERS
-    assert "ResMaker" in FEATURES
+    assert "Resmaker" in TESTERS
+    assert "Resmaker" in FEATURES

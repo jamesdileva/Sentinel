@@ -76,7 +76,7 @@ def _build_registry() -> dict[str, list[Feature]]:
         "Airadio": airadio.FEATURES,
         "Algo-Trader": algo_trader.FEATURES,
         "Card-Game": card_game.FEATURES,
-        "ResMaker": career_os.FEATURES,
+        "Resmaker": career_os.FEATURES,
         "Cg": cg.FEATURES,
         "Demake-Engine": demake.FEATURES,
         "Dinner-Menu-Generator": dinner_menu.FEATURES,

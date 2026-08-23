@@ -152,7 +152,7 @@ TESTER = Tester(
         "the real corpus is untouched. HTTP-only, no mouse."
     ),
     run=run,
-    project_slug="ResMaker",
+    project_slug="Resmaker",  # must match _slug(project.name) on the dashboard
     ports=(8000,),
     auto_launch=False,
 )
