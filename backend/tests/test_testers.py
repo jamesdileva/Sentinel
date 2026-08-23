@@ -114,6 +114,7 @@ def test_registry_has_phase_a_testers():
         "Dinner-Menu-Generator",
         "Finsight",
         "Hft-Order-Book",
+        "ResMaker",
         "Tv-Scheduler",
         "Workflow-Toolkit",
     }

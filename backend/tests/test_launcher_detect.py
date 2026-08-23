@@ -25,6 +25,23 @@ def test_dist_win_unpacked_found(tmp_path):
     assert find_packaged_launcher(tmp_path) == exe
 
 
+def test_frontend_dist_electron_found(tmp_path):
+    """ResMaker: npm-workspace apps run electron-builder inside frontend/,
+    so the packaged exe lives under frontend/dist_electron/win-unpacked."""
+    exe = _touch(
+        tmp_path / "frontend" / "dist_electron" / "win-unpacked" / "Career OS.exe"
+    )
+    assert find_packaged_launcher(tmp_path) == exe
+
+
+def test_frontend_dist_electron_preferred_over_stale_frontend_dist(tmp_path):
+    expected = _touch(
+        tmp_path / "frontend" / "dist_electron" / "win-unpacked" / "App.exe"
+    )
+    _touch(tmp_path / "frontend" / "dist" / "win-unpacked" / "App.exe")
+    assert find_packaged_launcher(tmp_path) == expected
+
+
 def test_tauri_out_found(tmp_path):
     exe = _touch(tmp_path / "out" / "sentinel.exe")
     assert find_packaged_launcher(tmp_path) == exe

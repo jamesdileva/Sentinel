@@ -152,6 +152,7 @@ def test_registry_has_expected_slugs():
         "Demake-Engine",
         "Dinner-Menu-Generator",
         "Hft-Order-Book",
+        "ResMaker",
         "Tv-Scheduler",
         "Workflow-Toolkit",
     }
@@ -556,9 +557,26 @@ def test_all_registered_features_pass_against_fake_page(tmp_db):
                 )
                 fixture.parent.mkdir(parents=True, exist_ok=True)
                 fixture.write_text("name,hours\n", encoding="utf-8")
-            service, app_session = _run_features(
-                db, project, web, slug=slug, stub_page=_GenericPage()
-            )
+            if slug == "ResMaker":
+                # the feature owns a backend process — stub its health poll
+                # so the fake page drives the whole flow without a spawn.
+                import app.testers.features.career_os as cos
+
+                python = Path(project.path) / cos.BACKEND_REL
+                python.parent.mkdir(parents=True, exist_ok=True)
+                python.write_bytes(b"")
+                monkey = pytest.MonkeyPatch()
+                monkey.setattr(cos, "_backend_healthy", lambda: True)
+                try:
+                    service, app_session = _run_features(
+                        db, project, web, slug=slug, stub_page=_GenericPage()
+                    )
+                finally:
+                    monkey.undo()
+            else:
+                service, app_session = _run_features(
+                    db, project, web, slug=slug, stub_page=_GenericPage()
+                )
             db.refresh(app_session)
             assert app_session.status.value == "passed", (
                 slug,

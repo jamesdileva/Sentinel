@@ -4,8 +4,11 @@ Finds the packaged desktop app binary a project ships, so tester runs can
 auto-launch the real app and capture its window without per-tester code.
 Deterministic scan only — no AI (Rule 3):
 
-- electron-builder layouts: `release/win-unpacked/*.exe` (WorkFlow-Toolkit)
-  and `dist/win-unpacked/*.exe` (TV-Scheduler)
+- electron-builder layouts: `release/win-unpacked/*.exe` (WorkFlow-Toolkit),
+  `dist/win-unpacked/*.exe` (TV-Scheduler), and nested frontend builds
+  `frontend/dist_electron/win-unpacked/*.exe` +
+  `frontend/dist/win-unpacked/*.exe` (ResMaker — npm-workspace apps whose
+  electron-builder runs inside frontend/)
 - tauri layouts (future — Sentinel is the only tauri app, deferred):
   `out/*.exe` and `src-tauri/target/release/*.exe`
 - noise excluded by name: installers (`Setup`, `*.blockmap`), `elevate.exe`,
@@ -26,6 +29,8 @@ NOISE = re.compile(
 _LAYOUTS: tuple[tuple[str, ...], ...] = (
     ("release", "win-unpacked"),
     ("dist", "win-unpacked"),
+    ("frontend", "dist_electron", "win-unpacked"),
+    ("frontend", "dist", "win-unpacked"),
     ("out",),
     ("src-tauri", "target", "release"),
 )

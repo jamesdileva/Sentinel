@@ -204,7 +204,7 @@ def _verify_sandbox(sandbox: Path, launcher: Path) -> None:
     deadline = time.monotonic() + ELECTRON_SANDBOX_STATE_S
     while time.monotonic() < deadline:
         for entry in sandbox.rglob("*"):
-            if entry.name in ("tv_scheduler.db", "backend.log"):
+            if entry.name in ("tv_scheduler.db", "backend.log", "career-os.log"):
                 return
             if entry.is_dir() and entry.name == "data":
                 return
