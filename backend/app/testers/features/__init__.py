@@ -55,6 +55,7 @@ from app.testers.features import (  # noqa: E402
     ag,
     airadio,
     algo_trader,
+    betsim,
     card_game,
     career_os,
     cg,
@@ -75,8 +76,9 @@ def _build_registry() -> dict[str, list[Feature]]:
         "Ag": ag.FEATURES,
         "Airadio": airadio.FEATURES,
         "Algo-Trader": algo_trader.FEATURES,
+        "Betsim": betsim.FEATURES,  # slug verified against the live DB row
         "Card-Game": card_game.FEATURES,
-        "Resmaker": career_os.FEATURES,
+        "Resmaker": career_os.FEATURES,  # fixed to match project_slug v1.17.19.1
         "Cg": cg.FEATURES,
         "Demake-Engine": demake.FEATURES,
         "Dinner-Menu-Generator": dinner_menu.FEATURES,
@@ -84,11 +86,17 @@ def _build_registry() -> dict[str, list[Feature]]:
         "Tv-Scheduler": tv_scheduler.FEATURES,
         "Workflow-Toolkit": workflow_toolkit.FEATURES,
     }
+
     from app.testers import TESTERS
 
     # Feature-only apps: no smoke tester exists (the Airadio UI has no
     # deterministic assertions beyond presence), so its slug lives only here.
-    FEATURE_ONLY_SLUGS = frozenset({"Airadio"})
+    # Betsim joins for the same reason (its assertions are UI-side; the exe
+    # spawns its own backend). Slug casing is load-bearing: project names in
+    # the DB are title-cased by the indexer ("betsim" folder -> "Betsim"),
+    # and a casing mismatch silently orphans features - the exact bug that
+    # hit ResMaker ("Resmaker" row vs "ResMaker" key).
+    FEATURE_ONLY_SLUGS = frozenset({"Airadio", "Betsim"})
     unknown = set(registry) - set(TESTERS) - FEATURE_ONLY_SLUGS
     if unknown:
         raise RuntimeError(
