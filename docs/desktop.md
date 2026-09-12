@@ -100,10 +100,22 @@ own location (works from `desktop\dist\win-unpacked\` inside a clone) or set
 
 Since Phase 2 the **backend ships frozen inside the installer**
 (PyInstaller onedir under `resources\server-runtime\`), so a machine needs
-no repo, no venv, and no Python — install, click Sentinel. On first run it
-spawns the bundled server and stores state under
-`%APPDATA%\Sentinel\data\` (SQLite, Chroma, screenshots). Restore a backup
-zip into that folder after a crash (see Crash recovery).
+no repo, no venv, and no Python — install, click Sentinel. Data resolution
+order for the frozen server (see `desktop/main.js` → `repoDataDir`):
+
+1. **Checkout dataset wins when visible**: if the shell finds a checkout
+   whose `data/sqlite/sentinel.db` exists, the frozen server uses that
+   repo `data/` (SQLite, Chroma, screenshots) — terminal (`run.py`) and
+   desktop launches share one dataset. The checkout's `.env` is also
+   honored (watch dirs, GitHub token, Ollama host); the shell's explicit
+   vars (DB paths, port) always win.
+2. **Otherwise per-machine store**: state lives under
+   `%APPDATA%\Sentinel\data\` (SQLite, Chroma, screenshots). Restore a
+   backup zip into that folder after a crash (see Crash recovery).
+
+Do not run the terminal server and a shell-spawned server at the same
+time — the shell attaches to an already-healthy `:8420` backend instead of
+spawning a second writer.
 
 Development checkouts still prefer the repo venv (`run.py` flow above) when
 the shell runs unpackaged; `SENTINEL_PORT` / `SENTINEL_ROOT` env vars work

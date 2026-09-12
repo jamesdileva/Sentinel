@@ -31,20 +31,38 @@ let backendChild = null; // set only when THIS shell spawned the backend
  * resources/server-runtime/ — no repo, venv, or Python install required.
  * Its data lives per-machine under %APPDATA%/Sentinel/data (Program Files
  * is not writable); the dev flow keeps using the repo checkout + venv.
+ * When the shell can see a checkout that already has a dataset
+ * (data/sqlite/sentinel.db), the frozen server uses THAT data dir instead —
+ * one shared dataset for terminal and desktop launches (see repoDataDir).
  */
 function bundledServerPath() {
   if (!app.isPackaged) return null;
   return path.join(process.resourcesPath, "server-runtime", "sentinel-server.exe");
 }
 
-function frozenDataEnv() {
-  const dataDir = path.join(app.getPath("userData"), "data");
+function repoDataDir(repoRoot) {
+  // A checkout's own dataset wins when it exists, so the terminal flow
+  // (run.py) and the frozen server share one SQLite DB + Chroma store.
+  // Detection is the presence of the repo DB file — a bare checkout with
+  // no data yet keeps the per-machine store until run.py creates one.
+  if (!repoRoot) return null;
+  const dbFile = path.join(repoRoot, "data", "sqlite", "sentinel.db");
+  if (fs.existsSync(dbFile)) return path.join(repoRoot, "data");
+  return null;
+}
+
+function frozenDataEnv(repoRoot) {
+  const dataDir =
+    repoDataDir(repoRoot) || path.join(app.getPath("userData"), "data");
   return {
     ...process.env,
     SENTINEL_PORT: PORT,
     SENTINEL_DB_PATH: path.join(dataDir, "sqlite", "sentinel.db"),
     SENTINEL_CHROMA_PATH: path.join(dataDir, "chroma"),
     SENTINEL_WORLD_SIM_DB_PATH: path.join(dataDir, "world_sim", "world.db"),
+    // Lets the frozen server load the checkout's .env (watch dirs, token,
+    // Ollama host — see server_entry.py); the explicit vars above win.
+    ...(repoRoot ? { SENTINEL_REPO_ROOT: repoRoot } : {}),
   };
 }
 
@@ -101,7 +119,7 @@ function startBackend(repoRoot) {
       cwd: path.dirname(bundled),
       windowsHide: true,
       stdio: "ignore",
-      env: frozenDataEnv(),
+      env: frozenDataEnv(repoRoot),
     });
     child.on("error", (err) => {
       dialog.showErrorBox("Sentinel — backend failed to start", String(err));
