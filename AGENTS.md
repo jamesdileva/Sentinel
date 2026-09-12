@@ -4,6 +4,28 @@
 > Sentinel-wide working notes live at the top; newest entries at the bottom
 > of the changelog unless otherwise dated.
 
+## 2026-09-12 — Frozen exe saw empty data (per-machine store vs repo dataset)
+
+- **Root cause:** the packaged shell forced `SENTINEL_DB_PATH/...` into
+  `%APPDATA%\Sentinel\data` (fresh 0-project DB) and never read the repo
+  `.env`, so the exe showed no projects, no knowledge, and wrong watch
+  dirs while terminal `run.py` showed all 29 projects. Repo data was never
+  at risk — just invisible to the exe.
+- **Fix (`962334c`):** `desktop/main.js` `repoDataDir()` — when the shell
+  sees a checkout with `data/sqlite/sentinel.db`, the frozen server uses
+  that repo `data/` (one shared dataset); Roaming stays the fallback for
+  repo-less machines. `server_entry.py` loads the checkout `.env`
+  (watch dirs, token, Ollama host) with shell-set vars winning. Backup of
+  `data/sqlite` + `data/chroma` taken first
+  (`data/backups/pre-exe-data-fix-*`, git-ignored).
+- **To reach the installed exe:** rebuild + reinstall (`scripts/build.py`,
+  then `npm run dist` in `desktop/`) — code-only change until then.
+  Shell already attaches to a healthy `:8420` backend, so terminal + exe
+  can't double-write the DB.
+- **Also:** `docs/integration.md` Velocity lessons refreshed (buildlog
+  sweep, tester gates, both-registry import gate) for propagation to the
+  integrated projects.
+
 ## 2026-08-23 — Builds tab stuck "Working..." (orphaned BuildLog rows) + suite hang
 
 - **Root cause (Surfhop, found live):** `POST /builds/run` creates the
