@@ -70,6 +70,20 @@ def get_chroma_manager(path: str | Path | None = None) -> "ChromaManager":
         return _shared
 
 
+def _where(clause: dict[str, Any]) -> dict[str, Any] | None:
+    """Build a Chroma metadata filter.
+
+    Chroma's `get`/`delete` accept exactly one operator per `where`, so two
+    conditions must be wrapped in `$and` — a bare
+    `{"project_id": p, "file_path": f}` raises ValueError (v1.17.19.7, A1).
+    """
+    if not clause:
+        return None
+    if len(clause) == 1:
+        return clause
+    return {"$and": [{key: value} for key, value in clause.items()]}
+
+
 class ChromaManager:
     """Owns the PersistentClient and exposes collection helpers."""
 
@@ -210,6 +224,51 @@ class ChromaManager:
                 self.collection(collection).delete(ids=ids)
             except Exception as exc:  # noqa: BLE001 — translate then re-raise
                 self._guard(exc)
+
+    def rows_where(
+        self, collection: str, where: dict[str, Any]
+    ) -> list[dict[str, Any]]:
+        """Id + metadata for every stored vector matching a metadata `where`.
+
+        v1.17.19.7 (audit A1): retracting a file's obsolete chunks needs to
+        know which ids it owns without enumerating a chunk count. Ids are
+        `{file_row_id}#{chunk}` and the metadata carries `file_path`, so a
+        `project_id` + `file_path` clause resolves one file exactly.
+        """
+        if not where:
+            return []
+        with self._lock(collection):
+            try:
+                result = self.collection(collection).get(
+                    where=_where(where), include=["metadatas"]
+                )
+            except Exception as exc:  # noqa: BLE001 — translate then re-raise
+                self._guard(exc)
+        ids = result.get("ids") or []
+        metadatas = result.get("metadatas") or []
+        return [
+            {
+                "id": value,
+                "metadata": (metadatas[index] if index < len(metadatas) else {}) or {},
+            }
+            for index, value in enumerate(ids)
+        ]
+
+    def delete_where(self, collection: str, where: dict[str, Any]) -> None:
+        """Delete every vector matching a metadata `where` clause.
+
+        v1.17.19.7 (audit A1): a file that disappears from disk must have its
+        vectors removed too, or a deleted source stays retrievable as
+        knowledge (the RAG UI presents retrieved text as grounded).
+        """
+        if not where:
+            return
+        with self._lock(collection):
+            try:
+                self.collection(collection).delete(where=_where(where))
+            except Exception as exc:  # noqa: BLE001 — translate then re-raise
+                self._guard(exc)
+        self._invalidate_health()
 
     def count(self, collection: str) -> int:
         with self._lock(collection):

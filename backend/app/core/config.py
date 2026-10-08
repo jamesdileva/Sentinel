@@ -44,6 +44,16 @@ class Settings(BaseSettings):
     # architecture-summary prompt (better structure, ~40% faster tok/s,
     # stronger instruction following); see docs changelog for the test.
     ollama_model: str = "llama3.1:8b"
+    # v1.17.19.6: architecture summaries use their own model. A head-to-head
+    # on the real summary path (scripts/eval_summary_head_to_head.py, Oct 2026
+    # — qwen3.5:9b vs llama3.1:8b on this repo, 2500-token budget, think off)
+    # had qwen write the better structured summary — 4 grouped domains, exact
+    # build commands, the Tier 1/2/3 testing taxonomy, no repeated milestones
+    # — but ~1.8x slower generation (1.6 vs 2.9 tok/s). Summaries are
+    # background work, so the better writing wins there; chat answers stay
+    # interactive and keep the faster model.
+    # Existing KnowledgeSummary rows keep their stored `model` provenance.
+    ollama_summary_model: str = "qwen3.5:9b"
     embedding_model: str = "nomic-embed-text"
     ollama_timeout_seconds: int = 1800  # v1.17.6.4: 120s timed out arch-summary
     # generation while embedding workers were saturating the local Ollama

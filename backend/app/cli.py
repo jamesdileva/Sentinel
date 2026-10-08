@@ -195,6 +195,7 @@ def rag_index(
     from sqlmodel import Session
 
     from app.db.connection import get_engine
+    from app.services.knowledge_coordinator import knowledge_lock
     from app.services.ollama_service import OllamaService
     from app.services.rag_service import RagService
 
@@ -212,9 +213,12 @@ def rag_index(
         project = RagService.get_project(session, project_id)
         rag = RagService(session)
         try:
-            counts = rag.index_project(
-                project, with_summary=with_summary, force_summary=with_summary
-            )
+            # v1.17.19.7 (audit A3): one indexing execution per project, even
+            # when the CLI races a running server (run.py serves :8420).
+            with knowledge_lock(project.id):
+                counts = rag.index_project(
+                    project, with_summary=with_summary, force_summary=with_summary
+                )
         finally:
             rag.close()  # v1.17.18.3 (audit2 S1)
         typer.echo(f"Indexed {project.name}: {counts}")

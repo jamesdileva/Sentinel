@@ -79,6 +79,12 @@ CATALOG: list[dict] = [
         "field": "ollama_model",
     },
     {
+        "key": "SENTINEL_OLLAMA_SUMMARY_MODEL",
+        "label": "Summary model",
+        "group": "AI",
+        "field": "ollama_summary_model",
+    },
+    {
         "key": "SENTINEL_EMBEDDING_MODEL",
         "label": "Embedding model",
         "group": "AI",
@@ -350,6 +356,24 @@ def _validation_warnings() -> list[dict]:
                         "key": "embedding_model",
                         "level": "warning",
                         "message": f"Embedding model {settings.embedding_model} is not installed",
+                    }
+                )
+            # v1.17.19.6: the summary model is a second, independent model —
+            # warn separately so a missing qwen3.5:9b doesn't masquerade as
+            # "Ollama is fine".
+            if (
+                settings.ollama_summary_model != settings.ollama_model
+                and settings.ollama_summary_model not in installed
+            ):
+                warnings.append(
+                    {
+                        "key": "ollama_summary_model",
+                        "level": "warning",
+                        "message": (
+                            f"Summary model {settings.ollama_summary_model} is not "
+                            "installed — architecture summaries will fall back to "
+                            "an error until `ollama pull` or a config change."
+                        ),
                     }
                 )
     except Exception:  # noqa: BLE001  probe only

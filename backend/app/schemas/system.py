@@ -32,6 +32,8 @@ class OllamaStatusRead(BaseModel):
     available: bool
     host: str = ""
     model_default: str = ""
+    # v1.17.19.6: architecture summaries may use a different model than chat.
+    model_summary: str = ""
     models: list[str] = []
     recent: list[OllamaRecentQuery] = []
 

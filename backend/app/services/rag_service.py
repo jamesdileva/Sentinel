@@ -28,6 +28,7 @@ from app.repositories import (
 )
 from app.schemas.rag import RagResponse, RagResult
 from app.services.chroma_manager import COLLECTIONS, ChromaManager
+from app.services.knowledge_coordinator import assert_current, current_generation
 from app.services.chroma_manager import get_chroma_manager as _shared_chroma
 from app.services.git_history import GitHistoryService
 from app.services.ollama_service import OllamaService
@@ -230,6 +231,9 @@ class RagService:
             self._llm = llm
             self._uses_real_llm = False
         self.chroma = chroma or _shared_chroma()
+        # v1.17.19.7 (audit A4): captured by index_project, checked before each
+        # write. None outside a run — never treated as stale.
+        self._knowledge_generation: int | None = None
 
     def close(self) -> None:
         """Release the Ollama httpx pool (v1.17.18.3, audit2 S1). The shared
@@ -251,17 +255,28 @@ class RagService:
         (the scheduler task) can publish throttled progress events (v1.17.1).
         `force_summary` (v1.17.6.2, CLI `--summary`) regenerates the AI
         architecture summary even when one already exists.
+
+        v1.17.19.7 (audit A4): the run captures the knowledge-index generation
+        and re-checks it before every write, so a reset that lands mid-run
+        stops the run instead of repopulating the collections it just wiped.
         """
         counts: dict[str, int] = {}
-        counts["file_summaries"] = self.ingest_files(project, progress=progress)
-        counts["git_commits"] = self.ingest_git_commits(project)
-        counts["test_logs"] = self.ingest_test_results(project)
-        counts["security_reports"] = self.ingest_security_findings(project)
-        counts["build_logs"] = self.ingest_build_logs(project)
-        if with_summary:
-            counts["project_summaries"] = self.ingest_project_summary(
-                project, force=force_summary
-            )
+        self._knowledge_generation = current_generation()
+        try:
+            counts["file_summaries"] = self.ingest_files(project, progress=progress)
+            assert_current(
+                self._knowledge_generation, project.name
+            )  # A4: reset landed while files embedded
+            counts["git_commits"] = self.ingest_git_commits(project)
+            counts["test_logs"] = self.ingest_test_results(project)
+            counts["security_reports"] = self.ingest_security_findings(project)
+            counts["build_logs"] = self.ingest_build_logs(project)
+            if with_summary:
+                counts["project_summaries"] = self.ingest_project_summary(
+                    project, force=force_summary
+                )
+        finally:
+            self._knowledge_generation = None
         logger.info(
             "RAG index for %s: %s", project.name, {k: v for k, v in counts.items() if v}
         )
@@ -339,6 +354,12 @@ class RagService:
         ids: list[str] = []
         for record, chunk_count in embedded:
             ids.extend(f"{record.id}#{i}" for i in range(chunk_count))
+        # A4: a reset that landed while these files embedded wins — writing now
+        # would put superseded vectors back into the collections it just wiped.
+        generation = self._knowledge_generation
+        assert_current(
+            current_generation() if generation is None else generation, project.name
+        )
         self.chroma.upsert(
             "file_summaries",
             ids=ids,
@@ -346,8 +367,37 @@ class RagService:
             documents=docs,
             metadatas=metas,
         )
+        self._retract_obsolete_chunks(project, embedded, set(ids))
         self.session.commit()
         return len(embeds)
+
+    def _retract_obsolete_chunks(
+        self, project: Project, embedded: list, new_ids: set[str]
+    ) -> None:
+        """Drop chunk ids that a re-embedded file no longer produces (A1).
+
+        A Markdown file that shrinks from 10 chunks to 2 only overwrites
+        `{row}#0` and `{row}#1`; ids `{row}#2..#9` used to survive forever and
+        answered questions with superseded text. `upsert` overwrites by id, so
+        the fix is to subtract the freshly written set from what is stored for
+        those same files. Files that were NOT re-embedded untouched are left
+        alone — their vectors are current, not stale.
+        """
+        if not embedded:
+            return
+        reembedded = {record.path: chunk_count for record, chunk_count in embedded}
+        stored = self.chroma.rows_where("file_summaries", {"project_id": project.id})
+        stale = [
+            row["id"]
+            for row in stored
+            if row["id"] not in new_ids
+            and (row.get("metadata") or {}).get("file_path") in reembedded
+        ]
+        if stale:
+            logger.debug(
+                "retracting %d obsolete chunk(s) for %s", len(stale), project.name
+            )
+            self.chroma.delete_ids("file_summaries", stale)
 
     def ingest_git_commits(self, project: Project) -> int:
         """Parse git history and embed commit messages into the git_commits
@@ -490,6 +540,7 @@ class RagService:
             prompt,
             purpose="summary",
             max_tokens=settings.ollama_summary_max_tokens,
+            model=settings.ollama_summary_model,
         )
         if not content:
             return 0
@@ -500,13 +551,13 @@ class RagService:
         if existing_rows:  # newest first; reuse (older rows are orphaned)
             summary = existing_rows[0]
             summary.content = content
-            summary.model = settings.ollama_model
+            summary.model = settings.ollama_summary_model
         else:
             summary = KnowledgeSummary(
                 project_id=project.id,
                 type="architecture",
                 content=content,
-                model=settings.ollama_model,
+                model=settings.ollama_summary_model,
             )
             self.session.add(summary)
         # v1.17.18.6.4: stamp regeneration time even on the reuse path —
@@ -817,7 +868,7 @@ class RagService:
                     distance=0.0,
                 )
             ],
-            model=summary.model or settings.ollama_model,
+            model=summary.model or settings.ollama_summary_model,
             generated_at=summary.generated_at
             or datetime.datetime.now(datetime.timezone.utc),
             confidence=1.0,
@@ -828,8 +879,13 @@ class RagService:
         prompt: str,
         purpose: str = "query",
         max_tokens: int = 500,
+        model: str | None = None,
     ) -> str:
         """Generate, record deterministic metrics, and publish an Ollama event.
+
+        `model` selects the LLM; it defaults to `settings.ollama_model`
+        (chat-grade). Summary callers pass `settings.ollama_summary_model`
+        (v1.17.19.6: qwen3.5:9b won the summary head-to-head on structure).
 
         v1.17.18.4 (audit2 S6): the "fall back to the plain path" except only
         ever made sense for injected test fakes — with a real LLM, `self._llm`
@@ -839,7 +895,7 @@ class RagService:
         if not self._uses_real_llm:
             return self._llm(prompt)
         result = self.ollama.generate_with_metrics(
-            prompt, purpose=purpose, max_tokens=max_tokens
+            prompt, purpose=purpose, max_tokens=max_tokens, model=model
         )
         from app.services import activity_bus
         from app.services.system_service import OllamaStatus
@@ -873,12 +929,17 @@ class RagService:
 
     def _embed_with_metrics(self, text: str) -> tuple[list[float], dict]:
         """Embed, capturing Ollama's token counters when the real embedder
-        is in use; tests inject fakes and get empty metrics instead."""
+        is in use; tests inject fakes and get empty metrics instead.
+
+        v1.17.19.7 (audit A2): the old `except: return self._embed(text)`
+        fallback re-issued the *identical* request through the real embedder,
+        so one Ollama failure paid the (1800 s) timeout twice before surfacing.
+        Real failures now raise. Test fakes never set the real-embedder flag,
+        so they are unaffected.
+        """
         if self._uses_real_embedder:
-            try:
-                return self.ollama.embed_with_metrics(text)
-            except Exception:  # noqa: BLE001 — degrade to the plain path
-                return self._embed(text), {}
+            return self.ollama.embed_with_metrics(text)
+        return self._embed(text), {}
         return self._embed(text), {}
 
     @staticmethod

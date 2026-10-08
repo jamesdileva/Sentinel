@@ -6,6 +6,7 @@ from sqlmodel import Session
 from app.db import connection
 from app.services.chroma_manager import COLLECTIONS, ChromaManager, get_chroma_manager
 from app.services.indexer import IndexerService
+from app.services.ollama_service import OllamaService
 from app.services.rag_service import RagService
 
 FI = "tests/fixtures/sample_python_project"
@@ -78,7 +79,9 @@ def test_metered_generate_publishes_event_and_query_log(tmp_db, tmp_path, monkey
         monkeypatch.setattr(
             service.ollama,
             "generate_with_metrics",
-            lambda prompt, purpose="query", max_tokens=500: caps.append(max_tokens)
+            lambda prompt, purpose="query", max_tokens=500, model=None: caps.append(
+                max_tokens
+            )
             or {
                 "model": "gemma2",
                 "response": "grounded answer",
@@ -523,7 +526,10 @@ def test_reset_knowledge_task_drops_shared_chroma(tmp_db, tmp_path, monkeypatch)
     )
     assert manager.count("file_summaries") == 1
     result = rag_tasks.run_reset_knowledge()
-    assert result == {"scopes": "all", "files_unflagged": 0}
+    assert result["files_unflagged"] == 0
+    # v1.17.19.7 (audit A4): the generation was bumped, so an index run that
+    # started before the reset now refuses to write.
+    assert result["generation"] == 1
     assert manager.count("file_summaries") == 0
     kinds = [e["kind"] for e in events]
     assert kinds.count("index") == 2
@@ -865,12 +871,16 @@ def test_summary_regenerates_when_file_edited(tmp_db, tmp_path):
         ) - dt.timedelta(minutes=5)
 
 
-def test_summary_uses_dedicated_token_cap(tmp_db, tmp_path):
+def test_summary_uses_dedicated_token_cap_and_model(tmp_db, tmp_path):
     """v1.17.6.8: architecture summaries generate with the dedicated
     `ollama_summary_max_tokens` cap (1250), not the shared 500-token
     default — the doc-first prompt feeds ~10k tokens of context and a
     structured components/stack/notes summary outgrows 500. Chat answers
-    keep the 500 default."""
+    keep the 500 default.
+
+    v1.17.19.6: summaries also use `ollama_summary_model` (qwen3.5:9b) while
+    chat keeps `ollama_model` (llama3.1:8b, ~1.8x faster) — see the Oct 2026
+    head-to-head recorded in config.py."""
     from sqlmodel import select
 
     from app.core.config import settings
@@ -890,7 +900,9 @@ def test_summary_uses_dedicated_token_cap(tmp_db, tmp_path):
             temperature: float = 0.3,
             model: str | None = None,
         ) -> dict:
-            self.calls.append({"purpose": purpose, "max_tokens": max_tokens})
+            self.calls.append(
+                {"purpose": purpose, "max_tokens": max_tokens, "model": model}
+            )
             return {
                 "response": "Summary text",
                 "model": model or settings.ollama_model,
@@ -917,9 +929,19 @@ def test_summary_uses_dedicated_token_cap(tmp_db, tmp_path):
         ).all()
     assert counts["project_summaries"] == 1
     assert len(rows) == 1
+    # Summary: dedicated token cap AND the summary model.
     summary_call = next(c for c in ollama.calls if c["purpose"] == "summary")
     assert summary_call["max_tokens"] == settings.ollama_summary_max_tokens == 1250
-    assert ollama.calls[-1] == {"purpose": "rag-query", "max_tokens": 500}
+    assert summary_call["model"] == settings.ollama_summary_model
+    assert settings.ollama_summary_model != settings.ollama_model
+    # Chat: unchanged — faster default model, 500-token cap, no explicit model.
+    assert ollama.calls[-1] == {
+        "purpose": "rag-query",
+        "max_tokens": 500,
+        "model": None,
+    }
+    # Provenance is stamped with the model that actually wrote the summary.
+    assert rows[0].model == settings.ollama_summary_model
 
 
 # ── v1.17.6.6: doc chunking / docs-first summaries / scaled all-scope ──
@@ -1107,3 +1129,281 @@ def test_all_scope_query_scales_top_k_with_project_count(tmp_db, tmp_path):
     assert len(summaries) == len({s.project_id for s in summaries})
     assert response.answer  # still generated and grounded
     assert response.confidence >= 0.0
+
+
+# ── v1.17.19.7: audit Batch 1 (A1 stale vectors, A2 retry, A3 lock, A4 reset) ──
+
+
+class _FailingOllama:
+    """Records how many times the embedder was asked (audit A2)."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def embed_with_metrics(self, text: str, model: str | None = None):
+        self.calls += 1
+        from app.core.exceptions import OllamaUnavailableError
+
+        raise OllamaUnavailableError("embedding failed")
+
+    def close(self) -> None:  # pragma: no cover - nothing to release
+        pass
+
+
+def _stored_ids(manager, project_id: str, file_path: str) -> set[str]:
+    """Vector ids currently held for one file (audit A1)."""
+    rows = manager.rows_where(
+        "file_summaries", {"project_id": project_id, "file_path": file_path}
+    )
+    return {row["id"] for row in rows}
+
+
+def test_shrinking_document_retracts_obsolete_chunks(tmp_db, tmp_path):
+    """A1: a Markdown file that shrinks from 10 chunks to 2 must not keep ids
+    #2..#9 — those answered questions with superseded text, because `upsert`
+    only overwrites the ids it still produces."""
+    from app.core.config import settings  # noqa: F401  (fixture parity)
+    from app.db.models import ProjectFile
+
+    project_id = _index_project(tmp_db)
+    manager = ChromaManager(path=tmp_path / "chroma")
+    with Session(connection.get_engine()) as session:
+        project = RagService.get_project(session, project_id)
+        assert project is not None
+        manager.upsert(
+            "file_summaries",
+            ids=[f"shrink#{i}" for i in range(10)],
+            embeddings=[_fake_embedder(f"chunk {i}") for i in range(10)],
+            documents=[f"chunk {i}" for i in range(10)],
+            metadatas=[{"project_id": project.id, "file_path": "docs/big.md"}] * 10,
+        )
+        rag = _rag(session, tmp_path)
+        rag.chroma = manager
+        record = ProjectFile(id="shrink", project_id=project.id, path="docs/big.md")
+        rag._retract_obsolete_chunks(project, [(record, 2)], {"shrink#0", "shrink#1"})
+    assert _stored_ids(manager, project.id, "docs/big.md") == {"shrink#0", "shrink#1"}
+
+
+def test_retraction_leaves_untouched_files_alone(tmp_db, tmp_path):
+    """A1: only the files just re-embedded are candidates for retraction — an
+    unrelated file's current vectors must survive the sweep."""
+    from app.db.models import ProjectFile
+
+    project_id = _index_project(tmp_db)
+    manager = ChromaManager(path=tmp_path / "chroma")
+    with Session(connection.get_engine()) as session:
+        project = RagService.get_project(session, project_id)
+        manager.upsert(
+            "file_summaries",
+            ids=["keep#0", "shrink#0", "shrink#1"],
+            embeddings=[_fake_embedder(t) for t in ("keep", "shrink 0", "shrink 1")],
+            documents=["keep", "shrink 0", "shrink 1"],
+            metadatas=[
+                {"project_id": project.id, "file_path": "docs/keep.md"},
+                {"project_id": project.id, "file_path": "docs/big.md"},
+                {"project_id": project.id, "file_path": "docs/big.md"},
+            ],
+        )
+        rag = _rag(session, tmp_path)
+        rag.chroma = manager
+        record = ProjectFile(id="shrink", project_id=project.id, path="docs/big.md")
+        rag._retract_obsolete_chunks(project, [(record, 2)], {"shrink#0", "shrink#1"})
+    assert _stored_ids(manager, project.id, "docs/keep.md") == {"keep#0"}
+    assert _stored_ids(manager, project.id, "docs/big.md") == {"shrink#0", "shrink#1"}
+
+
+def test_deleted_file_leaves_no_vectors(tmp_db, tmp_path, monkeypatch):
+    """A1 end-to-end: a file removed from disk must stop being retrievable —
+    the relational row always went away, the vector did not."""
+    import shutil
+
+    from app.core.config import settings
+    from app.services.chroma_manager import get_chroma_manager
+
+    monkeypatch.setattr(settings, "chroma_path", tmp_path / "shared")
+    checkout = tmp_path / "checkout"
+    shutil.copytree(FI, checkout)
+    with Session(connection.get_engine()) as session:
+        project = IndexerService(session).index_project(str(checkout))
+        project_id = project.id
+        rag = _rag(session, tmp_path)
+        rag.index_project(project)
+
+    doomed = checkout / "README.md"
+    assert doomed.exists()
+    doomed.unlink()
+
+    with Session(connection.get_engine()) as session:
+        project = RagService.get_project(session, project_id)
+        IndexerService(session)._index_files(project)
+
+    manager = get_chroma_manager()
+    assert _stored_ids(manager, project_id, "README.md") == set()
+
+
+def test_embed_failure_requests_ollama_exactly_once(tmp_db, tmp_path):
+    """A2: the old `except: return self._embed(text)` fallback re-issued the
+    identical request, doubling an (1800 s) Ollama timeout."""
+    import pytest
+
+    from app.core.exceptions import OllamaUnavailableError
+
+    _index_project(tmp_db)
+    with Session(connection.get_engine()) as session:
+        rag = _rag(session, tmp_path)
+        rag.ollama = _FailingOllama()  # type: ignore[assignment]
+        rag._uses_real_embedder = True
+        with pytest.raises(OllamaUnavailableError):
+            rag._embed_with_metrics("some text")
+        assert rag.ollama.calls == 1  # no identical retry
+
+
+def test_embed_legacy_failure_surfaces_domain_error():
+    """A2 (additional bug): /api/embeddings must raise OllamaUnavailableError,
+    not leak a raw httpx exception past the service's error contract."""
+    import httpx
+    import pytest
+
+    from app.core.exceptions import OllamaUnavailableError
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("refused")
+
+    service = OllamaService(
+        host="http://ollama:11434", transport=httpx.MockTransport(handler)
+    )
+    try:
+        with pytest.raises(OllamaUnavailableError):
+            service._embed_legacy("text", "nomic-embed-text")
+    finally:
+        service.close()
+
+
+def test_knowledge_lock_serializes_same_project():
+    """A3: a duplicate indexing request waits, so exactly one set of embeddings
+    is produced and `embedding_id` is never raced."""
+    import threading
+
+    from app.services import knowledge_coordinator as kc
+
+    kc.reset_for_tests()
+    order: list[str] = []
+    entered = threading.Event()
+    release = threading.Event()
+
+    def worker(name: str) -> None:
+        with kc.knowledge_lock("proj-1"):
+            order.append(f"{name}:start")
+            if name == "first":
+                entered.set()
+            release.wait(timeout=2)
+            order.append(f"{name}:end")
+
+    try:
+        first = threading.Thread(target=worker, args=("first",))
+        first.start()
+        assert entered.wait(timeout=2)
+        assert kc.is_indexing("proj-1") is True
+        second = threading.Thread(target=worker, args=("second",))
+        second.start()
+        # The second thread cannot have entered while the first holds the lock.
+        assert order == ["first:start"]
+        release.set()
+        first.join(timeout=2)
+        second.join(timeout=2)
+        assert order == ["first:start", "first:end", "second:start", "second:end"]
+    finally:
+        release.set()
+        kc.reset_for_tests()
+    assert kc.is_indexing("proj-1") is False
+
+
+def test_knowledge_lock_is_per_project():
+    """A3: the lock must not serialize unrelated projects."""
+    import threading
+
+    from app.services import knowledge_coordinator as kc
+
+    kc.reset_for_tests()
+    both_held = threading.Event()
+
+    def worker() -> None:
+        with kc.knowledge_lock("proj-a"):
+            both_held.set()
+            both_held.wait(timeout=2)
+
+    try:
+        thread = threading.Thread(target=worker)
+        thread.start()
+        try:
+            with kc.knowledge_lock("proj-b"):
+                assert both_held.wait(timeout=1)
+        finally:
+            thread.join(timeout=2)
+    finally:
+        kc.reset_for_tests()
+
+
+def test_ingest_files_aborts_when_reset_lands_mid_run(tmp_db, tmp_path):
+    """A4: a reset that lands while files are embedding must stop the run —
+    writing now would repopulate the collections it just wiped."""
+    import pytest
+
+    from app.services.knowledge_coordinator import (
+        KnowledgeResetInterrupt,
+        bump_generation,
+    )
+
+    project_id = _index_project(tmp_db)
+    with Session(connection.get_engine()) as session:
+        project = RagService.get_project(session, project_id)
+        rag = _rag(session, tmp_path)
+        rag._knowledge_generation = 0  # captured before the reset
+        bump_generation()  # the reset lands mid-run
+        with pytest.raises(KnowledgeResetInterrupt):
+            rag.ingest_files(project)
+
+
+def test_reset_task_bumps_generation_and_holds_no_run(tmp_db, tmp_path, monkeypatch):
+    """A4: reset invalidates in-flight runs and reports the new generation."""
+    from app.core.config import settings
+    from app.services import knowledge_coordinator as kc
+    from app.tasks import rag_tasks
+
+    monkeypatch.setattr(settings, "chroma_path", tmp_path / "shared")
+    kc.reset_for_tests()
+    try:
+        result = rag_tasks.run_reset_knowledge()
+        assert result["generation"] == 1
+        assert kc.current_generation() == 1
+    finally:
+        kc.reset_for_tests()
+
+
+def test_stale_run_leaves_reset_slate_untouched(tmp_db, tmp_path, monkeypatch):
+    """A4 end-to-end: after a reset, a stale run writes nothing."""
+    import pytest
+
+    from app.core.config import settings
+    from app.services import knowledge_coordinator as kc
+    from app.services.chroma_manager import get_chroma_manager
+    from app.tasks import rag_tasks
+
+    monkeypatch.setattr(settings, "chroma_path", tmp_path / "shared")
+    kc.reset_for_tests()
+    project_id = _index_project(tmp_db)
+    with Session(connection.get_engine()) as session:
+        project = RagService.get_project(session, project_id)
+        _rag(session, tmp_path).index_project(project)
+    try:
+        rag_tasks.run_reset_knowledge()
+        assert get_chroma_manager().count("file_summaries") == 0
+        with Session(connection.get_engine()) as session:
+            project = RagService.get_project(session, project_id)
+            rag = _rag(session, tmp_path)
+            rag._knowledge_generation = 0  # captured before the reset
+            with pytest.raises(kc.KnowledgeResetInterrupt):
+                rag.ingest_files(project)
+        assert get_chroma_manager().count("file_summaries") == 0
+    finally:
+        kc.reset_for_tests()

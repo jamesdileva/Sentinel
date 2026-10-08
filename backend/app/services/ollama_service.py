@@ -9,7 +9,6 @@ carries provenance (model, timestamp) per docs/01 §16.2.
 """
 
 import httpx
-
 from app.core.config import settings
 from app.core.exceptions import OllamaUnavailableError
 from app.core.logging import get_logger
@@ -40,6 +39,7 @@ class OllamaService:
         temperature: float = 0.3,
         purpose: str = "query",
         num_ctx: int | None = None,
+        think: bool | None = None,
     ) -> str:
         """Generate a text completion for the given prompt."""
         return self.generate_with_metrics(
@@ -49,6 +49,7 @@ class OllamaService:
             temperature=temperature,
             purpose=purpose,
             num_ctx=num_ctx,
+            think=think,
         )["response"]
 
     def generate_with_metrics(
@@ -59,6 +60,7 @@ class OllamaService:
         temperature: float = 0.3,
         purpose: str = "query",
         num_ctx: int | None = None,
+        think: bool | None = None,
     ) -> dict:
         """Generate and return text plus Ollama's own perf counters.
 
@@ -67,6 +69,14 @@ class OllamaService:
         tokens/sec without any guesswork (docs/02 §7.3). `purpose` labels what
         the call was for (query / summary / index…) so the activity stream can
         say WHY Ollama is busy (v1.17).
+
+        `think` maps to Ollama's `think` flag (reasoning models like Qwen3:
+        `False` disables the hidden chain for answer-only output, `None`
+        leaves the model default). The response's `thinking` text (when the
+        server returns one) plus `done_reason` / `prompt_eval_count` are
+        passed through so callers can tell truncation (`length`) apart from a
+        natural stop — a reasoning model can burn its whole `num_predict`
+        budget on thinking and return an empty `response`.
         """
         model = model or settings.ollama_model
         payload = {
@@ -98,6 +108,10 @@ class OllamaService:
                 ),
             },
         }
+        if think is not None:
+            # Reasoning models (Qwen3+): False disables the hidden thinking
+            # chain so the whole num_predict budget goes to the answer.
+            payload["think"] = think
         try:
             response = self._client.post("/api/generate", json=payload)
             response.raise_for_status()
@@ -109,6 +123,9 @@ class OllamaService:
                 "eval_count": int(data.get("eval_count") or 0),
                 "eval_duration_ns": int(data.get("eval_duration") or 0),
                 "total_duration_ns": int(data.get("total_duration") or 0),
+                "thinking": str(data.get("thinking") or ""),
+                "done_reason": str(data.get("done_reason") or ""),
+                "prompt_eval_count": int(data.get("prompt_eval_count") or 0),
             }
         except httpx.HTTPError as exc:
             logger.warning("Ollama generate failed: %s", exc)
@@ -182,11 +199,20 @@ class OllamaService:
             raise OllamaUnavailableError(f"Ollama embed failed: {exc}") from exc
 
     def _embed_legacy(self, text: str, model: str) -> list[float]:
-        response = self._client.post(
-            "/api/embeddings", json={"model": model, "prompt": text}
-        )
-        response.raise_for_status()
-        return list(response.json().get("embedding", []))
+        """Pre-`/api/embed` endpoint.
+
+        v1.17.19.7 (audit A2): callers only know how to handle
+        OllamaUnavailableError, so a raw httpx failure here escaped the
+        service's error contract and surfaced as an unrelated 500."""
+        try:
+            response = self._client.post(
+                "/api/embeddings", json={"model": model, "prompt": text}
+            )
+            response.raise_for_status()
+            return list(response.json().get("embedding", []))
+        except httpx.HTTPError as exc:
+            logger.warning("Ollama embed failed: %s", exc)
+            raise OllamaUnavailableError(f"Ollama embed failed: {exc}") from exc
 
     def is_available(self) -> bool:
         """Check whether the Ollama server is reachable."""

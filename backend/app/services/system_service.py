@@ -76,6 +76,10 @@ class OllamaStatus:
             "available": available,
             "host": settings.ollama_host,
             "model_default": settings.ollama_model,
+            # v1.17.19.6: summaries use their own model (qwen3.5:9b won the
+            # summary head-to-head on structure, at a speed cost chat can't
+            # take) — the System page shows both so provenance is explicit.
+            "model_summary": settings.ollama_summary_model,
             "models": models,
             "recent": self.recent_queries(),
         }

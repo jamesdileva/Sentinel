@@ -101,6 +101,10 @@ export function OllamaPanel({ ollama }: { ollama: SystemOverview["ollama"] }) {
       </div>
       <p className="mt-1 break-all text-xs text-slate-400 dark:text-slate-500">
         {ollama.host} · default model {ollama.model_default}
+        {/* v1.17.19.6: summaries may run a different model than chat. */}
+        {ollama.model_summary && ollama.model_summary !== ollama.model_default
+          ? ` · summaries ${ollama.model_summary}`
+          : ""}
       </p>
 
       {ollama.models.length > 0 && (

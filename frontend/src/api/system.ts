@@ -16,6 +16,9 @@ export interface OllamaStatus {
   available: boolean;
   host: string;
   model_default: string;
+  // v1.17.19.6: architecture summaries may use a different model (see the
+  // backend setting) — absent on older servers, so it stays optional.
+  model_summary?: string;
   models: string[];
   recent: OllamaQueryRecord[];
 }

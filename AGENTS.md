@@ -4,6 +4,106 @@
 > Sentinel-wide working notes live at the top; newest entries at the bottom
 > of the changelog unless otherwise dated.
 
+## 2026-10-08 — Audit Batch 1: RAG correctness (A1 stale vectors · A2 retry · A3 lock · A4 reset barrier)
+
+- **A1 — deleted and re-chunked files left stale Chroma vectors.** The
+  relational side always removed the row, but its vectors survived, so a
+  deleted source stayed retrievable as "knowledge". Worse, and subtler: a
+  Markdown file that shrinks from 10 chunks to 2 only overwrites `{row}#0`
+  and `{row}#1` — `#2..#9` answered questions with superseded text forever.
+  New `ChromaManager.rows_where`/`delete_where` make the metadata queryable;
+  `_retract_obsolete_chunks` subtracts the freshly written ids from the
+  stored set *for the same `file_path`* (so untouched files keep their
+  current vectors), and `Indexer._index_files` retracts on delete.
+  Gotcha worth remembering: Chroma's `get`/`delete` accept exactly one
+  operator per `where`, so a two-key filter must be wrapped in `$and`.
+- **A2 — embedding failure re-issued the identical request.** The
+  `except: return self._embed(text)` fallback ran the real embedder a second
+  time, doubling an 1800 s Ollama timeout into an apparent hang. Failures now
+  raise. `_embed_legacy` also wraps its httpx errors so the legacy endpoint
+  honours the same error contract as `/api/embed`.
+- **A3 — knowledge indexing had no per-project mutual exclusion.** Startup
+  auto-index, repo sync, `/rag/index`, `/rag/index/all` and the CLI could all
+  queue the same project: two workers read the same pending files, embedded
+  the same content twice and raced `embedding_id`. New
+  `services/knowledge_coordinator.py` holds a per-project `RLock`
+  (`knowledge_lock`) for the whole run in all three entry points.
+  Process-local on purpose — the races live in run.py's own thread pool
+  (Rule 8: no filesystem lock yet).
+- **A4 — reset raced an in-flight index.** `run_reset_knowledge` cancelled
+  *queued* jobs but let running ones finish, so the job it was trying to stop
+  wrote its vectors straight back into the collections the reset had just
+  wiped. A process-local generation counter now invalidates in-flight runs
+  (`assert_current` guards `ingest_files` and every phase boundary in
+  `index_project`), and reset holds all project locks across the wipe.
+  Found while testing: the wipe must be unconditional — an empty database
+  still means the shared collections on disk have to go.
+- **Tests:** +11. Five consecutive full-suite green runs (512 tests);
+  `flake8 --max-line-length=100` + `black` clean.
+- **Known pre-existing flake (not from this change, verified on a clean
+  tree):** `test_query_all_projects_is_summary_first` and
+  `test_rag_query_persists_assistant_reply` can fail when
+  `test_rag_api.py` and `test_rag_service.py` run together (shared
+  Chroma/settings state between the two files). The full suite is
+  consistently green.
+
+## 2026-10-08 — Summaries move to qwen3.5:9b; chat keeps llama3.1:8b
+
+- **Trigger:** a blind head-to-head on the *real* architecture-summary path
+  (`scripts/eval_summary_head_to_head.py --project sentinel --max-tokens
+  2500 --think off`, 1 run/model, same 35776-char docs-first prompt,
+  num_ctx 14937). Judgment on `BLIND_A/B.md` before reading `MAPPING.txt`,
+  then claim-checked against this checkout.
+- **Result:** qwen3.5:9b wrote the better summary — 4 grouped domains with
+  real paths (`backend/app/main.py`, `apscheduler`), the React/TS frontend,
+  SQLite + ChromaDB named explicitly, exact build commands
+  (`pip install -e "backend[dev]"`, `scripts/build.py --dist --desktop`,
+  `127.0.0.1:8420`) and the Tier 1/2/3 testing taxonomy. llama3.1:8b listed
+  15 flat components of mixed granularity, never mentioned the frontend or
+  either data store, answered the build workflow with vague prose, and
+  duplicated 4 milestones verbatim (a self-repetition loop that would embed
+  into ChromaDB and pollute retrieval).
+- **Speed is the trade:** qwen 1.6 tok/s vs llama 2.9 tok/s on the same
+  hardware (~1.8x). Wall time was ~equal (741s vs 734s) because the
+  12k-token prefill dominates both. Summaries are background work, chat is
+  interactive — hence the split rather than a wholesale swap.
+- **Split:** new `SENTINEL_OLLAMA_SUMMARY_MODEL` (default `qwen3.5:9b`)
+  reaches `ingest_project_summary` via a new `model=` parameter on
+  `RagService._generate_with_metrics`. Chat answers, the `/system`
+  `model_default`, and the empty-context fallback still use
+  `SENTINEL_OLLAMA_MODEL`. `KnowledgeSummary.model` now records the model
+  that actually wrote each summary (old rows keep their provenance until
+  regenerated).
+- **Also fixed en route (investigating the empty-output run):**
+  `OllamaService.generate_with_metrics` now passes through Ollama's
+  `thinking` / `done_reason` / `prompt_eval_count` (previously discarded),
+  which is what made the earlier qwen run unfalsifiable: 1250 tokens spent
+  entirely on the hidden reasoning chain, `response=""`, and no way to see
+  it. A `think=False` flag was added for answer-only comparisons.
+  `generate()`/`generate_with_metrics()` also thread it through.
+- **Eval tooling** (`scripts/eval_summary_head_to_head.py` — the model
+  shootout, and `scripts/eval_embedding_retrieval.py` — the embedding probe
+  that settled the "bigger embedder?" question): unknown model tags are a
+  hard error instead of a warning that fails 20 minutes in; `results.json`
+  is written in a `finally` so an aborted run still reports partial results
+  (a previous crash left only bare `.md` files); per-trial `<label>.json` +
+  `<label>_thinking.md`; headers carry `done_reason` and `think`.
+- **Verification:** 501 backend tests green (including a new
+  summary-vs-chat model/cap assertion and 3 Settings/warning cases), 116
+  frontend, `flake8 --max-line-length=100` + `black` clean, `tsc --noEmit`
+  clean. `/system` and the Settings page expose both models with a
+  dedicated validation warning when the summary tag is not installed.
+- **Note for the user:** live summaries only switch once a project is
+  re-indexed (`--summary` or the missing-summary backfill); the 29 stored
+  summaries keep saying `llama3.1:8b` until then.
+- **Embedding bakeoff verdict (do NOT switch):** the retrieval probe on the
+  full Sentinel corpus (467 chunks, 20 ground-truth questions) showed
+  nomic-embed-text has the best hit@5 (0.65 vs 0.60/0.60/0.55), is 1.7-6x
+  the fastest (5.4 docs/s) and smallest (274MB); bge-m3/qwen3-embedding won
+  hit@1 by 3 questions, which is inside the noise at n=20. The real signal
+  was that *every* model missed ~40% of questions — a retrieval-pipeline
+  problem, confirmed by audit_new.md's RAG recommendations.
+
 ## 2026-09-12 — Frozen exe saw empty data (per-machine store vs repo dataset)
 
 - **Root cause:** the packaged shell forced `SENTINEL_DB_PATH/...` into

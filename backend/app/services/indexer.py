@@ -757,6 +757,24 @@ class IndexerService:
         for path, row in existing.items():
             if path not in seen:
                 self.session.delete(row)
+                self._retract_file_vectors(project.id, path)
+
+    def _retract_file_vectors(self, project_id: str, rel_path: str) -> None:
+        """v1.17.19.7 (audit A1): delete the Chroma vectors of a file that is
+        no longer on disk.
+
+        The relational side has always removed the row, but the vectors it
+        left behind meant a deleted source stayed retrievable as "knowledge" —
+        the exact invariant the RAG feature promises. Chroma must never block
+        a scan, so a failure here is logged and swallowed."""
+        try:
+            from app.services.chroma_manager import get_chroma_manager
+
+            get_chroma_manager().delete_where(
+                "file_summaries", {"project_id": project_id, "file_path": rel_path}
+            )
+        except Exception:  # noqa: BLE001 — Chroma must never block the index
+            logger.debug("Chroma retraction skipped for %s (%s)", rel_path, project_id)
 
     def _upsert_file(
         self,

@@ -108,3 +108,35 @@ def test_embedding_model_present_with_latest_tag(tmp_db, monkeypatch):
     body = response.json()
     keys = {w["key"] for w in body["warnings"]}
     assert "embedding_model" not in keys
+
+
+def test_summary_model_warning_when_not_installed(tmp_db, monkeypatch):
+    """v1.17.19.6: summaries have their own model; a missing tag warns on its
+    own key rather than silently failing every summary generation."""
+    fake = _FakeOllama(models=("llama3.1:8b", "nomic-embed-text"))
+    monkeypatch.setattr(settings, "ollama_summary_model", "qwen3.5:9b")
+    response, _ = _report(tmp_db, monkeypatch, ollama=fake)
+    body = response.json()
+    keys = {w["key"] for w in body["warnings"]}
+    assert "ollama_summary_model" in keys
+    assert "embedding_model" not in keys  # nomic-embed-text is installed
+
+
+def test_summary_model_no_warning_when_same_as_default(tmp_db, monkeypatch):
+    """Both roles on one model = one install check (no duplicate warning)."""
+    fake = _FakeOllama(models=("llama3.1:8b", "nomic-embed-text"))
+    monkeypatch.setattr(settings, "ollama_summary_model", settings.ollama_model)
+    response, _ = _report(tmp_db, monkeypatch, ollama=fake)
+    body = response.json()
+    keys = {w["key"] for w in body["warnings"]}
+    assert "ollama_summary_model" not in keys
+
+
+def test_summary_model_setting_listed(tmp_db, monkeypatch):
+    """The Settings page must expose both role-specific models (Rule 7)."""
+    response, _ = _report(tmp_db, monkeypatch)
+    body = response.json()
+    items = {i["key"]: i for g in body["groups"] for i in g["items"]}
+    assert (
+        items["SENTINEL_OLLAMA_SUMMARY_MODEL"]["value"] == settings.ollama_summary_model
+    )

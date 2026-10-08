@@ -2,7 +2,6 @@
 
 import httpx
 import pytest
-
 from app.core.config import settings
 from app.services.ollama_service import OllamaService, OllamaUnavailableError
 
@@ -155,6 +154,54 @@ def test_embed_falls_back_to_legacy_endpoint():
 
     service = _service_with(handler)
     assert service.embed("text") == [0.5, 0.6]
+    service.close()
+
+
+def test_generate_with_metrics_passes_through_thinking_counters():
+    """Reasoning models (Qwen3+): thinking text, done_reason and
+    prompt_eval_count are passed through so callers can tell truncation
+    (done_reason=length, possibly empty response) from a natural stop."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "model": "qwen3.5:9b",
+                "response": "",
+                "thinking": "Thinking Process: ...",
+                "done": True,
+                "done_reason": "length",
+                "eval_count": 1250,
+                "eval_duration": 1_000_000_000,
+                "total_duration": 2_000_000_000,
+                "prompt_eval_count": 11_000,
+            },
+        )
+
+    service = _service_with(handler)
+    out = service.generate_with_metrics("prompt", model="qwen3.5:9b")
+    assert out["response"] == ""
+    assert out["thinking"] == "Thinking Process: ..."
+    assert out["done_reason"] == "length"
+    assert out["prompt_eval_count"] == 11_000
+    assert out["eval_count"] == 1250
+    service.close()
+
+
+def test_think_flag_sent_only_when_set():
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        import json
+
+        captured["payload"] = json.loads(request.read())
+        return httpx.Response(200, json={"response": "ok"})
+
+    service = _service_with(handler)
+    service.generate("hi", think=False)
+    assert captured["payload"]["think"] is False
+    service.generate("hi")
+    assert "think" not in captured["payload"]
     service.close()
 
 
