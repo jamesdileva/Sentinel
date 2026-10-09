@@ -46,11 +46,15 @@ from app.core.config import settings  # noqa: E402
 from app.db.connection import get_engine  # noqa: E402
 from app.services.ollama_service import OllamaService  # noqa: E402
 from app.services.rag_service import (  # noqa: E402
-    _MAX_DOC_CHARS,  # noqa: E402
+    _MAX_DOC_CHARS,
     _chunk_document,
     _is_doc_path,
     _read_local_file,
 )
+
+# Scratch ChromaDB for the distance measurement (audit A8). Separate from the
+# per-model directories so --distances can run alongside a rank.
+_TEMP_CHROMA = ROOT / "data" / "evals" / ".probe-chroma"
 
 # Ground truth for THIS repo. Each question carries the source files whose
 # content actually answers it, as path substrings (chunked docs and their
@@ -143,6 +147,24 @@ QUESTIONS: list[dict] = [
 
 def _slug(model: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "_", model)
+
+
+# v1.17.19.8 (audit A8): `--distances` needs questions with NO relationship
+# to any indexed content, so "the nearest match is bad" is a measurable
+# position rather than an opinion. These are deliberately unrelated to
+# software: the floor separates "answered by the corpus" from "not".
+NEGATIVE_QUESTIONS: list[str] = [
+    "how do I bake a sourdough loaf at home",
+    "what is the boiling point of mercury",
+    "recommend a good horror movie from 1972",
+    "how do I replace a punctured bicycle tire",
+    "who won the 1998 world cup final",
+    "what year did the titanic sink",
+    "how do I prune a mature apple tree",
+    "what is the capital of Slovakia",
+    "how do I tune a ukulele",
+    "which planets have rings",
+]
 
 
 def _build_corpus(project_name: str, max_chunks: int, embedded_only: bool):
@@ -296,6 +318,96 @@ def _score(questions: list[dict], hits_by_question: dict[str, list[dict]]) -> di
     }
 
 
+def _measure_relevance_floor(
+    model: str, corpus: list[dict], svc: OllamaService
+) -> dict:
+    """Audit A8: measure where good and bad questions land, suggest a floor.
+
+    Cosine distance is 0 for identical vectors, so "smallest distance wins"
+    always produces *something*. The floor is the first thing that turns that
+    into a deterministic "not enough evidence" answer, and it has to be read
+    off the corpus rather than guessed.
+    """
+    vectors, _, _, _ = _embed_corpus(model, corpus, svc)
+    client = chromadb.PersistentClient(path=str(_TEMP_CHROMA))
+    try:
+        client.delete_collection("dist")
+    except Exception:  # noqa: BLE001 — first run has nothing to drop
+        pass
+    collection = client.create_collection("dist", metadata={"hnsw:space": "cosine"})
+    collection.add(
+        ids=[c["id"] for c in corpus],
+        embeddings=vectors,
+        documents=[c["doc"] for c in corpus],
+        metadatas=[{"file_path": c["file_path"]} for c in corpus],
+    )
+
+    def best_distance(question: str) -> float:
+        vector, _ = svc.embed_with_metrics(question, model=model)
+        result = collection.query(query_embeddings=[vector], n_results=1)
+        return float((result.get("distances") or [[]])[0][0])
+
+    positives = [best_distance(q) for q in (e["q"] for e in QUESTIONS)]
+    negatives = [best_distance(q) for q in NEGATIVE_QUESTIONS]
+
+    def stats(values: list[float]) -> dict:
+        ordered = sorted(values)
+        middle = len(ordered) // 2
+        return {
+            "n": len(ordered),
+            "min": round(ordered[0], 4),
+            "p25": round(ordered[len(ordered) // 4], 4),
+            "median": round(ordered[middle], 4),
+            "p75": round(ordered[(3 * len(ordered)) // 4], 4),
+            "max": round(ordered[-1], 4),
+        }
+
+    gap = min(negatives) - max(positives)
+    suggested = round(max(positives) + min(gap / 2, 0.1), 3)
+    return {
+        "model": model,
+        "corpus_chunks": len(corpus),
+        "positives": positives,
+        "negatives": negatives,
+        "positive_stats": stats(positives),
+        "negative_stats": stats(negatives),
+        "gap": round(gap, 4),
+        "suggested_floor": suggested,
+    }
+
+
+def _run_distance_mode(args, out_dir: Path) -> int:
+    """Audit A8 helper: report the distance distributions and a suggested
+    `rag_relevance_floor`, then stop (no model ranking)."""
+    model = args.models[0] if args.models else "nomic-embed-text"
+    print(f"[probe] --distances with {model} (other models ignored)", flush=True)
+    corpus, meta = _build_corpus(args.project, args.max_chunks, args.embedded_only)
+    print(f"[probe] corpus: {len(corpus)} chunks", flush=True)
+    svc = OllamaService()
+    try:
+        payload = _measure_relevance_floor(model, corpus, svc)
+    finally:
+        svc.close()
+    (out_dir / "distance-report.json").write_text(
+        json.dumps(payload, indent=2), encoding="utf-8"
+    )
+    good, bad = payload["positive_stats"], payload["negative_stats"]
+    print("\n=== BEST-NEIGHBOUR COSINE DISTANCE (lower is better; 0 = identical) ===")
+    print(f"known-good  ({len(QUESTIONS)} questions): {good}")
+    print(f"known-bad   ({len(NEGATIVE_QUESTIONS)} questions): {bad}")
+    print(f"\ngap between the worst good and the best bad: {payload['gap']}")
+    print(
+        f"SENTINEL_RAG_RELEVANCE_FLOOR={payload['suggested_floor']} "
+        "(just above the worst known-good, inside the gap)"
+    )
+    print(
+        "\nSanity-check the floor against a handful of real questions before "
+        "committing it: a floor that is too low silently refuses good answers."
+    )
+    print(f"[probe] done. out={out_dir}", flush=True)
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Read-only embedding-model retrieval probe."
@@ -323,6 +435,14 @@ def main() -> int:
         help="only files the live index has already embedded",
     )
     parser.add_argument("--top-k", type=int, default=5)
+    parser.add_argument(
+        "--distances",
+        action="store_true",
+        help=(
+            "measure known-good vs known-bad best-neighbour cosine distance "
+            "and suggest a relevance floor (audit A8) instead of ranking models"
+        ),
+    )
     parser.add_argument("--out-dir", default=None)
     args = parser.parse_args()
 
@@ -336,6 +456,8 @@ def main() -> int:
 
     print(f"[probe] project={args.project} models={args.models}", flush=True)
     print(f"[probe] live chroma (never opened): {settings.chroma_path}", flush=True)
+    if args.distances:
+        return _run_distance_mode(args, out_dir)
     installed = _check_ollama(args.models)
     print(f"[probe] installed embedding models: {installed}", flush=True)
 

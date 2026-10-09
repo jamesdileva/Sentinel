@@ -33,7 +33,14 @@ class RagQueryRequest(BaseModel):
 
 
 class RagResponse(BaseModel):
-    """Grounded answer with sources and AI provenance (docs/01 §16.2)."""
+    """Grounded answer with sources and AI provenance (docs/01 §16.2).
+
+    `confidence` is a deterministic retrieval score (1 - best cosine
+    distance), NOT a calibrated probability of the answer being correct —
+    audit A8, v1.17.19.8. When it is 0.0 the answer is one of Sentinel's
+    deterministic refusals: no indexed evidence at all, or the nearest
+    content was further away than `settings.rag_relevance_floor`.
+    """
 
     answer: str
     sources: list[RagResult]

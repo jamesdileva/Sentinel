@@ -4,6 +4,44 @@
 > Sentinel-wide working notes live at the top; newest entries at the bottom
 > of the changelog unless otherwise dated.
 
+## 2026-10-08 — Audit A8: deterministic RAG relevance floor (measured, not guessed)
+
+- **Problem:** `query()` always answered from the nearest context, so an
+  unrelated question still got a plausible answer built on weak evidence —
+  the prompt asked the model to admit thin context, but relying on the model
+  for that is weaker than enforcing it before generation. The reported
+  `confidence` was `1 - min(distance)`: raw vector distance labelled as a
+  probability, which it is not.
+- **The floor is measured, not guessed.** Over the real 469-chunk corpus,
+  20 questions with known-correct source files peaked at cosine distance
+  0.4556 and 10 deliberately off-topic questions ("how do I bake a sourdough
+  loaf", "which planets have rings") bottomed at 0.5188 — a 0.063 gap.
+  `SENTINEL_RAG_RELEVANCE_FLOOR` defaults to **0.487**, just above the worst
+  known-good and inside the gap. Cosine distance is 0 for identical vectors,
+  so smaller = stricter.
+- **Behaviour:** above the floor `query()` returns a deterministic refusal
+  *before* generating anything, still citing the sources it rejected so the
+  user can see what it decided was too far away. `RagResponse.confidence` is
+  now documented as a deterministic retrieval score, not answer-confidence —
+  confidence in the answer belongs to the model and is deliberately not
+  exposed (Rule 7).
+- **Re-measure, don't copy the number.**
+  `scripts/eval_embedding_retrieval.py --distances` embeds the corpus once,
+  scores the good/bad question sets and prints the suggested floor. This
+  matters because the scale is model-specific: a floor tuned for
+  nomic-embed-text is meaningless if `SENTINEL_EMBEDDING_MODEL` changes.
+- **Test gotcha:** the deterministic bag-of-words test embedder has no
+  semantics, so a natural-language question against the fixture's code sits
+  well above 0.487 — four existing "an answer was generated" RAG tests would
+  silently have become floor tests. They now call `_no_floor(monkeypatch)`
+  explicitly, which is also the honest sign that a floor can only be validated
+  against a real embedder.
+- **Tests:** +4 (weak-match refusal, empty-index wording distinct from the
+  floor refusal, retrieval-score arithmetic, floor listed in Settings). 516
+  backend green; flake8 + black clean; frontend untouched.
+- **Not fixed here (fine to do next):** A9, the prompt-injection boundary for
+  retrieved repository text, still treats retrieved chunks as instructions.
+
 ## 2026-10-08 — Audit Batch 1: RAG correctness (A1 stale vectors · A2 retry · A3 lock · A4 reset barrier)
 
 - **A1 — deleted and re-chunked files left stale Chroma vectors.** The

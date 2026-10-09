@@ -37,6 +37,16 @@ def _build_fake_rag(tmp_path) -> RagService:
     )
 
 
+def _no_floor(monkeypatch) -> None:
+    """Disable the A8 relevance floor so endpoint tests can exercise the
+    answer path. The floor is tuned for nomic-embed-text distances; the
+    bag-of-words fake embedder used here has no semantics, so a natural
+    question against the fixture's code sits well above the measured floor."""
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "rag_relevance_floor", float("inf"))
+
+
 def _seed(tmp_db) -> str:
     with Session(get_engine()) as session:
         return (
@@ -87,7 +97,8 @@ def test_rag_search_preserves_provenance(indexed):
     assert all("file_path" in r for r in results)
 
 
-def test_rag_query_endpoint(indexed):
+def test_rag_query_endpoint(indexed, monkeypatch):
+    _no_floor(monkeypatch)
     client = TestClient(app)
     resp = client.post(
         "/api/v1/rag/query",

@@ -779,13 +779,36 @@ class RagService:
         else:
             sources = self._search_all_projects(question, top_k)
         sources = _diversify(sources)
-        if not sources:
+        best_distance = min(s.distance for s in sources) if sources else None
+        if best_distance is None:
             return RagResponse(
                 answer=(
                     "No matching knowledge is indexed yet for this question. "
                     "Run a RAG index (CLI: `sentinel rag-index <project>`) first."
                 ),
                 sources=[],
+                model=settings.ollama_model,
+                generated_at=datetime.datetime.now(datetime.timezone.utc),
+                confidence=0.0,
+            )
+        # v1.17.19.8 (audit A8): the deterministic relevance floor. Sentinel
+        # used to always answer from the nearest context, so an unrelated
+        # question got a plausible answer built on weak evidence — the prompt
+        # asked the model to admit thin context, but relying on the model for
+        # that is weaker than enforcing it before generation. Measured on this
+        # corpus: known-good questions peaked at 0.4556, off-topic questions
+        # bottomed at 0.5188, so anything above the floor is not evidence.
+        if best_distance > settings.rag_relevance_floor:
+            return RagResponse(
+                answer=(
+                    "I don't have enough indexed evidence to answer that "
+                    "question about this project. The closest indexed content "
+                    "is not a good enough match (distance "
+                    f"{best_distance:.3f} > floor {settings.rag_relevance_floor:.3f}). "
+                    "Try rephrasing with terms that appear in the project, or "
+                    "re-index the knowledge base if the files are new."
+                ),
+                sources=sources,
                 model=settings.ollama_model,
                 generated_at=datetime.datetime.now(datetime.timezone.utc),
                 confidence=0.0,
@@ -800,15 +823,16 @@ class RagService:
         )
         prompt = _ANSWER_TEMPLATE.format(context=context, question=question)
         answer = self._generate_with_metrics(prompt, purpose="rag-query")
-        confidence = round(
-            max(0.0, min(1.0, 1.0 - min(s.distance for s in sources))), 4
-        )
+        # NOT a calibrated probability — it is 1 - best cosine distance, a
+        # deterministic retrieval score (audit A8). Confidence in the *answer*
+        # belongs to the model that wrote it and is deliberately not exposed.
+        retrieval_score = round(max(0.0, min(1.0, 1.0 - best_distance)), 4)
         return RagResponse(
             answer=answer,
             sources=sources,
             model=settings.ollama_model,
             generated_at=datetime.datetime.now(datetime.timezone.utc),
-            confidence=confidence,
+            confidence=retrieval_score,
         )
 
     def _search_all_projects(self, question: str, top_k: int) -> list[RagResult]:

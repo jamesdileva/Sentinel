@@ -192,6 +192,20 @@ def _rag(session, tmp_path) -> RagService:
     )
 
 
+def _no_floor(monkeypatch) -> None:
+    """Disable the A8 relevance floor so a test can exercise the answer path.
+
+    v1.17.19.8: the measured floor (0.487) is tuned for `nomic-embed-text`
+    distances. The deterministic bag-of-words test embedder has no semantics,
+    so a natural-language question vs. the fixture's code lands well above it
+    - tests asserting "an answer was generated" must opt out explicitly,
+    otherwise every one of them would silently become a floor test.
+    """
+    from app.core.config import settings as live_settings
+
+    monkeypatch.setattr(live_settings, "rag_relevance_floor", float("inf"))
+
+
 def test_index_project_populates_all_collections(tmp_db, tmp_path):
     project_id = _index_project(tmp_db)
     with Session(connection.get_engine()) as session:
@@ -291,7 +305,8 @@ def test_diversify_caps_chunks_per_file():
     assert kept[-1].file_path == "docs/guide.md"  # diversity reached slot 5
 
 
-def test_query_returns_grounded_answer(tmp_db, tmp_path):
+def test_query_returns_grounded_answer(tmp_db, tmp_path, monkeypatch):
+    _no_floor(monkeypatch)
     project_id = _index_project(tmp_db)
     with Session(connection.get_engine()) as session:
         rag = _rag(session, tmp_path)
@@ -459,11 +474,12 @@ def test_reset_all_heals_health_check(tmp_db, tmp_path):
     assert health["checked"] == []
 
 
-def test_query_all_projects_is_summary_first(tmp_db, tmp_path):
+def test_query_all_projects_is_summary_first(tmp_db, tmp_path, monkeypatch):
     """v1.17.6: without a project scope, architecture summaries are consulted
     before the noisier collections. v1.17.6.6: the combined hits are then
     ranked by true distance, so the closest chunk (summary OR doc) surfaces
-    first — honest nearest-first ordering instead of collection priority."""
+    first - honest nearest-first ordering instead of collection priority."""
+    _no_floor(monkeypatch)
     project_id = _index_project(tmp_db)
     with Session(connection.get_engine()) as session:
         project = RagService.get_project(session, project_id)
@@ -477,9 +493,10 @@ def test_query_all_projects_is_summary_first(tmp_db, tmp_path):
     assert any(s.source == "project_summaries" for s in response.sources)
 
 
-def test_query_context_names_projects(tmp_db, tmp_path):
+def test_query_context_names_projects(tmp_db, tmp_path, monkeypatch):
     """v1.17.6: context lines carry the source project's name (metadata
     only ever had ids), so the LLM sees provenance it can cite."""
+    _no_floor(monkeypatch)
     project_id = _index_project(tmp_db)
     captured: dict = {}
 
@@ -1407,3 +1424,60 @@ def test_stale_run_leaves_reset_slate_untouched(tmp_db, tmp_path, monkeypatch):
         assert get_chroma_manager().count("file_summaries") == 0
     finally:
         kc.reset_for_tests()
+
+
+# ── v1.17.19.8: audit A8 deterministic relevance floor ──
+
+
+def test_weak_match_refuses_to_answer(tmp_db, tmp_path):
+    """A8: when the nearest context is further than the floor, Sentinel says
+    so instead of answering from weak evidence (it used to always answer)."""
+    project_id = _index_project(tmp_db)
+    with Session(connection.get_engine()) as session:
+        rag = _rag(session, tmp_path)
+        project = RagService.get_project(session, project_id)
+        rag.index_project(project)
+        response = rag.query("what is this project?", project_id=project_id)
+    assert response.confidence == 0.0
+    assert "don't have enough indexed evidence" in response.answer
+    # The floor is enforced *before* generation, and the closest matches are
+    # still surfaced so the user can see what it decided was too far away.
+    assert response.sources
+    assert "floor" in response.answer
+
+
+def test_empty_index_still_gets_the_kind_answer(tmp_db, tmp_path):
+    """A8 regression: an empty index keeps the original 'nothing indexed'
+    wording, which differs from the floor refusal."""
+    with Session(connection.get_engine()) as session:
+        response = _rag(session, tmp_path).query(
+            "anything at all", project_id="p-missing"
+        )
+    assert "no matching knowledge" in response.answer.lower()
+    assert response.confidence == 0.0
+
+
+def test_good_match_answers_and_reports_retrieval_score(tmp_db, tmp_path, monkeypatch):
+    """A8: with the floor satisfied the answer path runs, and `confidence`
+    is the deterministic retrieval score (1 - best distance), not a
+    probability of the answer being right."""
+    _no_floor(monkeypatch)
+    project_id = _index_project(tmp_db)
+    with Session(connection.get_engine()) as session:
+        project = RagService.get_project(session, project_id)
+        rag = _rag(session, tmp_path)
+        rag.index_project(project)
+        response = rag.query("what is this project?", project_id=project_id)
+    assert response.confidence > 0.0
+    expected = round(
+        max(0.0, min(1.0, 1.0 - min(s.distance for s in response.sources))), 4
+    )
+    assert response.confidence == expected
+
+
+def test_floor_is_measurable_from_the_probe(tmp_db, tmp_path):
+    """A8: the shipped floor default must sit inside the measured gap, so it
+    can only be moved deliberately via SENTINEL_RAG_RELEVANCE_FLOOR."""
+    from app.core.config import settings
+
+    assert 0.0 < settings.rag_relevance_floor < 2.0

@@ -54,6 +54,15 @@ class Settings(BaseSettings):
     # interactive and keep the faster model.
     # Existing KnowledgeSummary rows keep their stored `model` provenance.
     ollama_summary_model: str = "qwen3.5:9b"
+    # v1.17.19.8 (audit A8): cosine distance above which Sentinel refuses to
+    # answer from the nearest context. Measured, not guessed — 20 questions
+    # with known-correct source files peaked at 0.4556 and 10 off-topic
+    # questions bottomed out at 0.5188 over the same 469-chunk corpus, leaving
+    # a 0.063 gap the floor sits in the middle of. Cosine distance is 0 for
+    # identical vectors, so a smaller floor = stricter matching.
+    # Re-measure with `scripts/eval_embedding_retrieval.py --distances` if
+    # SENTINEL_EMBEDDING_MODEL changes — the scale is model-specific.
+    rag_relevance_floor: float = 0.487
     embedding_model: str = "nomic-embed-text"
     ollama_timeout_seconds: int = 1800  # v1.17.6.4: 120s timed out arch-summary
     # generation while embedding workers were saturating the local Ollama

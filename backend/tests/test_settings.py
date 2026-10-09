@@ -100,6 +100,16 @@ def test_embedding_model_warning_when_missing(tmp_db, monkeypatch):
     assert "embedding_model" in keys
 
 
+def test_relevance_floor_setting_listed(tmp_db, monkeypatch):
+    """A8: the floor must be visible and overridable (Rule 7 transparency)."""
+    response, _ = _report(tmp_db, monkeypatch)
+    body = response.json()
+    items = {i["key"]: i for g in body["groups"] for i in g["items"]}
+    item = items["SENTINEL_RAG_RELEVANCE_FLOOR"]
+    assert item["value"] == str(settings.rag_relevance_floor)
+    assert item["source"] in {"default", "env", ".env"}
+
+
 def test_embedding_model_present_with_latest_tag(tmp_db, monkeypatch):
     """Ollama reports installed models as `nomic-embed-text:latest`; the
     config name without the tag must NOT warn (they are the same model)."""

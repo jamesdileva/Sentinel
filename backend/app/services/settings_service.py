@@ -121,6 +121,12 @@ CATALOG: list[dict] = [
         "field": "ollama_summary_max_tokens",
     },
     {
+        "key": "SENTINEL_RAG_RELEVANCE_FLOOR",
+        "label": "RAG relevance floor (cosine distance)",
+        "group": "AI",
+        "field": "rag_relevance_floor",
+    },
+    {
         "key": "SENTINEL_MAX_RECENT_OLLAMA_QUERIES",
         "label": "Recent queries kept",
         "group": "AI",
