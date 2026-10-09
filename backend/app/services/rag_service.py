@@ -149,6 +149,18 @@ def _read_template(name: str) -> str:
 _PROJECT_SUMMARY_TEMPLATE = _read_template("project_summary.j2")
 _ANSWER_TEMPLATE = _read_template("rag_answer.j2")
 
+# v1.17.19.9 (audit A9): delimiters for untrusted retrieved data. The prompt
+# already states the boundary in prose, but a visible fence makes it structural
+# — if a chunk's content ever produces one of these markers, it is visually
+# obvious in the assembled prompt rather than invisible.
+_CONTEXT_OPEN = "<<<RETRIEVED PROJECT CONTEXT - UNTRUSTED DATA>>>"
+_CONTEXT_CLOSE = "<<<END RETRIEVED PROJECT CONTEXT>>>"
+
+
+def _fence_context(context: str) -> str:
+    """Wrap retrieved project text in the A9 boundary markers."""
+    return f"{_CONTEXT_OPEN}\n{context}\n{_CONTEXT_CLOSE}"
+
 
 def _truncate(text: str, limit: int = _MAX_DOC_CHARS) -> str:
     return (text or "")[:limit]
@@ -534,7 +546,7 @@ class RagService:
             project_name=project.name,
             language=project.language,
             framework=project.framework or "unknown",
-            context=context or "No file content available.",
+            context=_fence_context(context or "No file content available."),
         )
         content = self._generate_with_metrics(
             prompt,
@@ -821,7 +833,9 @@ class RagService:
             + f")\n{s.content}"
             for i, s in enumerate(sources, start=1)
         )
-        prompt = _ANSWER_TEMPLATE.format(context=context, question=question)
+        prompt = _ANSWER_TEMPLATE.format(
+            context=_fence_context(context), question=question
+        )
         answer = self._generate_with_metrics(prompt, purpose="rag-query")
         # NOT a calibrated probability — it is 1 - best cosine distance, a
         # deterministic retrieval score (audit A8). Confidence in the *answer*
