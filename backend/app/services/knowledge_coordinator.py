@@ -22,10 +22,20 @@ Both are **process-local on purpose**: Sentinel indexes from the one uvicorn
 process `run.py` starts, and the races live in its in-process thread pool.
 Cross-process mutual exclusion would need a filesystem lock, which is more
 machinery than these two findings justify (Rule 8).
+
+`knowledge_lock` delegates to `services/project_operations.py` (v1.17.19.10,
+audit A7) so that one registry owns every per-project slot. The generation
+counter stays here — it is specific to resetting the knowledge index and has
+no analogue for builds or scans.
 """
 
 import threading
 from contextlib import contextmanager
+
+from app.services.project_operations import (
+    project_operation,
+    reset_for_tests as _reset_locks,
+)
 
 
 class KnowledgeResetInterrupt(Exception):
@@ -61,20 +71,21 @@ def is_indexing(project_id: str) -> bool:
 
 @contextmanager
 def knowledge_lock(project_id: str):
-    """One knowledge-index execution per project (A3).
+    """One knowledge-index execution per project (A3/A7).
 
     A duplicate request blocks until the first finishes, then runs and finds
     everything already embedded — so exactly one set of embeddings is produced
-    and `embedding_id` is never raced."""
-    lock = _lock_for(project_id)
-    with _guard:
-        _running.add(project_id)
-    try:
-        with lock:
-            yield
-    finally:
+    and `embedding_id` is never raced. Delegates to the shared per-project
+    operation coordinator (audit A7) so build/tester/test guards and this one
+    cannot disagree about what is running for a project."""
+    with project_operation(project_id, "knowledge"):
         with _guard:
-            _running.discard(project_id)
+            _running.add(project_id)
+        try:
+            yield
+        finally:
+            with _guard:
+                _running.discard(project_id)
 
 
 def current_generation() -> int:
@@ -107,7 +118,7 @@ def assert_current(generation: int, project_name: str) -> None:
 def reset_for_tests() -> None:
     """Drop locks, the running set and the generation counter (test isolation)."""
     global _generation
+    _reset_locks()
     with _guard:
-        _locks.clear()
         _running.clear()
         _generation = 0

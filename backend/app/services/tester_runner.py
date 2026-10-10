@@ -147,6 +147,26 @@ class TesterRunner:
         logger.info("Tester %r for %s -> %s", tester.name, project.name, status)
         return app_session
 
+    def record_busy(self, project, detail: str) -> object:
+        """Record a tester run that was never started (audit A7).
+
+        v1.17.19.10: a duplicate tester, or one racing a build, is refused by
+        the project-operation matrix. The session still needs a durable row —
+        the UI derives status from session history, so a run that silently
+        vanished would leave "Working..." stuck forever (the v1.17.8.3
+        BuildLog lesson). This writes the row with a terminal `skipped`
+        status and the blocking operations named in the outcome.
+        """
+        service = AppSessionService(self.session)
+        tester = self.resolve(project)
+        title = f"Tester: {tester.name}" if tester else "Tester"
+        app_session = service.start(
+            project.id, title, tester.description if tester else None
+        )
+        service.end(app_session.id, f"Not started - {detail}", "skipped")
+        logger.info("Tester for %s not started: %s", project.name, detail)
+        return app_session
+
     def _auto_launch(
         self, project, tester: Tester, ctx: TesterContext, service, session_id: str
     ) -> Path | None:

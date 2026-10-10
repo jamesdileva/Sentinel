@@ -13,6 +13,7 @@ from app.db.connection import get_engine
 from app.db.models import BuildLog, Project
 from app.services import activity_bus
 from app.services.build_runner import BuildRunner
+from app.services.project_operations import OperationBusyError, project_operation
 from app.services.security_scanner import SecurityScanner
 from app.services.test_runner import TestRunner
 
@@ -25,8 +26,51 @@ def _get_project(project_id: str) -> Project:
 
 
 def run_build_task(project_id: str, log_id: str) -> dict:
-    """Execute the build command for a project and update the BuildLog row."""
+    """Execute the build command for a project and update the BuildLog row.
+
+    v1.17.19.10 (audit A7): the whole build holds the project slot, because
+    build→open kills listeners on known ports, launches servers and replaces
+    the log row. A duplicate that slips past the API check fails the log with
+    a readable reason instead of racing the first one.
+    """
     logger.info("build task starting for %s", project_id)
+    try:
+        with project_operation(project_id, "build"):
+            return _run_build_task(project_id, log_id)
+    except OperationBusyError as exc:
+        logger.info("build task refused for %s: %s", project_id, exc)
+        with Session(get_engine()) as session:
+            log = session.get(BuildLog, log_id)
+            if log is None:
+                log = BuildLog(id=log_id, project_id=project_id)
+            log.success = False
+            log.exit_code = 1
+            log.stdout = ""
+            log.stderr = str(exc)
+            session.add(log)
+            session.commit()
+            session.expire_all()
+            activity_bus.publish_event(
+                "build",
+                f"Build not started for {_project_name(session, project_id)}: busy",
+                detail=str(exc),
+                data={"project_id": project_id, "success": False},
+            )
+            return {
+                "job_id": log_id,
+                "project_id": project_id,
+                "success": False,
+                "exit_code": 1,
+                "skipped": "operation-busy",
+            }
+
+
+def _project_name(session: Session, project_id: str) -> str:
+    project = BuildRunner.get_project(session, project_id)
+    return project.name if project is not None else project_id
+
+
+def _run_build_task(project_id: str, log_id: str) -> dict:
     with Session(get_engine()) as session:
         project = BuildRunner.get_project(session, project_id)
         log = session.get(BuildLog, log_id)
@@ -64,46 +108,60 @@ def run_build_task(project_id: str, log_id: str) -> dict:
 
 
 def run_tests_task(project_id: str) -> dict:
-    """Execute the test command for a project and persist a TestResult."""
+    """Execute the test command for a project and persist a TestResult.
+
+    v1.17.19.10 (audit A7): a duplicate test run is refused rather than
+    queued — two suites against the same tree only waste the pool. Security
+    scans and knowledge indexing are *not* blocked (the audit matrix keeps
+    them free to run alongside), so this guard only refuses another test.
+    """
     logger.info("test task starting for %s", project_id)
-    with Session(get_engine()) as session:
-        project = TestRunner.get_project(session, project_id)
-        result = TestRunner(session).run_tests(project)
-        errors = getattr(result, "errors", 0)
-        outcome = "passed" if result.failed == 0 and errors == 0 else "failed"
-        activity_bus.publish_event(
-            "test",
-            f"Tests {outcome} for {project.name}",
-            detail=(
-                f"{result.passed} passed, {result.failed} failed, " f"{errors} errors"
-            ),
-            data={
+    with project_operation(project_id, "test"):
+        with Session(get_engine()) as session:
+            project = TestRunner.get_project(session, project_id)
+            result = TestRunner(session).run_tests(project)
+            errors = getattr(result, "errors", 0)
+            outcome = "passed" if result.failed == 0 and errors == 0 else "failed"
+            activity_bus.publish_event(
+                "test",
+                f"Tests {outcome} for {project.name}",
+                detail=(
+                    f"{result.passed} passed, {result.failed} failed, "
+                    f"{errors} errors"
+                ),
+                data={
+                    "project_id": project.id,
+                    "passed": result.passed,
+                    "failed": result.failed,
+                },
+            )
+            return {
+                "job_id": result.id,
                 "project_id": project.id,
                 "passed": result.passed,
                 "failed": result.failed,
-            },
-        )
-        return {
-            "job_id": result.id,
-            "project_id": project.id,
-            "passed": result.passed,
-            "failed": result.failed,
-            "summary": result.summary,
-        }
+                "summary": result.summary,
+            }
 
 
 def run_security_scan_task(project_id: str) -> dict:
-    """Run all security scanners for a project and persist findings."""
+    """Run all security scanners for a project and persist findings.
+
+    v1.17.19.10 (audit A7): scans coalesce — a duplicate waits for the first
+    to finish rather than running in parallel, because the second would
+    produce the same findings against the same files.
+    """
     logger.info("scan task starting for %s", project_id)
-    with Session(get_engine()) as session:
-        project = SecurityScanner.get_project(session, project_id)
-        findings = SecurityScanner(session).scan_project(project)
-        activity_bus.publish_event(
-            "security",
-            f"Security scan of {project.name} found {len(findings)} finding(s)",
-            data={"project_id": project.id, "count": len(findings)},
-        )
-        return {"project_id": project.id, "count": len(findings)}
+    with project_operation(project_id, "security"):
+        with Session(get_engine()) as session:
+            project = SecurityScanner.get_project(session, project_id)
+            findings = SecurityScanner(session).scan_project(project)
+            activity_bus.publish_event(
+                "security",
+                f"Security scan of {project.name} found {len(findings)} finding(s)",
+                data={"project_id": project.id, "count": len(findings)},
+            )
+            return {"project_id": project.id, "count": len(findings)}
 
 
 def run_security_scan_all() -> dict:

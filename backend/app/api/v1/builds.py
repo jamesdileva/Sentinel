@@ -16,6 +16,7 @@ from app.db.models import BuildLog
 from app.repositories import BuildLogRepository
 from app.schemas import BuildLogRead, BuildTrigger, JobStatus, build_status_from_log
 from app.services.job_scheduler import scheduler as job_scheduler
+from app.services.project_operations import active_operations
 
 router = APIRouter(prefix="/builds", tags=["builds"])
 
@@ -24,8 +25,23 @@ router = APIRouter(prefix="/builds", tags=["builds"])
 def run_build(
     payload: BuildTrigger, session: Session = Depends(get_session)
 ) -> JobStatus:
-    """Enqueue a build for a project and return a pollable job status."""
+    """Enqueue a build for a project and return a pollable job status.
+
+    v1.17.19.10 (audit A7): refuses a build while a build or tester holds
+    the project. build→open kills port listeners, launches servers and
+    replaces the log row, so the duplicate is worse than a 409 — and without
+    this the API would happily queue a second job the task then has to fail.
+    """
     project = project_or_404(payload.project_id, session)
+    holding = [op for op in active_operations(project.id) if op in {"build", "tester"}]
+    if holding:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Build cannot start for {project.name} while "
+                f"{', '.join(holding)} is running"
+            ),
+        )
     job_id = str(uuid.uuid4())
     session.add(BuildLog(id=job_id, project_id=project.id))
     session.commit()

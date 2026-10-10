@@ -258,12 +258,18 @@ class SyncRun(SQLModel, table=True):
 
 
 class SessionStatus(str, enum.Enum):
-    """v1.17.10: session lifecycle — RUNNING until the user ends it."""
+    """v1.17.10: session lifecycle — RUNNING until the user ends it.
+
+    v1.17.19.10 (audit A7): SKIPPED is terminal but not an outcome — it marks
+    a session that was recorded and immediately ended because a conflicting
+    project operation (a build driving the same app) refused to start it.
+    """
 
     RUNNING = "running"
     PASSED = "passed"
     FAILED = "failed"
     INVESTIGATE = "investigate"
+    SKIPPED = "skipped"
 
 
 class AppSession(SQLModel, table=True):

@@ -180,6 +180,25 @@ describe("Builds", () => {
     expect(mockGetBuildHistory).toHaveBeenCalledWith("p1");
   });
 
+  it("surfaces the 409 busy detail when a build is already running (A7)", async () => {
+    const { ApiError } = await import("../api/client");
+    mockTriggerBuild.mockRejectedValue(
+      new ApiError("Build cannot start for alpha while build is running", 409),
+    );
+    const user = userEvent.setup();
+    render(<Builds />);
+    await user.selectOptions(screen.getByRole("combobox"), "p1");
+    await user.click(await screen.findByRole("button", { name: "Run build" }));
+    await waitFor(
+      () =>
+        expect(toastMock).toHaveBeenCalledWith(
+          "Build cannot start for alpha while build is running",
+          "error",
+        ),
+      { timeout: 8000 },
+    );
+  });
+
   it("shows the empty state when no builds exist", async () => {
     mockGetBuildHistory.mockResolvedValue([]);
     const user = userEvent.setup();

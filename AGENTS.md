@@ -4,6 +4,43 @@
 > Sentinel-wide working notes live at the top; newest entries at the bottom
 > of the changelog unless otherwise dated.
 
+## 2026-10-10 — Audit A7: per-project operation locks (Batch 2 begins)
+
+- **Problem:** build/test/scan/tester jobs all run for one project, but the
+  backend enforced no mutual exclusion — only the frontend's disabled buttons
+  stood in the way, and the backend is the real authority. Builds are the
+  sharp edge: build→open kills port listeners, launches servers and replaces
+  the log row, so two concurrent builds (or a build racing a click-through
+  tester against the same app) interfere rather than merely waste the pool.
+- **Fix, as data:** new `services/project_operations.py` implements the
+  audit's compatibility matrix literally — build↔tester refuse both
+  directions, test refuses a duplicate but allows scans, security and
+  knowledge coalesce (a duplicate waits on a per-operation lock instead of
+  re-running). One registry keyed by (project, operation), never a global
+  lock: a build for project A never delays project B, and rejecters never
+  wait so there are no blocking cycles.
+- **Two layers, honest about which is authoritative:** the API 409s a
+  conflicting build/test/tester *before* queueing (fast, no wasted job), and
+  the tasks re-check inside the worker (the pool is what actually executes).
+  The Builds page needed no new code for this — the axios interceptor
+  already toasts the server's `detail` string — just a test proving the 409
+  text reaches the toast.
+- **Refused runs still leave a durable row** (the v1.17.8.3 lesson): the
+  failed BuildLog names the blocking operations, and
+  `TesterRunner.record_busy()` writes a terminal `skipped` AppSession (new
+  `SessionStatus.SKIPPED`) so "Working..." can never stick on a run that
+  never started.
+- **A3 folded in:** `knowledge_coordinator.knowledge_lock` now delegates to
+  the same registry, so the RAG lock and the new guards cannot disagree
+  about what is running — verified by an A4-regression test that the
+  shared coordinator sees the knowledge slot.
+- **Verification:** +14 backend tests (full matrix, coalescing order,
+  per-project isolation, release, all four API 409/allow cases), +1
+  frontend (409 toast text); 726 backend green, `flake8
+  --max-line-length=100` + `black` clean.
+- **Next up (Batch 2 continues):** B5 generic persisted jobs, B6 durable
+  job failures, B7 graceful shutdown/draining, stale-running recovery.
+
 ## 2026-10-08 — Audit A9: retrieved repository text is untrusted data (Batch 1 complete)
 
 - **Problem:** both LLM prompts that consume indexed project content
