@@ -31,5 +31,7 @@ def get_job(job_id: str, session: Session = Depends(get_session)) -> JobRead:
         started_at=job.started_at,
         completed_at=job.completed_at,
         error=job.error,
+        error_type=job.error_type,
+        traceback=job.traceback,
         result_ref=job.result_ref,
     )

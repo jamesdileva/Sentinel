@@ -106,6 +106,26 @@ def test_failing_task_leaves_failed_row_with_error(tmp_db, scheduler):
     assert row.status == JobState.FAILED
     assert row.error is not None and "RuntimeError" in row.error and "boom" in row.error
     assert row.completed_at is not None
+    # v1.17.19.12 (audit B6): the structured detail survives with it.
+    assert row.error_type == "RuntimeError"
+    assert row.traceback is not None
+    assert "RuntimeError: boom" in row.traceback
+    # A real stack, not just the message: scheduler frame plus task frame.
+    assert "job_scheduler.py" in row.traceback
+    assert "in boom" in row.traceback
+
+
+def test_failure_traceback_is_truncated(tmp_db):
+    """Deep stacks must not bloat the row or the /jobs poll (B6)."""
+    from app.repositories.job import JobRepository
+
+    with Session(connection.get_engine()) as session:
+        repo = JobRepository(session)
+        job = repo.create("j-trace", "test", None)
+        repo.mark_failed(job.id, "x", error_type="E", traceback="T" * 9000)
+    row = _row("j-trace")
+    assert row is not None and row.traceback is not None
+    assert len(row.traceback) == 8000
 
 
 def test_beats_write_no_job_row(tmp_db, scheduler):
@@ -205,6 +225,25 @@ def test_jobs_endpoint_returns_row_and_404s(client, tmp_db, eager, monkeypatch):
     assert payload["status"] == "succeeded"
     assert payload["result_ref"] == "tr-1"
     assert client.get("/api/v1/jobs/does-not-exist").status_code == 404
+
+
+def test_jobs_endpoint_exposes_failure_detail(client, tmp_db, eager, monkeypatch):
+    """B6: the failed row's diagnosis is retrievable long after the
+    announcing activity event has been pruned away."""
+    from app.services.job_scheduler import scheduler as _global
+
+    monkeypatch.setitem(_global._registry, "always_fails", _always_fails)
+    job_id = _global.submit("always_fails")
+    body = client.get(f"/api/v1/jobs/{job_id}")
+    assert body.status_code == 200
+    payload = body.json()
+    assert payload["status"] == "failed"
+    assert payload["error_type"] == "ValueError"
+    assert "deliberate" in (payload["traceback"] or "")
+
+
+def _always_fails() -> None:
+    raise ValueError("deliberate test failure")
 
 
 def test_jobs_listed_per_project(tmp_db, scheduler):

@@ -4,6 +4,33 @@
 > Sentinel-wide working notes live at the top; newest entries at the bottom
 > of the changelog unless otherwise dated.
 
+## 2026-10-10 — Audit B6: durable job failure details (Batch 2 continues)
+
+- **Problem:** B5 gave every job a persisted row, but only a one-line
+  `error` — and `_run()` had already published an activity event with the
+  same one-liner. Miss the websocket (or wait out the 5000-row history
+  prune) and the diagnosis is gone. That is most painful for knowledge
+  indexing, the job that fails opaquely most often.
+- **Fix:** failed rows now carry `error_type` (exception class — filterable)
+  and the full `traceback`, captured in `_run` via `traceback.format_exc()`
+  and read back through `GET /api/v1/jobs/{job_id}`. Deep Ollama/Chroma
+  stacks run to tens of KB, so the caps live in `JobRepository` as the one
+  storage policy (2000 chars for the one-liner, 8000 for the stack) rather
+  than in the scheduler, and `_MIGRATIONS` backfills both columns onto
+  v1.17.19.11-era DBs with existing rows preserved.
+- **The distinction that matters:** this is *durable diagnostics*, not a
+  retry policy. A failed job still fails once — the point is that its cause
+  is retrievable weeks later, next to the activity feed's bounded history.
+- **Test gotcha worth recording:** the traceback runs scheduler frame →
+  task frame, so it never contains the calling test's name. Assert on
+  `job_scheduler.py` and the raising function's frame, not the test's.
+- **Verification:** +4 backend tests (error_type + real stack frames,
+  truncation cap, B5-era table migration, endpoint fields); 738 passed
+  + 1 known Chroma HNSW flake, `flake8 --max-line-length=100` + `black`
+  clean.
+- **Next up (Batch 2 continues):** B7 graceful shutdown/draining,
+  stale-running recovery.
+
 ## 2026-10-10 — Audit B5: generic persisted jobs (Batch 2 continues)
 
 - **Problem:** builds had BuildLog as a de-facto job row, but tests, scans,

@@ -7,6 +7,12 @@ from sqlmodel import select
 from app.db.models import Job, JobState
 from app.repositories.base import Repository
 
+# Storage caps (B5/B6): the one-liner stays poll-light and the stack stays
+# debuggable without bloating the row. Truncation lives here so every
+# caller gets it, not just the scheduler.
+_ERROR_MAX_CHARS = 2000
+_TRACEBACK_MAX_CHARS = 8000
+
 
 class JobRepository(Repository):
     model = Job
@@ -45,14 +51,25 @@ class JobRepository(Repository):
         self.session.commit()
         return job
 
-    def mark_failed(self, job_id: str, error: str) -> Job | None:
-        """Move -> failed, keeping a one-line error (B6 enriches this)."""
+    def mark_failed(
+        self,
+        job_id: str,
+        error: str,
+        error_type: str | None = None,
+        traceback: str | None = None,
+    ) -> Job | None:
+        """Move -> failed, keeping the one-liner plus structured detail (B6:
+        exception class for filtering, full stack for diagnosis)."""
         job = self.session.get(Job, job_id)
         if job is None:
             return None
         job.status = JobState.FAILED
         job.completed_at = datetime.datetime.now(datetime.timezone.utc)
-        job.error = error
+        job.error = error[:_ERROR_MAX_CHARS]
+        job.error_type = error_type
+        job.traceback = (
+            traceback[:_TRACEBACK_MAX_CHARS] if traceback is not None else None
+        )
         self.session.add(job)
         self.session.commit()
         return job

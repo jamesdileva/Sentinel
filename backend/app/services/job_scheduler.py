@@ -17,6 +17,7 @@ name. Tests drive them directly (no broker, eager by construction).
 """
 
 import threading
+import traceback
 import uuid
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Callable
@@ -55,9 +56,8 @@ _JOB_TYPES = {
 # AppSession id. Anything else leaves result_ref empty.
 _RESULT_REF_KEYS = ("result_ref", "session_id", "job_id")
 
-# One-line failure text kept on the job row (B5). B6 enriches this; the cap
-# keeps a pathological traceback fragment out of a status poll.
-_ERROR_MAX_CHARS = 2000
+# Length caps for failure text live in repositories/job.py (single storage
+# policy for every caller, B5/B6).
 
 
 def _build_registry() -> dict[str, Callable]:
@@ -287,7 +287,12 @@ class JobScheduler:
             Exception
         ) as exc:  # noqa: BLE001 — a worker job must never crash the process
             logger.exception("%s (%s) failed", name, job_id)
-            _record_failed(job_id, f"{type(exc).__name__}: {exc}")
+            _record_failed(
+                job_id,
+                f"{type(exc).__name__}: {exc}",
+                error_type=type(exc).__name__,
+                traceback=traceback.format_exc(),
+            )
             if publish_events:
                 activity_bus.publish_event(
                     "job",
@@ -346,12 +351,22 @@ def _record_succeeded(job_id: str, result_ref: str | None) -> None:
         logger.warning("job ledger unavailable at finish for %s", job_id, exc_info=True)
 
 
-def _record_failed(job_id: str, error: str) -> None:
+def _record_failed(
+    job_id: str,
+    error: str,
+    error_type: str | None = None,
+    traceback: str | None = None,
+) -> None:
+    """Persist the failure. Length caps live in the repository (single
+    storage policy for every caller); this function just must not lose the
+    stack on the way there."""
     try:
         from app.repositories.job import JobRepository
 
         with _session() as session:
-            JobRepository(session).mark_failed(job_id, error[:_ERROR_MAX_CHARS])
+            JobRepository(session).mark_failed(
+                job_id, error, error_type=error_type, traceback=traceback
+            )
     except Exception:  # noqa: BLE001
         logger.warning("job ledger unavailable at fail for %s", job_id, exc_info=True)
 

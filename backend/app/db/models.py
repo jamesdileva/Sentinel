@@ -385,6 +385,12 @@ class Job(SQLModel, table=True):
     started_at: datetime.datetime | None = None
     completed_at: datetime.datetime | None = None
     error: str | None = None
+    # v1.17.19.12 (audit B6): structured failure detail. `error` stays the
+    # human one-liner; `error_type` is the exception class for filtering and
+    # `traceback` the full stack so a missed websocket event no longer means
+    # the diagnosis is gone (activity history is pruned to 5000 rows).
+    error_type: str | None = None
+    traceback: str | None = None
     result_ref: str | None = None
 
     project: Project | None = Relationship(back_populates="jobs")

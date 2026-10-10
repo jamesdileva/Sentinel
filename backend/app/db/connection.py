@@ -74,6 +74,10 @@ def _migrate_columns(engine) -> None:
             "documentation_status",
             "VARCHAR(20) NOT NULL DEFAULT 'pending'",  # v1.17.18.6
         ),
+        # v1.17.19.12 (audit B6): DBs created by v1.17.19.11 have the Job
+        # table without the failure-detail columns.
+        (("job",), "error_type", "VARCHAR(120)"),
+        (("job",), "traceback", "TEXT"),
     )
     inspector = __import__("sqlalchemy").inspect(engine)
     for table_names, column, column_type in _MIGRATIONS:

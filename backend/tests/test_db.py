@@ -18,6 +18,7 @@ EXPECTED_TABLES = {
     "buildlog",
     "knowledgesummary",
     "portfolioscore",
+    "job",
     # v1.17.18.4 (audit2 D1): the dead `worldsimstate` (superseded by the
     # isolated world DB) and `configentry` (never read/written) tables were
     # removed from the models; init_db() drops leftovers from old DBs.
@@ -123,6 +124,46 @@ def test_migrate_indexes_backfills_existing_db(tmp_db):
     connection.init_db()  # second run must be a no-op, not an error
     names = {ix["name"] for ix in inspect(engine).get_indexes("projectfile")}
     assert "ix_projectfile_project_id" in names
+
+
+def test_migrate_columns_backfills_job_failure_detail(tmp_db):
+    """v1.17.19.12 (audit B6): a DB created by v1.17.19.11 has the Job table
+    without error_type/traceback (create_all can't ALTER); init_db() must
+    add them idempotently, preserving existing rows."""
+    with connection.get_engine().begin() as conn:
+        conn.exec_driver_sql("DROP TABLE job")
+        conn.exec_driver_sql(
+            "CREATE TABLE job ("
+            "id VARCHAR(32) PRIMARY KEY NOT NULL, "
+            "type VARCHAR(80) NOT NULL, "
+            "project_id VARCHAR(32), "
+            "status VARCHAR(20) NOT NULL DEFAULT 'queued', "
+            "created_at DATETIME NOT NULL, "
+            "started_at DATETIME, "
+            "completed_at DATETIME, "
+            "error VARCHAR(2000), "
+            "result_ref VARCHAR(200))"
+        )
+        conn.exec_driver_sql(
+            "INSERT INTO job (id, type, created_at) "
+            "VALUES ('j1', 'test', '2026-10-01 00:00:00')"
+        )
+
+    connection.init_db()  # create_all skips the table; migrate alters
+
+    from sqlalchemy import inspect
+
+    columns = {c["name"] for c in inspect(connection.get_engine()).get_columns("job")}
+    assert {"error_type", "traceback"} <= columns
+    with connection.get_engine().connect() as conn:
+        row = conn.exec_driver_sql(
+            "SELECT status, result_ref FROM job WHERE id = 'j1'"
+        ).one()
+    assert row[0] == "queued" and row[1] is None  # old row survived intact
+
+    connection.init_db()  # second run must be a no-op, not an error
+    columns = {c["name"] for c in inspect(connection.get_engine()).get_columns("job")}
+    assert {"error_type", "traceback"} <= columns
 
 
 def test_drop_dead_columns_unblocks_dependency_inserts(tmp_db):
