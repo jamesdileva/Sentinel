@@ -49,5 +49,7 @@ def run_tester(
                 f"{', '.join(holding)} is running"
             ),
         )
-    job_id = job_scheduler.submit("run_tester", args=[project.id], project_id=project.id)
+    job_id = job_scheduler.submit(
+        "run_tester", args=[project.id], project_id=project.id
+    )
     return JobEnvelope(job_id=job_id, status="queued")

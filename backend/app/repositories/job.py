@@ -13,6 +13,23 @@ from app.repositories.base import Repository
 _ERROR_MAX_CHARS = 2000
 _TRACEBACK_MAX_CHARS = 8000
 
+_TERMINAL_STATES = (
+    JobState.SUCCEEDED,
+    JobState.FAILED,
+    JobState.CANCELLED,
+    JobState.ABANDONED,
+)
+
+
+def _terminal(job: Job) -> bool:
+    """A lifecycle is a state machine: once a job has a terminal state, that
+    is its answer. v1.17.19.13 (audit B7) — without this, a worker that
+    finished *after* shutdown wrote `abandoned` over (or was overwritten by)
+    would make the row flap between states and the Jobs view would lie in
+    both directions. The drain timeout is the policy that decides which
+    terminal state a job gets, not a race between two writes."""
+    return job.status in _TERMINAL_STATES
+
 
 class JobRepository(Repository):
     model = Job
@@ -40,10 +57,13 @@ class JobRepository(Repository):
 
     def mark_succeeded(self, job_id: str, result_ref: str | None = None) -> Job | None:
         """Move -> succeeded with an optional pointer at the domain record
-        the task produced (TestResult id, AppSession id, ...)."""
+        the task produced (TestResult id, AppSession id, ...).
+
+        No-op on an already-terminal row: a job closed out as abandoned at
+        shutdown keeps that answer (B7)."""
         job = self.session.get(Job, job_id)
-        if job is None:
-            return None
+        if job is None or _terminal(job):
+            return job
         job.status = JobState.SUCCEEDED
         job.completed_at = datetime.datetime.now(datetime.timezone.utc)
         job.result_ref = result_ref
@@ -59,10 +79,13 @@ class JobRepository(Repository):
         traceback: str | None = None,
     ) -> Job | None:
         """Move -> failed, keeping the one-liner plus structured detail (B6:
-        exception class for filtering, full stack for diagnosis)."""
+        exception class for filtering, full stack for diagnosis).
+
+        No-op on an already-terminal row, for the same reason as
+        `mark_succeeded` (B7)."""
         job = self.session.get(Job, job_id)
-        if job is None:
-            return None
+        if job is None or _terminal(job):
+            return job
         job.status = JobState.FAILED
         job.completed_at = datetime.datetime.now(datetime.timezone.utc)
         job.error = error[:_ERROR_MAX_CHARS]
@@ -86,6 +109,36 @@ class JobRepository(Repository):
         self.session.add(job)
         self.session.commit()
         return job
+
+    def abandon_unfinished(self, reason: str) -> list[str]:
+        """Close out every non-terminal job as abandoned (audit B7).
+
+        Used on shutdown (drain timeout expired) and at startup (a restart
+        killed the worker), so a row can never sit "running" forever and the
+        Jobs view cannot lie about what is happening. Terminal rows are never
+        touched. Returns the ids closed out.
+        """
+        abandoned = list(
+            self.session.exec(
+                select(Job).where(
+                    Job.status.in_(
+                        [
+                            JobState.QUEUED,
+                            JobState.RUNNING,
+                        ]
+                    )
+                )
+            ).all()
+        )
+        finished = datetime.datetime.now(datetime.timezone.utc)
+        for job in abandoned:
+            job.status = JobState.ABANDONED
+            job.completed_at = finished
+            job.error = reason[:_ERROR_MAX_CHARS]
+            job.error_type = "AbandonedJob"
+        if abandoned:
+            self.session.commit()
+        return [job.id for job in abandoned]
 
     def get_by_project(self, project_id: str, limit: int = 50) -> list[Job]:
         """Newest jobs for one project (future Jobs UI; B5 exposes by-id)."""

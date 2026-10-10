@@ -115,6 +115,132 @@ def test_failing_task_leaves_failed_row_with_error(tmp_db, scheduler):
     assert "in boom" in row.traceback
 
 
+def test_b7_shutdown_refuses_new_jobs(tmp_db, scheduler):
+    """B7 step 1: a drained scheduler stops accepting work, and the refusal is
+    a 503 domain error (audit: 'stop accepting new jobs')."""
+    from app.core.exceptions import SchedulerDrainingError
+
+    assert scheduler.draining is False
+    scheduler._registry["t"] = lambda: {"ok": True}
+
+    scheduler.shutdown()
+    assert scheduler.draining is True
+    with pytest.raises(SchedulerDrainingError):
+        scheduler.submit("t")
+
+    # The job ledger row is not even created for the refused submit.
+    assert _row_count() == 0
+
+
+def test_b7_shutdown_abandons_inflight_jobs(tmp_db, monkeypatch):
+    """B7 step 4: work still running when the drain timeout expires is closed
+    out as abandoned rather than left reading 'running' forever — and the
+    terminal state is final, so the worker finishing afterwards cannot make
+    the row flap back to succeeded."""
+    import threading
+
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "job_drain_timeout_seconds", 0)
+    started = threading.Event()
+    release = threading.Event()
+
+    def never_finishes() -> None:
+        started.set()
+        release.wait(timeout=5)
+
+    sched = JobScheduler(pool_size=1)
+    sched._registry["never_finishes"] = never_finishes
+    try:
+        job_id = sched.submit("never_finishes")
+        assert started.wait(timeout=5), "test job must have started"
+        sched.shutdown()
+        # Asserted before releasing the worker: once it finishes it writes
+        # succeeded, which the terminal-state guard must refuse.
+        row = _row(job_id)
+        assert row is not None
+        assert row.status == JobState.ABANDONED
+        assert row.completed_at is not None
+        assert row.error is not None and "Sentinel stopped supporting" in row.error
+        assert row.error_type == "AbandonedJob"
+    finally:
+        release.set()
+        sched.shutdown()
+
+    assert _row(job_id).status == JobState.ABANDONED  # still final after it ends
+
+
+def test_b7_drain_lets_finishing_jobs_complete(tmp_db, monkeypatch):
+    """B7 step 3: a job that reaches a consistent point inside the drain
+    window is recorded as succeeded — never abandoned, never cancelled."""
+    import time as _time
+
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "job_drain_timeout_seconds", 5)
+    sched = JobScheduler(pool_size=1)
+    sched._registry["finishes_soon"] = lambda: (_time.sleep(0.05), {"ok": True})[1]
+    try:
+        job_id = sched.submit("finishes_soon")
+        sched.shutdown()
+    finally:
+        sched.shutdown()
+
+    assert _row(job_id).status == JobState.SUCCEEDED
+
+
+def test_b7_abandon_unfinished_never_touches_terminal_rows(tmp_db):
+    """Only queued/running are closed out; succeeded/failed/cancelled rows
+    keep their true outcome (a sweep like this must not rewrite history)."""
+    from app.repositories.job import JobRepository
+
+    with Session(connection.get_engine()) as session:
+        repo = JobRepository(session)
+        repo.create("j-queued", "test", None)
+        repo.create("j-running", "test", None)
+        repo.create("j-done", "test", None)
+        repo.create("j-cancelled", "test", None)
+        repo.mark_running("j-running")
+        repo.mark_succeeded("j-done")
+        repo.mark_cancelled("j-cancelled")
+        closed = repo.abandon_unfinished("boot")
+    assert set(closed) == {"j-queued", "j-running"}
+    assert _row("j-done").status == JobState.SUCCEEDED
+    assert _row("j-cancelled").status == JobState.CANCELLED
+
+
+def test_b7_restart_killed_jobs_heal_at_boot(tmp_db):
+    """B7 step 5: a kill -9 leaves rows mid-flight; the next boot's self-heal
+    closes them, so the Jobs view never lies after a crash.
+
+    The row is created *before* the app boots, because the sweep runs during
+    lifespan startup — exactly what a restart looks like from inside."""
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    from app.repositories.job import JobRepository
+
+    with Session(connection.get_engine()) as session:
+        repo = JobRepository(session)
+        repo.create("j-stuck-running", "knowledge", None)
+        repo.mark_running("j-stuck-running")
+    assert _row("j-stuck-running").status == JobState.RUNNING
+
+    with TestClient(app) as booted:  # lifespan startup runs the sweep
+        assert booted.get("/api/v1/jobs/j-stuck-running").status_code == 200
+
+    healed = _row("j-stuck-running")
+    assert healed.status == JobState.ABANDONED
+    assert "restarted" in (healed.error or "")
+
+
+def _row_count() -> int:
+    with Session(connection.get_engine()) as session:
+        from app.repositories.job import JobRepository
+
+        return JobRepository(session).count()
+
+
 def test_failure_traceback_is_truncated(tmp_db):
     """Deep stacks must not bloat the row or the /jobs poll (B6)."""
     from app.repositories.job import JobRepository

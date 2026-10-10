@@ -4,6 +4,56 @@
 > Sentinel-wide working notes live at the top; newest entries at the bottom
 > of the changelog unless otherwise dated.
 
+## 2026-10-10 — Audit B7: graceful shutdown/draining (Batch 2 continues)
+
+- **Problem:** the scheduler intentionally used
+  `executor.shutdown(wait=False, cancel_futures=False)` so an in-flight
+  knowledge index was never killed mid-Chroma-write. That intent was right,
+  but "the workers just keep flushing quietly" meant nothing recorded that
+  the process had stopped supporting them, and a killed run left a Job row
+  reading `running` forever.
+- **Fix, an explicit policy instead of an implicit one:** on shutdown,
+  1. `draining` goes up — `submit()` raises `SchedulerDrainingError`, a 503
+     via the central `SentinelError` handler (503, not 409: the work was
+     refused because Sentinel is going away, so retry after restart rather
+     than assume a duplicate);
+  2. beats stop first, so periodic work cannot spawn mid-drain;
+  3. a bounded `SENTINEL_JOB_DRAIN_TIMEOUT_SECONDS` (5) waits for in-flight
+     jobs to reach a consistent point — **never cancelling them**, so the
+     original Chroma-safety property is preserved;
+  4. anything still non-terminal is closed out as `ABANDONED`.
+- **Startup recovery (the audit's "rely on startup recovery for anything
+  unfinished"):** `JobRepository.abandon_unfinished()` runs in the lifespan
+  next to the existing BuildLog orphan sweep, so a `kill -9` self-heals on
+  the next boot and the Jobs view never lies.
+- **The subtle part, found while testing:** terminal states are now final —
+  the first terminal write wins. Without that guard, a worker that finished
+  *after* being abandoned flipped its own row back to `succeeded`, so the
+  ledger flapped and neither state could be trusted. The drain timeout is
+  the policy that decides which terminal state a job gets, not a race
+  between two writes. (`mark_cancelled` already worked this way from
+  queued-only; this generalises it.)
+- **Test-isolation note:** one process = one lifetime, so a drained
+  scheduler is correctly spent — but the process-wide singleton is reused
+  across every TestClient lifespan in the suite, so conftest now calls
+  `reset_draining()`. Production never does.
+- **Verification:** +5 backend tests (refusal + no ledger row, abandon on
+  timeout, drain letting a finisher complete, sweep never touching terminal
+  rows, boot self-heal); 743 passed, `flake8 --max-line-length=100` +
+  `black` clean.
+- **Known pre-existing flake (not from this change, verified on a clean
+  tree in earlier batches):** the full suite fails ~2 runs in 5 on a
+  *different* `test_rag_*` test each time (`test_query_all_projects_is_
+  summary_first`, `test_query_returns_grounded_answer`,
+  `test_search_returns_results_with_provenance`, ...), with either Chroma's
+  `Nothing found on disk` HNSW error or a KeyError on the error payload.
+  Every one passes in isolation and in the natural `test_rag_api` +
+  `test_rag_service` subset — it is the documented shared-Chroma/settings
+  state between those files, not anything here.
+- **Next up (Batch 2 continues):** stale-running recovery for all job types
+  (the BuildLog/AppSession equivalents of the Job sweep are already lived
+  experience; what is left is unifying them).
+
 ## 2026-10-10 — Audit B6: durable job failure details (Batch 2 continues)
 
 - **Problem:** B5 gave every job a persisted row, but only a one-line

@@ -356,6 +356,11 @@ class JobState(str, enum.Enum):
     these; the worker moves it queued -> running -> succeeded | failed, and
     cancellation marks it cancelled. Beats (periodic system jobs) deliberately
     get no row — they are not user-trackable work.
+
+    v1.17.19.13 (audit B7): ABANDONED closes out work Sentinel stopped
+    supporting — on shutdown (drain timeout expired) or on the next startup
+    (a restart killed it). Without it a row could sit "running" forever and
+    the Jobs view would lie about what is happening.
     """
 
     QUEUED = "queued"
@@ -363,6 +368,7 @@ class JobState(str, enum.Enum):
     SUCCEEDED = "succeeded"
     FAILED = "failed"
     CANCELLED = "cancelled"
+    ABANDONED = "abandoned"
 
 
 class Job(SQLModel, table=True):

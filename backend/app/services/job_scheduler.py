@@ -17,6 +17,7 @@ name. Tests drive them directly (no broker, eager by construction).
 """
 
 import threading
+import time
 import traceback
 import uuid
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -26,6 +27,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
 from app.core.config import settings
+from app.core.exceptions import SchedulerDrainingError
 from app.core.logging import get_logger
 from app.services import activity_bus
 
@@ -103,6 +105,24 @@ class JobScheduler:
         # (v1.17.19.11, B5) lets cancellation close out the persisted row.
         self._pending: list[tuple[str, str, Future]] = []
         self._lock = threading.Lock()
+        # v1.17.19.13 (audit B7): set for the rest of the process lifetime by
+        # shutdown(). One process = one lifetime in production, so a drained
+        # instance is correctly spent; tests reuse the singleton across fake
+        # lifespans and call reset_draining() (conftest) to restore it.
+        self._draining = False
+
+    @property
+    def draining(self) -> bool:
+        """True once shutdown() has been called: no new jobs are accepted."""
+        return self._draining
+
+    def reset_draining(self) -> None:
+        """Clear the draining flag (test isolation only).
+
+        Every TestClient lifespan drains the process-wide scheduler, which
+        would otherwise leak "no new jobs" into the next test in the same
+        process. Production never calls this."""
+        self._draining = False
 
     # -- jobs bridged by routers ---------------------------------------------
 
@@ -128,6 +148,12 @@ class JobScheduler:
         """
         job_id = task_id or str(uuid.uuid4())
         func = self._registry[name]
+        if self._draining:
+            # B7: refusing here is the honest answer — queueing work that is
+            # about to be abandoned just wastes a poll cycle and misleads.
+            raise SchedulerDrainingError(
+                f"Sentinel is shutting down; {name} was not started"
+            )
         _record_submit(job_id, job_type or _JOB_TYPES.get(name, name), project_id)
         if self.run_inline:
             self._run(job_id, name, func, args or [])
@@ -222,16 +248,51 @@ class JobScheduler:
         )
 
     def shutdown(self) -> None:
-        """Stop beats and release the job pool (v1.17.6).
+        """Stop beats, drain briefly, then abandon whatever is left (B7).
 
-        Running and queued jobs drain to completion: `cancel_futures=True`
-        used to kill an in-flight knowledge index mid-upsert, guaranteeing
-        the exact on-disk Chroma corruption (Nothing found on disk) this
-        release detects and recovers from. `wait=False` keeps uvicorn's
-        shutdown synchronous — the workers just keep flushing quietly."""
+        The policy this replaces (v1.17.6): `wait=False, cancel_futures=False`
+        so in-flight Chroma writes were never killed mid-upsert. That intent
+        is preserved — futures are still never cancelled — but "the workers
+        just keep flushing quietly" meant nothing recorded that the process
+        had stopped supporting them, and a knowledge index in flight left a
+        row reading `running` forever.
+
+        Now, in order:
+        1. `draining` goes up, so no new job is accepted (503).
+        2. Beats stop first — periodic work must not spawn during a drain.
+        3. A bounded wait lets jobs reach a consistent point; findings still
+           never cancel them, so the Chroma-corruption mode stays closed.
+        4. Anything still non-terminal is closed out as `abandoned`, and the
+           startup sweep does the same for whatever the process died with.
+        """
+        self._draining = True
         if self._started:
             self._beats.shutdown(wait=False)
             self._started = False
+        with self._lock:
+            pending = list(self._pending)
+        deadline = time.monotonic() + settings.job_drain_timeout_seconds
+        for _name, job_id, future in pending:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            try:
+                # Only waits; never cancels, so a mid-upsert worker keeps
+                # the disk consistent even if we stop waiting for it.
+                future.result(timeout=remaining)
+            except Exception:  # noqa: BLE001 — drain must never raise
+                logger.debug("drain gave up on job %s", job_id, exc_info=True)
+        try:
+            from app.repositories.job import JobRepository
+
+            with _session() as session:
+                abandoned = JobRepository(session).abandon_unfinished(
+                    "Aborted: Sentinel stopped supporting this job while it was running."
+                )
+            if abandoned:
+                logger.info("Abandoned %d running job(s) at shutdown", len(abandoned))
+        except Exception:  # noqa: BLE001 — bookkeeping must not block shutdown
+            logger.warning("job ledger unavailable at shutdown", exc_info=True)
         self._executor.shutdown(wait=False, cancel_futures=False)
         logger.info("In-process scheduler stopped")
 

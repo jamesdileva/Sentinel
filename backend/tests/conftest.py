@@ -20,6 +20,12 @@ def _quiet_background(monkeypatch):
     from app.services.job_scheduler import scheduler
 
     monkeypatch.setattr(scheduler, "run_inline", False)
+    yield
+    # v1.17.19.13 (audit B7): every TestClient lifespan drains the
+    # process-wide scheduler, and a drained scheduler refuses new submits for
+    # the rest of the process. Production wants exactly that (one process,
+    # one lifetime); tests must not leak it into the next test.
+    scheduler.reset_draining()
 
 
 @pytest.fixture()

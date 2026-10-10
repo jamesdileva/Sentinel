@@ -30,3 +30,15 @@ class OllamaUnavailableError(SentinelError):
     """
 
     status_code = 503
+
+
+class SchedulerDrainingError(SentinelError):
+    """Raised when a job is submitted while the scheduler is shutting down
+    (v1.17.19.13, audit B7).
+
+    503 rather than 409: the work was refused because Sentinel is going
+    away, not because of a conflicting operation — the client should retry
+    after a restart, not assume a duplicate.
+    """
+
+    status_code = 503

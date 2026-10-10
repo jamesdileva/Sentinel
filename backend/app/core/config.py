@@ -160,6 +160,12 @@ class Settings(BaseSettings):
 
     scheduler_enabled: bool = True
     command_timeout_seconds: int = 300
+    # v1.17.19.13 (audit B7): how long shutdown waits for in-flight jobs to
+    # reach a consistent point before closing them out as abandoned. Short on
+    # purpose — the point is to let a mid-Chroma-write worker finish, not to
+    # delay exit; jobs are never cancelled, so a longer timeout only delays
+    # the ledger's honesty, never the job's safety.
+    job_drain_timeout_seconds: int = 5
 
     # v1.17.7.3: off by default — the world simulator is an opt-in toy; the
     # API router and the beat tick register only when it is enabled.
