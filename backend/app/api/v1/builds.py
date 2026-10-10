@@ -45,7 +45,9 @@ def run_build(
     job_id = str(uuid.uuid4())
     session.add(BuildLog(id=job_id, project_id=project.id))
     session.commit()
-    job_scheduler.submit("run_build", args=[project.id, job_id], task_id=job_id)
+    job_scheduler.submit(
+        "run_build", args=[project.id, job_id], task_id=job_id, project_id=project.id
+    )
     session.expire_all()
     return build_status_from_log(session.get(BuildLog, job_id))
 

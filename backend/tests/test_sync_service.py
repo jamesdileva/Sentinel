@@ -467,7 +467,7 @@ def test_sync_queues_knowledge_for_unembedded_projects(tmp_path, tmp_db, monkeyp
 
     queued: list[str] = []
 
-    def fake_submit(name, args=None, task_id=None):
+    def fake_submit(name, args=None, task_id=None, project_id=None, job_type=None):
         queued.append(args[0])
 
     from app.services.job_scheduler import scheduler as job_scheduler
@@ -547,8 +547,8 @@ def test_auto_index_queues_all_unembedded(tmp_db, monkeypatch):
 
     queued: list[tuple] = []
 
-    def fake_submit(name, args=None, task_id=None):
-        queued.append(tuple(args))
+    def fake_submit(name, args=None, task_id=None, project_id=None, job_type=None):
+        queued.append(tuple(args) + (project_id,))
 
     from app.services.job_scheduler import scheduler as job_scheduler
 
@@ -561,6 +561,9 @@ def test_auto_index_queues_all_unembedded(tmp_db, monkeypatch):
     # v1.17.6.2: auto-indexing always requests the AI architecture summary
     # (ingest_project_summary dedupes to once per project).
     assert all(q[1] is True for q in queued)
+    # v1.17.19.11 (B5): the submit carries the project id so the persisted
+    # job row is scoped to the right project.
+    assert sorted(q[2] for q in queued) == ["p1", "p2"]
 
 
 def test_auto_index_empty_paths_window_is_noop():
@@ -641,7 +644,7 @@ def test_auto_index_path_filter_restricts_projects(tmp_db, monkeypatch):
 
     queued: list[str] = []
 
-    def fake_submit(name, args=None, task_id=None):
+    def fake_submit(name, args=None, task_id=None, project_id=None, job_type=None):
         queued.append(args[0])
 
     from app.services.job_scheduler import scheduler as job_scheduler

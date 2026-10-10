@@ -36,7 +36,7 @@ def run_tests(
             status_code=409,
             detail=f"Tests cannot start for {project.name} while a test is running",
         )
-    job_id = job_scheduler.submit("run_tests", args=[project.id])
+    job_id = job_scheduler.submit("run_tests", args=[project.id], project_id=project.id)
     return TestRunResponse(job_id=job_id, status="queued")
 
 

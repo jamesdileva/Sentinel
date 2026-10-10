@@ -59,6 +59,7 @@ class Project(SQLModel, table=True):
     )
     portfolio_score: "PortfolioScore" = Relationship(back_populates="project")
     sessions: list["AppSession"] = Relationship(back_populates="project")
+    jobs: list["Job"] = Relationship(back_populates="project")
 
 
 class ProjectFile(SQLModel, table=True):
@@ -344,3 +345,46 @@ class TriageAnalysis(SQLModel, table=True):
     created_at: datetime.datetime = Field(default_factory=_utcnow)
 
     session: AppSession = Relationship(back_populates="triage_analyses")
+
+
+class JobState(str, enum.Enum):
+    """Shared lifecycle for every scheduler-submitted job (v1.17.19.11, B5).
+
+    Builds already had BuildLog as a de-facto job row; tests, scans, testers
+    and knowledge jobs returned a job id with no durable record behind it, so
+    the UI inferred state from result history. Every submit now opens one of
+    these; the worker moves it queued -> running -> succeeded | failed, and
+    cancellation marks it cancelled. Beats (periodic system jobs) deliberately
+    get no row — they are not user-trackable work.
+    """
+
+    QUEUED = "queued"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class Job(SQLModel, table=True):
+    """Generic persisted job record (audit B5).
+
+    `type` names the job family ("build", "test", "tester", "security",
+    "knowledge", "sync", ...), not the registry task name — one family can
+    cover several tasks (scan and scan-all are both "security"). `project_id`
+    is null for cross-project jobs (scan-all, re-index-all, reset, sync).
+    `result_ref` points at the domain record the task produced (TestResult
+    id, AppSession id, ...); for builds it equals the job id itself, because
+    the API pre-creates the BuildLog row under that id.
+    """
+
+    id: str = Field(default_factory=_uuid, primary_key=True)
+    type: str = Field(index=True)
+    project_id: str | None = Field(default=None, foreign_key="project.id", index=True)
+    status: JobState = JobState.QUEUED
+    created_at: datetime.datetime = Field(default_factory=_utcnow)
+    started_at: datetime.datetime | None = None
+    completed_at: datetime.datetime | None = None
+    error: str | None = None
+    result_ref: str | None = None
+
+    project: Project | None = Relationship(back_populates="jobs")

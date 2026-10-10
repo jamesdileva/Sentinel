@@ -112,7 +112,8 @@ def rag_index(
     """Enqueue knowledge ingestion for a project."""
     project = project_or_404(payload.project_id, session)
     job_id = job_scheduler.submit(
-        "run_index_knowledge", args=[project.id, payload.with_summary]
+        "run_index_knowledge", args=[project.id, payload.with_summary],
+        project_id=project.id,
     )
     return JobEnvelope(job_id=job_id, status="queued")
 

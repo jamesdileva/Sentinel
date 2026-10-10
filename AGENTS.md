@@ -4,6 +4,38 @@
 > Sentinel-wide working notes live at the top; newest entries at the bottom
 > of the changelog unless otherwise dated.
 
+## 2026-10-10 — Audit B5: generic persisted jobs (Batch 2 continues)
+
+- **Problem:** builds had BuildLog as a de-facto job row, but tests, scans,
+  testers and knowledge jobs returned a job id with no durable record behind
+  it — the UI inferred state from result history, and a worker exception
+  vanished into an activity event if you missed the websocket.
+- **Fix:** new `Job` table (`id, type, project_id, status, created_at,
+  started_at, completed_at, error, result_ref`) plus `JobRepository`; the
+  scheduler opens the row at submit and moves it through queued → running →
+  succeeded/failed in `_run`, with `cancel_queued` closing out never-started
+  rows as cancelled. Beats deliberately get no row (periodic system work is
+  not user-trackable). New `GET /api/v1/jobs/{job_id}` is the one poll every
+  envelope can point at; no existing envelope changed.
+- **Two judgment calls worth remembering:** `project_id` is passed explicitly
+  at the six per-project call sites because FKs are enforced (`PRAGMA
+  foreign_keys=ON`) — sniffing `args[0]` would 500 on test fakes and invented
+  ids. And bookkeeping never breaks the job: a failed ledger write logs and
+  the submit proceeds, because the pool work matters more than the ledger.
+- **`result_ref` extraction is by convention:** `result_ref`, then
+  `session_id`, then `job_id` from the task's return dict. For builds that
+  equals the job id itself (the API pre-creates the BuildLog under it) —
+  redundant but truthful, and it tells the client exactly which domain row
+  to read.
+- **Verification:** +9 backend tests (lifecycle, type/project mapping,
+  failed-with-error, beats-write-nothing, cancel-exactness, both-rows join,
+  endpoint + 404, per-project listing); 734 passed + 1 known Chroma HNSW
+  flake (`test_query_returns_grounded_answer` passes in isolation — same
+  shared-state family as the documented rag_api/rag_service flakes).
+  `flake8 --max-line-length=100` + `black` clean.
+- **Next up (Batch 2 continues):** B6 durable job failures, B7 graceful
+  shutdown/draining, stale-running recovery.
+
 ## 2026-10-10 — Audit A7: per-project operation locks (Batch 2 begins)
 
 - **Problem:** build/test/scan/tester jobs all run for one project, but the

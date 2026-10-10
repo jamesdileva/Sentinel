@@ -22,7 +22,9 @@ router = APIRouter(prefix="/security", tags=["security"])
 def run_scan(project_id: str, session: Session = Depends(get_session)) -> ScanResponse:
     """Enqueue a full security scan for a project."""
     project = project_or_404(project_id, session)
-    job_id = job_scheduler.submit("run_security_scan", args=[project.id])
+    job_id = job_scheduler.submit(
+        "run_security_scan", args=[project.id], project_id=project.id
+    )
     return ScanResponse(job_id=job_id, status="queued")
 
 

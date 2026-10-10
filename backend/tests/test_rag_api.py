@@ -132,7 +132,7 @@ def test_rag_index_returns_job_envelope(tmp_db, monkeypatch):
     project_id = _seed(tmp_db)
     captured = {}
 
-    def fake_submit(name, args=None, task_id=None):
+    def fake_submit(name, args=None, task_id=None, project_id=None, job_type=None):
         captured["name"] = name
         captured["args"] = args
         captured["task_id"] = task_id
@@ -433,7 +433,7 @@ def test_rag_index_reset_returns_job_envelope(tmp_db, monkeypatch):
     knowledge collection) — 202 envelope, no project id required."""
     captured = {}
 
-    def fake_submit(name, args=None, task_id=None):
+    def fake_submit(name, args=None, task_id=None, project_id=None, job_type=None):
         captured["name"] = name
         return "job-reset"
 
@@ -453,7 +453,7 @@ def test_rag_index_all_returns_job_envelope(tmp_db, monkeypatch):
     architecture summaries are regenerated) — 202 envelope, no project id."""
     captured = {}
 
-    def fake_submit(name, args=None, task_id=None):
+    def fake_submit(name, args=None, task_id=None, project_id=None, job_type=None):
         captured["name"] = name
         return "job-all"
 

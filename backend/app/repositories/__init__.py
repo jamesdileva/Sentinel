@@ -5,6 +5,7 @@ from app.repositories.build import BuildLogRepository
 from app.repositories.dependency import DependencyRepository
 from app.repositories.file import ProjectFileRepository
 from app.repositories.git import GitCommitRepository
+from app.repositories.job import JobRepository
 from app.repositories.knowledge_summary import KnowledgeSummaryRepository
 from app.repositories.project import ProjectRepository
 from app.repositories.security import SecurityRepository
@@ -20,6 +21,7 @@ __all__ = [
     "BuildLogRepository",
     "DependencyRepository",
     "GitCommitRepository",
+    "JobRepository",
     "KnowledgeSummaryRepository",
     "ProjectFileRepository",
     "ProjectRepository",

@@ -128,7 +128,9 @@ def test_cancel_queued_cancels_not_started_jobs():
 
         with scheduler._lock:
             remaining = [
-                name for name, future in scheduler._pending if not future.cancelled()
+                name
+                for name, _job_id, future in scheduler._pending
+                if not future.cancelled()
             ]
         assert remaining == ["slow", "run_security_scan"]
     finally:
