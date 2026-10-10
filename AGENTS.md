@@ -4,6 +4,42 @@
 > Sentinel-wide working notes live at the top; newest entries at the bottom
 > of the changelog unless otherwise dated.
 
+## 2026-10-10 — Stale-running recovery unified (Batch 2 complete)
+
+- **Problem, the audit's last Batch 2 item:** three tables could hold a row
+  claiming work was in flight — `BuildLog` (`completed_at IS NULL`), the
+  generic `Job` ledger, and `AppSession` (`status=RUNNING`) — and each had
+  its own sweep wired from a different place with a different policy. That
+  fragmentation is exactly why the `AppSession` case had **no sweep at all**:
+  a click-through run killed mid-tester left the Sessions page showing
+  "Working…" across restarts, long after the v1.17.8.3 BuildLog lesson.
+- **Fix:** new `services/stale_recovery.py` (`recover_interrupted_work`) owns
+  one policy and one call site. `main.lifespan` runs it *before* the
+  scheduler starts, so it can never race a legitimately running job, and it
+  reports what it closed (`RecoveryReport(builds, jobs, sessions)`) for the
+  startup log instead of scattering three different counts.
+- **`investigate` for interrupted sessions, not `failed`:** a tester killed
+  mid-run neither passed nor failed. `investigate` is the honest terminal
+  state for "we don't know", and the UI already exposes the triage button
+  for exactly that state — so the recovery hands the user the next step
+  rather than a verdict it cannot justify.
+- **Why startup-only, deliberately:** at shutdown workers are *never
+  cancelled* (B7's Chroma-safety rule), so a build or tester can still reach
+  its own `end()` afterwards. Sweeping those tables at shutdown would flap
+  the ledger — precisely the failure B7's terminal-state guard fixed for
+  `Job`. An interrupt that skips the drain is closed at the *next* boot,
+  where no worker can contradict it.
+- **Batch 2 complete:** A7 operation locks, B5 persisted jobs, B6 durable
+  failures, B7 graceful shutdown, and this unified recovery. The batch's
+  goal holds — every long-running operation has an honest lifecycle and a
+  self-heal path across restarts.
+- **Verification:** +5 tests (sweep semantics, terminal-row safety, all
+  three types in one call, healthy-DB no-op, boot end-to-end); 748 passed,
+  `flake8 --max-line-length=100` + `black` clean.
+- **Next up (Batch 3 — privacy and recovery):** A5 enforce local Ollama by
+  default, B1 symlink containment, localhost mutation protection, A6
+  backup/restore semantics, deterministic Chroma rebuild verification.
+
 ## 2026-10-10 — Audit B7: graceful shutdown/draining (Batch 2 continues)
 
 - **Problem:** the scheduler intentionally used

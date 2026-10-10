@@ -155,27 +155,18 @@ async def lifespan(_: FastAPI):
         swept = AppSessionService(startup_session).sweep_expired_screenshots()
     if swept:
         logger.info("Screenshot retention sweep removed %d expired file(s)", swept)
-    from app.repositories.build import BuildLogRepository
-    from app.repositories.job import JobRepository
+    from app.services.stale_recovery import recover_interrupted_work
 
+    # Stale-running recovery (audit Batch 2): one policy, one call site for
+    # every job type that can be left claiming "in flight" — BuildLog, Job
+    # and AppSession. Runs before the scheduler starts, so it can never race
+    # a legitimately running job (the AppSession case had no sweep at all).
     with Session(get_engine()) as startup_session:
-        orphans = BuildLogRepository(startup_session).mark_orphaned_as_failed()
-        # v1.17.19.13 (audit B7): shutdown closes out what it can, but a kill
-        # -9 leaves rows reading queued/running. Same self-heal as the
-        # BuildLog sweep above, so the Jobs view never lies at boot.
-        boot_abandoned = JobRepository(startup_session).abandon_unfinished(
-            "Aborted: Sentinel restarted before the job finished."
-        )
-    if orphans:
+        recovered = recover_interrupted_work(startup_session)
+    if recovered.total:
         logger.info(
-            "Marked %d orphaned build job(s) as failed (abandoned by restart)",
-            orphans,
-        )
-    if boot_abandoned:
-        logger.info(
-            "Abandoned %d unfinished job(s) at startup: %s",
-            len(boot_abandoned),
-            ", ".join(boot_abandoned[:5]),
+            "Stale-running recovery closed out %s (abandoned by restart)",
+            recovered.describe(),
         )
     run_startup_checks()
     if settings.scheduler_enabled:

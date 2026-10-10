@@ -22,6 +22,38 @@ class SessionRepository(Repository):
             stmt = stmt.where(AppSession.status == status)
         return list(self.session.exec(stmt.limit(limit)).all())
 
+    def mark_running_interrupted(self, outcome: str) -> list[str]:
+        """Close sessions still RUNNING with a terminal `investigate`.
+
+        Stale-running recovery (audit Batch 2): a scripted tester killed
+        mid-run — Sentinel restart, crash, a kill that skips B7's graceful
+        drain — never reaches its `end()`, so the row keeps `status=RUNNING`
+        and `ended_at=NULL` forever and the Sessions page shows a run that
+        will never finish. `investigate` is the honest terminal state: the
+        session neither passed nor failed, it was interrupted, and the triage
+        button the UI already offers is exactly the next step.
+
+        Returns the ids closed out; already-terminal sessions are never
+        touched.
+        """
+        import datetime
+
+        from app.db.models import SessionStatus
+
+        stuck = list(
+            self.session.exec(
+                select(AppSession).where(AppSession.status == SessionStatus.RUNNING)
+            ).all()
+        )
+        ended = datetime.datetime.now(datetime.timezone.utc)
+        for app_session in stuck:
+            app_session.status = SessionStatus.INVESTIGATE
+            app_session.ended_at = ended
+            app_session.actual_outcome = outcome
+        if stuck:
+            self.session.commit()
+        return [s.id for s in stuck]
+
 
 class SessionCheckpointRepository(Repository):
     model = SessionCheckpoint
