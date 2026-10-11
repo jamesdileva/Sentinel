@@ -110,6 +110,46 @@ def test_relevance_floor_setting_listed(tmp_db, monkeypatch):
     assert item["source"] in {"default", "env", ".env"}
 
 
+def test_remote_ollama_host_warns_as_rule_one_violation(tmp_db, monkeypatch):
+    """A5: a non-loopback host with no explicit opt-in is an error-level
+    warning — the one setting that can make Sentinel an exfiltration path."""
+    fake = _FakeOllama(models=("llama3.1:8b", "nomic-embed-text"))
+    monkeypatch.setattr(settings, "ollama_host", "http://192.168.1.50:11434")
+    monkeypatch.setattr(settings, "allow_remote_ollama", False)
+    response, _ = _report(tmp_db, monkeypatch, ollama=fake)
+    warnings = {w["key"]: w for w in response.json()["warnings"]}
+    assert "ollama_host" in warnings
+    assert warnings["ollama_host"]["level"] == "error"
+    assert "SENTINEL_ALLOW_REMOTE_OLLAMA" in warnings["ollama_host"]["message"]
+
+
+def test_default_loopback_host_warns_about_nothing(tmp_db, monkeypatch):
+    """The default configuration must not be flagged (no false alarm)."""
+    monkeypatch.setattr(settings, "allow_remote_ollama", False)
+    response, _ = _report(tmp_db, monkeypatch)
+    keys = {w["key"] for w in response.json()["warnings"]}
+    assert "ollama_host" not in keys
+
+
+def test_opted_in_remote_host_is_not_a_violation(tmp_db, monkeypatch):
+    """Deliberate opt-in removes the warning — a deployment choice, not a
+    mistake."""
+    fake = _FakeOllama(models=("llama3.1:8b", "nomic-embed-text"))
+    monkeypatch.setattr(settings, "ollama_host", "http://192.168.1.50:11434")
+    monkeypatch.setattr(settings, "allow_remote_ollama", True)
+    response, _ = _report(tmp_db, monkeypatch, ollama=fake)
+    keys = {w["key"] for w in response.json()["warnings"]}
+    assert "ollama_host" not in keys
+
+
+def test_allow_remote_ollama_setting_listed(tmp_db, monkeypatch):
+    """The opt-in must be discoverable, or the warning is a dead end."""
+    response, _ = _report(tmp_db, monkeypatch)
+    body = response.json()
+    items = {i["key"]: i for g in body["groups"] for i in g["items"]}
+    assert items["SENTINEL_ALLOW_REMOTE_OLLAMA"]["value"] == "false"
+
+
 def test_embedding_model_present_with_latest_tag(tmp_db, monkeypatch):
     """Ollama reports installed models as `nomic-embed-text:latest`; the
     config name without the tag must NOT warn (they are the same model)."""

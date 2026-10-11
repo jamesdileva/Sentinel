@@ -16,7 +16,7 @@ import datetime
 import os
 from pathlib import Path
 
-from app.core.config import BASE_DIR, Settings, settings
+from app.core.config import BASE_DIR, Settings, is_loopback_host, settings
 from app.core.logging import get_logger
 from app.services.ollama_service import OllamaService
 from app.services.startup_check import _check_chroma, _check_watch_dirs
@@ -71,6 +71,12 @@ CATALOG: list[dict] = [
         "label": "Ollama host",
         "group": "AI",
         "field": "ollama_host",
+    },
+    {
+        "key": "SENTINEL_ALLOW_REMOTE_OLLAMA",
+        "label": "Allow remote Ollama host",
+        "group": "AI",
+        "field": "allow_remote_ollama",
     },
     {
         "key": "SENTINEL_OLLAMA_MODEL",
@@ -330,6 +336,27 @@ def _validation_warnings() -> list[dict]:
                 "key": "db_path",
                 "level": "warning",
                 "message": f"SQLite directory is not writable: {db_parent}",
+            }
+        )
+
+    # v1.17.19.15 (audit A5): Rule 1 made visible. The RAG path sends source
+    # code, docs, summaries and user questions to this host, so a non-loopback
+    # host without the explicit opt-in is an error-level warning — it is the
+    # one setting that can silently turn Sentinel into an exfiltration path.
+    if (
+        settings.ollama_host
+        and not is_loopback_host(settings.ollama_host)
+        and not settings.allow_remote_ollama
+    ):
+        warnings.append(
+            {
+                "key": "ollama_host",
+                "level": "error",
+                "message": (
+                    f"{settings.ollama_host} is not loopback, so Sentinel refuses "
+                    "to send project data to it (Rule 1: everything stays local). "
+                    "Set SENTINEL_ALLOW_REMOTE_OLLAMA=true to allow it deliberately."
+                ),
             }
         )
 

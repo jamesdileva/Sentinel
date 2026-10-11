@@ -9,7 +9,9 @@ carries provenance (model, timestamp) per docs/01 §16.2.
 """
 
 import httpx
-from app.core.config import settings
+
+from app.core.config import is_loopback_host, settings
+from app.core.exceptions import LocalOnlyViolationError
 from app.core.exceptions import OllamaUnavailableError
 from app.core.logging import get_logger
 
@@ -17,7 +19,19 @@ logger = get_logger(__name__)
 
 
 class OllamaService:
-    """Thin HTTP client for the Ollama API (generate, embed, tags)."""
+    """Thin HTTP client for the Ollama API (generate, embed, tags).
+
+    Local-only by construction (audit A5, Rule 1): when the host comes from
+    configuration it must be loopback unless remote use is explicitly opted
+    into. The RAG path sends private source code, documentation, project
+    summaries, user questions and embeddings to this host, so a remote host
+    is a deliberate deployment choice — not something a typo in .env can
+    turn into a data-exfiltration path.
+
+    An explicitly passed `host` is the caller's responsibility: tests and
+    tooling inject their own, and the loopback rule is about configuration,
+    not about the constructor's arguments.
+    """
 
     def __init__(
         self,
@@ -25,7 +39,18 @@ class OllamaService:
         timeout_seconds: int | None = None,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
+        configured = host is None
         self.host = (host or settings.ollama_host).rstrip("/")
+        if (
+            configured
+            and not is_loopback_host(self.host)
+            and not settings.allow_remote_ollama
+        ):
+            raise LocalOnlyViolationError(
+                f"Refusing to use non-loopback Ollama host {self.host!r} "
+                "(Rule 1: everything stays local). Set "
+                "SENTINEL_ALLOW_REMOTE_OLLAMA=true to allow it deliberately."
+            )
         self.timeout = timeout_seconds or settings.ollama_timeout_seconds
         self._client = httpx.Client(
             base_url=self.host, timeout=self.timeout, transport=transport

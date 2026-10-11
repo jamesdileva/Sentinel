@@ -4,6 +4,36 @@
 > Sentinel-wide working notes live at the top; newest entries at the bottom
 > of the changelog unless otherwise dated.
 
+## 2026-10-11 — Audit A5: enforce local Ollama by default (Batch 3 begins)
+
+- **Problem:** `SENTINEL_OLLAMA_HOST` could point anywhere, and RAG sends
+  private source code, docs, summaries and user questions to it. Nothing
+  enforced loopback, so a typo in .env turned a box that promises
+  "everything stays local" into an exfiltration path.
+- **Fix, enforcement not advice:** new `SENTINEL_ALLOW_REMOTE_OLLAMA`
+  (default false) is the one explicit opt-in. Without it, three layers
+  refuse independently — `OllamaService` won't construct against a
+  non-loopback configured host (so nothing can ever be sent),
+  `_check_ollama` fails the startup check *before probing*, and the
+  Settings page raises an error-level warning that names the flag.
+- **Loopback, defined:** 127.0.0.0/8, ::1 (including IPv4-mapped), and the
+  localhost aliases. A LAN IP, a bare hostname, or 0.0.0.0 is remote by
+  definition — every one of those would ship private source somewhere else.
+- **The line that matters:** explicitly-passed hosts are the caller's
+  choice, not configuration — tests and tooling inject their own and are
+  untouched. The rule constrains *what .env is allowed to say*, which is
+  where the real accident lives. (This is also why the client validates
+  only the configured host: the audit's verification is "RAG never sends
+  data remotely under default configuration", and the default can never
+  be remote now.)
+- **Verification:** +24 helper cases (loopback/remote tables incl. the
+  `::1`-without-scheme edge and IPv4-mapped), +4 Settings, +2
+  startup-check; 69 across the touched files green, `flake8
+  --max-line-length=100` + `black` clean.
+- **Next up (Batch 3 continues):** B1 symlink containment, localhost
+  mutation protection, A6 backup/restore semantics, deterministic Chroma
+  rebuild verification.
+
 ## 2026-10-10 — Stale-running recovery unified (Batch 2 complete)
 
 - **Problem, the audit's last Batch 2 item:** three tables could hold a row

@@ -9,7 +9,7 @@ so the dashboard can show the same state (docs/02 §7.3).
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from app.core.config import settings
+from app.core.config import is_loopback_host, settings
 from app.core.logging import get_logger
 from app.db.connection import check_db
 from app.services.ollama_service import OllamaService
@@ -36,6 +36,17 @@ def _check_watch_dirs() -> ComponentStatus:
 def _check_ollama() -> ComponentStatus:
     if not settings.ollama_host:
         return ComponentStatus("ollama", False, "AI host not configured")
+    # v1.17.19.15 (audit A5): refuse a remote host before probing it — the
+    # point is that no request is ever made to it, so there is nothing to
+    # probe. Loopback (the default) is unaffected.
+    if not is_loopback_host(settings.ollama_host) and not settings.allow_remote_ollama:
+        return ComponentStatus(
+            "ollama",
+            False,
+            f"{settings.ollama_host} is not loopback — refusing to send "
+            "project data off this machine (Rule 1). Set "
+            "SENTINEL_ALLOW_REMOTE_OLLAMA=true to allow it.",
+        )
     ollama = OllamaService()
     try:
         models = ollama.list_models()

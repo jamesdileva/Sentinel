@@ -7,6 +7,7 @@ and .env.example all agree. See docs/02_Implementation_Guide.md §4.2.
 import json
 from pathlib import Path
 from typing import Annotated
+from urllib.parse import urlparse
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -209,6 +210,62 @@ class Settings(BaseSettings):
     # Sentinel only copies files and returns an HTML snippet — pushing the site
     # is always the user's manual step (Rule 1 explicit export, Rule 2).
     portfolio_dir: Path = BASE_DIR.parent / "jamesdileva" / "jamesdileva.github.io"
+    # v1.17.19.15 (audit A5): explicit opt-in for a non-loopback Ollama host.
+    # Rule 1 says data never leaves the device, and the RAG path sends source
+    # code, docs, summaries and user questions to the configured host — so a
+    # remote host must be a deliberate choice, not a typo in .env. Off means
+    # the client refuses to talk to anything but loopback.
+    allow_remote_ollama: bool = False
+
+
+# Hostnames that are unambiguously this machine. `localhost` is here because
+# Pydantic's Url parsing already resolves it, and every resolver on the box
+# treats it as 127.0.0.1 (or ::1) — never a routable name.
+_LOOPBACK_HOSTS = frozenset({"localhost", "ip6-localhost", "ip6-loopback"})
+
+
+def _host_of(candidate: str) -> str | None:
+    """Resolve a URL-or-bare-host string to its hostname."""
+    import ipaddress
+
+    text = (candidate or "").strip()
+    if not text:
+        return None
+    # A bare IP is the common loopback spelling (`::1`, `127.0.0.1`); parsing
+    # it as a URL first would mangle the colons.
+    try:
+        ipaddress.ip_address(text)
+        return text
+    except ValueError:
+        pass
+    if "://" not in text:
+        text = f"http://{text}"
+    parsed = urlparse(text)
+    return (parsed.hostname or "").strip() or None
+
+
+def is_loopback_host(host: str) -> bool:
+    """True when `host` (a URL or bare host:port) is this machine.
+
+    Audit A5's rule made concrete: accept 127.0.0.0/8, ::1, and the localhost
+    aliases. Anything else — a LAN IP, a hostname, 0.0.0.0 — is remote by
+    definition, because RAG would ship private source code to it.
+    """
+    import ipaddress
+
+    hostname = (_host_of(host) or "").strip().lower().rstrip(".")
+    if not hostname:
+        return False
+    if hostname in _LOOPBACK_HOSTS:
+        return True
+    try:
+        address = ipaddress.ip_address(hostname)
+    except ValueError:
+        return False  # a name — only the loopback names above are trusted
+    # IPv4-mapped (::ffff:127.0.0.1) unwraps to its IPv4 address.
+    if getattr(address, "ipv4_mapped", None) is not None:
+        address = address.ipv4_mapped
+    return address.is_loopback
 
 
 settings = Settings()

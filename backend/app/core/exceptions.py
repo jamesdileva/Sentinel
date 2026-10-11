@@ -42,3 +42,16 @@ class SchedulerDrainingError(SentinelError):
     """
 
     status_code = 503
+
+
+class LocalOnlyViolationError(SentinelError):
+    """Raised when a host is not loopback and remote use is not opted into
+    (v1.17.19.15, audit A5).
+
+    Rule 1 says data never leaves the device. The RAG path sends private
+    source code, docs, summaries and user questions to the configured Ollama
+    host, so a remote host has to be a deliberate choice
+    (`SENTINEL_ALLOW_REMOTE_OLLAMA=true`) rather than a typo in .env.
+    """
+
+    status_code = 503

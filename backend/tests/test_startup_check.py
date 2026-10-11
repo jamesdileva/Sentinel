@@ -44,3 +44,32 @@ def test_component_status_fields():
     assert status.name == "database"
     assert status.ok is True
     assert status.detail == "ok"
+
+
+def test_remote_ollama_host_fails_the_startup_check(monkeypatch):
+    """A5: a non-loopback host with no opt-in fails the check *before* any
+    request is made, so nothing is ever sent off the machine."""
+    from app.core.config import settings
+    from app.services.startup_check import _check_ollama
+
+    monkeypatch.setattr(settings, "ollama_host", "http://192.168.1.50:11434")
+    monkeypatch.setattr(settings, "allow_remote_ollama", False)
+    status = _check_ollama()
+    assert status.ok is False
+    assert "not loopback" in status.detail
+    assert "SENTINEL_ALLOW_REMOTE_OLLAMA" in status.detail
+
+
+def test_opted_in_remote_host_passes_the_host_check(monkeypatch):
+    """With the opt-in the gate opens (the later probe may still fail — that
+    is a reachability question, not a Rule 1 one)."""
+    from app.core.config import settings
+    from app.services import startup_check
+
+    monkeypatch.setattr(settings, "ollama_host", "http://192.168.1.50:11434")
+    monkeypatch.setattr(settings, "allow_remote_ollama", True)
+    monkeypatch.setattr(
+        startup_check.OllamaService, "list_models", lambda self: ["llama3.1:8b"]
+    )
+    status = startup_check._check_ollama()
+    assert status.ok is True
