@@ -4,6 +4,38 @@
 > Sentinel-wide working notes live at the top; newest entries at the bottom
 > of the changelog unless otherwise dated.
 
+## 2026-10-11 — Unclaimed P2s: B2 containment, B8 health, B10 validation
+
+Three P2 findings the audit listed but no batch absorbed, all closed in one
+pass (v1.17.19.20). Tests: +19, full suite 848 passed + 1 skipped.
+
+- **B2** — `indexer.update_incremental()` raised `ValueError` on a path
+  outside the project root, because it called
+  `absolute.relative_to(project_root)` on caller-supplied input. One bad
+  entry lost the whole batch. It now applies B1's containment check and
+  **skips + logs a bounded warning** instead. An unknown project id still
+  raises: the guard is about paths, not about typos.
+- **B8** — `/health` hard-coded `status: "healthy"` while reporting
+  `database.reachable: false`. Status is now derived from the probe.
+  **Deliberately still HTTP 200**: the audit offered 503, but the desktop
+  shell polls this endpoint and treats any non-200 as *"the backend is not
+  there"* — it would then spawn a second one or refuse to attach. A server
+  that is up with an unreachable database is **degraded, not down**, and the
+  status word carries exactly that distinction. Recorded as a deliberate
+  rejection of the 503 option, with the reason.
+- **B10** — eleven operational settings now carry constraint ranges:
+  intervals/timeouts > 0, `ollama_num_ctx >= 2048` (Ollama's own floor),
+  relevance floor in 0..1, drain/barrier timeouts >= 0. A value that makes
+  the thing it configures impossible to run is refused **at load** (pydantic
+  raises before the server binds) rather than breaking a scheduler at 2am.
+  `validate_assignment` stays off on purpose: tests must be able to fake a
+  hostile value they are asserting against. `screenshot_retention_days=0`
+  remains valid — disabling the sweep is a setting, not a broken one.
+- **Checked before shipping:** the machine's `.env` sets none of the newly
+  constrained keys, so no existing install refuses to boot.
+- **Next up:** Batch 4 (scale without over-engineering), then the desktop
+  `npm run dist` rebuild so `win-unpacked` ships all of this.
+
 ## 2026-10-11 — Deterministic Chroma rebuild verification (Batch 3 continues)
 
 - **Problem:** A6 verifies a *restored* store; the live one was still

@@ -63,10 +63,21 @@ class Settings(BaseSettings):
     # identical vectors, so a smaller floor = stricter matching.
     # Re-measure with `scripts/eval_embedding_retrieval.py --distances` if
     # SENTINEL_EMBEDDING_MODEL changes — the scale is model-specific.
-    rag_relevance_floor: float = 0.487
+    # v1.17.19.20 (audit B10): operational values that cannot work are
+    # rejected at load time rather than breaking a runner or scheduler at
+    # 2am. Each constraint is "would this setting make the thing it configures
+    # impossible to run" — not taste. pydantic-settings raises a
+    # ValidationError on load, so the process refuses to start instead of
+    # booting with a broken scheduler. Later assignment is deliberately
+    # unvalidated (validate_assignment is off): a test must be able to fake a
+    # hostile value it is asserting against.
+    rag_relevance_floor: float = Field(default=0.487, ge=0.0, le=1.0)
     embedding_model: str = "nomic-embed-text"
-    ollama_timeout_seconds: int = 1800  # v1.17.6.4: 120s timed out arch-summary
-    # generation while embedding workers were saturating the local Ollama
+    ollama_timeout_seconds: int = Field(
+        default=1800, gt=0, description="seconds before an Ollama request fails"
+    )
+    # v1.17.6.4: 120s timed out arch-summary generation while embedding
+    # workers were saturating the local Ollama.
     # v1.17.6.8: 600s still timed out with the v1.17.6.6 doc-first summary
     # context (~10k-token prefill) contending with a full re-index; 1800s
     # covers the slowest laptop generation.
@@ -74,13 +85,17 @@ class Settings(BaseSettings):
     # num_ctx is only 2048 — big summary/query prompts would be silently
     # truncated. 32768 covers the largest prompt we build (~12k tokens) with
     # room to spare and a modest KV-cache memory footprint on the laptop.
-    ollama_num_ctx: int = 32768
+    ollama_num_ctx: int = Field(
+        default=32768,
+        ge=2048,
+        description="context window; 2048 is Ollama's own default floor",
+    )
     # v1.17.6.8: summaries get more output budget than the shared 500-token
     # default (chat answers stay concise) — the doc-first prompt feeds ~10k
     # tokens of context, and a structured components/stack/notes summary
     # grows past 500. 1250 tokens ~= 2-2.5 min on the laptop, inside the
     # 1800s timeout.
-    ollama_summary_max_tokens: int = 1250
+    ollama_summary_max_tokens: int = Field(default=1250, gt=0)
     # v1.17.18.6 (audit2 RAG pass): Ollama unloads models after ~5 minutes
     # idle by default — every occasional RAG query then pays a full model
     # load (seconds to tens of seconds) before generation starts. Keeping
@@ -149,7 +164,7 @@ class Settings(BaseSettings):
     # v1.17.7.1: files larger than this are never parsed or stored as project
     # files. ML models (multi-GB ONNX/checkpoints), media and other binaries
     # bloated the file walk and were read fully by the parsers.
-    max_file_size_kb: int = 5120
+    max_file_size_kb: int = Field(default=5120, gt=0)
     auto_scan_on_startup: bool = True
     auto_index_knowledge: bool = True  # queue RAG indexing for new/unembedded projects
 
@@ -160,21 +175,21 @@ class Settings(BaseSettings):
     screenshot_retention_days: int = 365
 
     scheduler_enabled: bool = True
-    command_timeout_seconds: int = 300
+    command_timeout_seconds: int = Field(default=300, gt=0)
     # v1.17.19.13 (audit B7): how long shutdown waits for in-flight jobs to
     # reach a consistent point before closing them out as abandoned. Short on
     # purpose — the point is to let a mid-Chroma-write worker finish, not to
     # delay exit; jobs are never cancelled, so a longer timeout only delays
     # the ledger's honesty, never the job's safety.
-    job_drain_timeout_seconds: int = 5
+    job_drain_timeout_seconds: int = Field(default=5, ge=0)
 
     # v1.17.7.3: off by default — the world simulator is an opt-in toy; the
     # API router and the beat tick register only when it is enabled.
     world_sim_enabled: bool = False
     world_sim_db_path: Path = BASE_DIR / "data" / "world_sim" / "world.db"
-    world_sim_tick_seconds: int = 60
+    world_sim_tick_seconds: int = Field(default=60, gt=0)
     world_sim_max_catchup_days: int = 48
-    world_sim_time_scale: int = 1
+    world_sim_time_scale: int = Field(default=1, gt=0)
     world_sim_seed: int = 42
     world_sim_starting_settlements: int = 2
     world_sim_model: str = "llama3.1:8b"  # unused today (narratives are deterministic)
@@ -197,11 +212,11 @@ class Settings(BaseSettings):
 
     # v1.17.1: daily cadence — startup always syncs once, then every 24h unless
     # the user presses the header "Sync now" button (POST /api/v1/system/sync).
-    sync_interval_minutes: int = 1440
+    sync_interval_minutes: int = Field(default=1440, gt=0)
     # v1.17.7: the daily security scan-all runs on its own beat instead of
     # riding the repo-sync pass — a tokenless install (all projects already
     # local) still scans on schedule.
-    scan_interval_minutes: int = 1440
+    scan_interval_minutes: int = Field(default=1440, gt=0)
     # v1.17.3: full path to a git executable, for contexts with a minimal PATH
     # (Task Scheduler autostart). Auto-discovered when empty.
     git_executable: str = ""
@@ -221,7 +236,7 @@ class Settings(BaseSettings):
     # pass can legitimately run for many minutes; the point is that a backup
     # writes nothing at all rather than a zip whose SQLite and Chroma halves
     # describe different instants.
-    backup_barrier_timeout_seconds: int = 900
+    backup_barrier_timeout_seconds: int = Field(default=900, ge=0)
 
 
 # Hostnames that are unambiguously this machine. `localhost` is here because

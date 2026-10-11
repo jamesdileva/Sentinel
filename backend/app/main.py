@@ -211,12 +211,26 @@ def root():
 
 @app.get("/health", tags=["system"])
 def health() -> dict:
-    """Enhanced system health: app version and database reachability."""
+    """Readiness: app version and database reachability.
+
+    v1.17.19.20 (audit B8): `status` used to be a hard-coded "healthy" while
+    the body could say `database.reachable: false` — contradictory for any
+    monitoring that reads the top-level field. `status` is now derived:
+    "healthy" when the database answers, "degraded" when it does not.
+
+    Deliberately still HTTP 200. The audit offered 503 for a
+    liveness/readiness probe, but the desktop shell polls this endpoint and
+    treats any non-200 as "the backend is not there" (it would then spawn a
+    second one, or refuse to attach). A server that is *up* with an
+    unreachable database is genuinely degraded, not down, and the status word
+    is what carries that distinction.
+    """
+    reachable = check_db()
     return {
-        "status": "healthy",
+        "status": "healthy" if reachable else "degraded",
         "app": settings.app_name,
         "version": settings.version,
-        "database": {"reachable": check_db(), "path": str(settings.db_path)},
+        "database": {"reachable": reachable, "path": str(settings.db_path)},
     }
 
 

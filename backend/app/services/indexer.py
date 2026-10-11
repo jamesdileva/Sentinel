@@ -595,24 +595,44 @@ class IndexerService:
         return extract_build_commands(project_path)
 
     def update_incremental(self, project_id: str, changed_files: list[str]) -> int:
-        """Re-parse only changed files; return number of files processed."""
+        """Re-parse only changed files; return number of files processed.
+
+        v1.17.19.20 (audit B2): a path outside the project root is skipped and
+        logged, never raised on. `absolute.relative_to(project_root)` used to
+        throw `ValueError` on an absolute path from elsewhere (or a `..`
+        chain), which aborted the whole batch instead of ignoring one entry.
+        The containment rule is B1's, applied to the caller-supplied input
+        this method takes."""
         project = self.projects.get(project_id)
         if project is None:
             raise ValueError(f"Unknown project: {project_id}")
         project_root = Path(project.path)
         processed = 0
+        escaping: list[str] = []
         for changed in changed_files:
             absolute = (
                 Path(changed).resolve()
                 if Path(changed).is_absolute()
-                else project_root / changed
+                else (project_root / changed)
             )
+            # Fail closed: an unresolvable or outside path is not a file to
+            # index, and it must not raise either.
+            if not _is_within_root(absolute, project_root):
+                escaping.append(str(changed))
+                continue
             if not absolute.exists() or self._is_skippable(
                 absolute.relative_to(project_root), absolute
             ):
                 continue
             self._upsert_file(project, absolute)
             processed += 1
+        if escaping:
+            logger.warning(
+                "update_incremental skipped %d path(s) outside %s: %s",
+                len(escaping),
+                project_root,
+                ", ".join(escaping[:5]),
+            )
         self.session.commit()
         return processed
 
