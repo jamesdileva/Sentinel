@@ -245,6 +245,22 @@ def is_sync_owned(checkout: Path, watch_root: Path) -> bool:
     return False
 
 
+def _is_within_root(candidate: Path, project_root: Path) -> bool:
+    """Containment check (audit B1): does `candidate` resolve inside the project?
+
+    `git ls-files` can list a symlink and the walk yields symlink entries;
+    every downstream read follows the link, so this is the one place that
+    decides. Unresolvable paths (I/O errors, symlink loops — `resolve()`
+    raises `RuntimeError` on those) count as outside: fail closed, never
+    ingest what cannot be contained.
+    """
+    try:
+        candidate.resolve().relative_to(project_root.resolve())
+    except (OSError, RuntimeError, ValueError):
+        return False
+    return True
+
+
 class IndexerService:
     """Deterministic repository scanning and indexing."""
 
@@ -655,6 +671,36 @@ class IndexerService:
         except OSError:
             return True
 
+    def _drop_escaping_paths(
+        self, candidates: list[Path], project_root: Path
+    ) -> list[Path]:
+        """Drop candidates whose resolved location leaves the project (B1).
+
+        `git ls-files` can list a symlink, and the walk yields symlink
+        entries; every downstream read (parse, embed, scan) follows the link,
+        so without this a link pointing outside the checkout would have its
+        *target's* content indexed as project source (Rule 1). Skipped paths
+        get one bounded warning per call — the count plus the first few —
+        never one log line per link.
+        """
+        kept: list[Path] = []
+        skipped: list[str] = []
+        for candidate in candidates:
+            if _is_within_root(candidate, project_root):
+                kept.append(candidate)
+            else:
+                skipped.append(candidate.relative_to(project_root).as_posix())
+        if skipped:
+            sample = ", ".join(skipped[:5])
+            logger.warning(
+                "Skipped %d path(s) escaping project root %s (Rule 1, audit B1): %s%s",
+                len(skipped),
+                project_root,
+                sample,
+                ", ..." if len(skipped) > 5 else "",
+            )
+        return kept
+
     def _iter_source_files(self, project_root: Path) -> list[Path]:
         """All parseable source files under the project root (sorted).
 
@@ -687,7 +733,10 @@ class IndexerService:
                 if self._is_skippable(absolute.relative_to(project_root), absolute):
                     continue
                 files.append(absolute)
-        return sorted(files, key=lambda p: p.relative_to(project_root).as_posix())
+        return self._drop_escaping_paths(
+            sorted(files, key=lambda p: p.relative_to(project_root).as_posix()),
+            project_root,
+        )
 
     def _git_tracked_files(self, project_root: Path) -> list[Path] | None:
         """v1.17.7.3: tracked file list via `git ls-files` for git checkouts.
@@ -722,7 +771,7 @@ class IndexerService:
         for rel in proc.stdout.decode("utf-8", errors="replace").split("\0"):
             if rel:
                 files.append(project_root / rel)
-        return files
+        return self._drop_escaping_paths(files, project_root)
 
     def _index_files(self, project: Project) -> None:
         """Re-parse a project's tree without destroying row identity.

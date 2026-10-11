@@ -1230,3 +1230,114 @@ def test_index_project_survives_non_utf8_requirements(tmp_db, tmp_path):
     assert commands["install"] == "pip install -r requirements.txt"
     deps = svc.extract_dependencies(repo)
     assert {d.name for d in deps} >= {"gymnasium", "pygame"}
+
+
+def _fake_symlink(monkeypatch, link: Path, target: Path) -> None:
+    """Simulate `link` being a symlink to `target` without needing the
+    OS privilege real symlinks require (WinError 1314 here).
+
+    `WindowsPath.resolve is Path.resolve`, so patching the base method
+    redirects every resolve in the producer code; everything else delegates
+    to the real implementation.
+    """
+    real_resolve = Path.resolve
+
+    def fake_resolve(self, *args, **kwargs):
+        if str(self) == str(link):
+            return target
+        return real_resolve(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "resolve", fake_resolve)
+
+
+def test_within_root_rejects_dotdot_escape(tmp_path):
+    """Audit B1, predicate level: `..` segments that leave the checkout are
+    outside — no symlink privilege needed to exercise the resolve logic."""
+    from app.services.indexer import _is_within_root
+
+    root = tmp_path / "proj"
+    (root / "sub").mkdir(parents=True)
+    assert _is_within_root(root / "sub" / "a.py", root) is True
+    assert _is_within_root(root / ".." / "evil.py", root) is False
+    assert _is_within_root(tmp_path / "elsewhere.py", root) is False
+
+
+def test_walk_skips_resolved_outside_file(tmp_db, tmp_path, monkeypatch, caplog):
+    """Audit B1, walk path: an entry that resolves outside the project is
+    dropped with one bounded warning — its target is never read."""
+    proj = tmp_path / "proj"
+    (proj / "sub").mkdir(parents=True)
+    (proj / "sub" / "ok.py").write_text("x = 1\n", encoding="utf-8")
+    link = proj / "sub" / "evil.py"
+    link.write_text("placeholder\n", encoding="utf-8")
+    outside = tmp_path / "secret.py"
+    outside.write_text("SECRET = 1\n", encoding="utf-8")
+    _fake_symlink(monkeypatch, link, outside)
+
+    svc = _service(tmp_db)
+    with caplog.at_level("WARNING", logger="app.services.indexer"):
+        found = svc._iter_source_files(proj)
+    assert [p.name for p in found] == ["ok.py"]
+    assert "Skipped 1 path(s) escaping project root" in caplog.text
+    assert "evil.py" in caplog.text
+    assert "SECRET" not in caplog.text  # the target is never read
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git not installed")
+def test_git_tracked_escaping_link_dropped(tmp_db, tmp_path, monkeypatch):
+    """Audit B1, `git ls-files` path: a tracked entry resolving outside is
+    dropped by the same filter (real repo, simulated link)."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    (repo / "main.py").write_text("print('hi')\n", encoding="utf-8")
+    (repo / "link.py").write_text("placeholder\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", "."], check=True)
+    outside = tmp_path / "secret.py"
+    outside.write_text("SECRET = 1\n", encoding="utf-8")
+    _fake_symlink(monkeypatch, repo / "link.py", outside)
+
+    svc = _service(tmp_db)
+    tracked = svc._git_tracked_files(repo)
+    assert tracked is not None
+    assert [p.name for p in tracked] == ["main.py"]
+
+
+def test_escaping_symlink_never_indexed_end_to_end(tmp_db, tmp_path):
+    """Audit B1, full path: no ProjectFile row for an escaping link, so no
+    downstream read (parse, embed, scan) can ever touch the target."""
+    try:
+        outside = tmp_path / "secret.py"
+        outside.write_text("SECRET = 1\n", encoding="utf-8")
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        (proj / "ok.py").write_text("x = 1\n", encoding="utf-8")
+        os.symlink(str(outside), str(proj / "evil.py"))
+    except OSError:
+        pytest.skip("OS refused symlink creation (needs privilege)")
+    svc = _service(tmp_db)
+    project = svc.index_project(proj)
+    paths = {
+        f.path
+        for f in ProjectFileRepository(Session(connection.get_engine())).get_by_project(
+            project.id
+        )
+    }
+    assert paths == {"ok.py"}
+
+
+def test_drop_escaping_paths_warning_is_bounded(tmp_db, tmp_path, caplog):
+    """Audit B1: escaping links produce one log line naming at most five —
+    a hostile tree must not flood the log. (`..` escapes need no symlink
+    privilege, so this runs everywhere.)"""
+    svc = _service(tmp_db)
+    root = tmp_path / "proj"
+    root.mkdir()
+    candidates = [root / ".." / f"evil{i}.py" for i in range(12)]
+    with caplog.at_level("WARNING", logger="app.services.indexer"):
+        kept = svc._drop_escaping_paths(candidates, root)
+    assert kept == []
+    warnings = [r for r in caplog.records if "escaping project root" in r.message]
+    assert len(warnings) == 1
+    assert "Skipped 12 path(s)" in warnings[0].message
+    assert "evil11.py" not in warnings[0].message  # capped sample

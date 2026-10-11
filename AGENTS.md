@@ -4,6 +4,35 @@
 > Sentinel-wide working notes live at the top; newest entries at the bottom
 > of the changelog unless otherwise dated.
 
+## 2026-10-11 — Audit B1: symlink containment (Batch 3 continues)
+
+- **Problem:** `git ls-files` can return a symlink path, and the walk yields
+  symlink entries. Sentinel reads the file content right afterwards, and that
+  read *follows the link* — so a symlink pointing outside the project root
+  would have its target's content indexed (and embedded, and scanned) as
+  project source. On a Rule 1 codebase that indexes private code, that is the
+  quiet path to reading things it was never pointed at.
+- **Fix:** a containment check at every path that enters the index, in both
+  enumeration paths — `resolved.relative_to(project_root.resolve())` in a
+  helper (`_is_within_root`), applied by `_drop_escaping_paths` to the
+  `git ls-files` list *and* the filesystem walk. If it fails: skip the file
+  and log a **bounded** warning (count plus the first five — never one log
+  line per link, so a hostile tree cannot flood the log).
+- **Fail closed:** unresolvable paths (symlink loops, I/O errors) count as
+  outside. The alternative is ingesting a file whose location we cannot
+  establish.
+- **Scope, honest about what is NOT covered:** this guards the index/scan
+  producer paths — the ones that decide what gets read. `triage_service`'s
+  traceback-frame read is a follow-up, because those frames are resolved from
+  rows that are already contained by this fix.
+- **Verification:** +5 tests — the predicate on `..` escapes (no symlink
+  privilege needed, so it runs everywhere), the walk dropping a resolved-
+  outside file with exactly one warning and its target never read, the same
+  through `git ls-files`, a privileged end-to-end index skip, and the log
+  boundedness. 782 passed + 1 skipped, flake8 + black clean.
+- **Next up (Batch 3 continues):** localhost mutation protection, A6
+  backup/restore semantics, deterministic Chroma rebuild verification.
+
 ## 2026-10-11 — Audit A5: enforce local Ollama by default (Batch 3 begins)
 
 - **Problem:** `SENTINEL_OLLAMA_HOST` could point anywhere, and RAG sends
