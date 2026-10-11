@@ -174,6 +174,32 @@ def rag_index_status(
         "files_total": files_total,
         "files_embedded": files_embedded,
         "health": rag.chroma.health(),
+        # v1.17.19.19 (audit Batch 3): the pairing counts quoted above say
+        # how many files *claim* to be embedded; this says whether the
+        # vectors they promise are actually there, which is what makes a
+        # thin answer diagnosable instead of mysterious.
+        "pairing": _pairing_summary(rag),
+    }
+
+
+def _pairing_summary(rag) -> dict:
+    """Read-only flag↔vector agreement for the live store.
+
+    Reads through the injected service's own manager rather than the shared
+    singleton, so a hermetic test's store is what gets checked (the
+    v1.17.7.3 lesson)."""
+    try:
+        from app.services.knowledge_integrity import verify_store
+
+        report = verify_store(chroma=rag.chroma)
+    except Exception:  # noqa: BLE001 — a probe must not fail the status read
+        return {"consistent": False, "summary": "pairing probe failed"}
+    return {
+        "consistent": report.consistent,
+        "summary": report.summary(),
+        "missing": report.missing[:50],
+        "orphans": report.orphans[:50],
+        "collection_counts": report.collection_counts,
     }
 
 

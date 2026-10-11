@@ -356,6 +356,56 @@ def restore(
 
 
 @app.command()
+def knowledge(
+    action: str = typer.Argument("verify", help="verify | reconcile"),
+):
+    """Deterministic knowledge-index verification (audit Batch 3, v1.17.19.19).
+
+    `verify` reports whether the embedding flags in SQLite agree with the
+    vectors in Chroma — read-only, no Ollama, no jobs. `reconcile` performs
+    the deterministic repair: a flag with no vector is cleared so the next
+    index pass re-embeds it, a vector with no row is deleted. Both directions
+    of divergence are listed, because silently trusting either half is how
+    an index starts answering from files that are gone.
+    """
+    from app.services.knowledge_integrity import reconcile_store, verify_store
+
+    if action == "verify":
+        report = verify_store()
+        typer.echo(report.summary())
+        if not report.consistent:
+            if report.missing:
+                typer.echo(
+                    f"{len(report.missing)} file(s) will be re-embedded "
+                    "by `sentinel knowledge reconcile` (or `sentinel rag-index --reset`)",
+                    err=True,
+                )
+            if report.orphans:
+                typer.echo(
+                    f"{len(report.orphans)} vector(s) no longer have a file row",
+                    err=True,
+                )
+            if report.unreadable:
+                typer.echo("unreadable: " + ", ".join(report.unreadable), err=True)
+                typer.echo(
+                    "A store that cannot be read needs a rebuild: "
+                    "`sentinel rag-index --reset`",
+                    err=True,
+                )
+            raise typer.Exit(code=1)
+    elif action == "reconcile":
+        report = reconcile_store()
+        typer.echo(report.summary())
+        if report.cleared_flags:
+            typer.echo(
+                "Re-run knowledge indexing to re-embed them: " "`sentinel rag-index`"
+            )
+    else:
+        typer.echo("Unknown action. Use `verify` or `reconcile`.", err=True)
+        raise typer.Exit(code=2)
+
+
+@app.command()
 def config(
     action: str = typer.Argument("show"),
     key: str | None = None,

@@ -227,9 +227,17 @@ Not covered by the zip — reinstall on a fresh machine:
   **Re-index all projects**. Or from the console (from inside `backend`):
   `backend\.venv\Scripts\python.exe -m app.cli rag-index --reset` and
   restart — the startup auto-index re-embeds.
-- After moving the repo folder on disk: nothing to re-register — there is no
-  autostart task anymore (v1.17.7.2); just start `run.py` from the new
-  location.
+  - After moving the repo folder on disk: nothing to re-register — there is no
+    autostart task anymore (v1.17.7.2); just start `run.py` from the new
+    location.
+  - Knowledge index looks thin, or a warning appears at boot about the
+    **knowledge pairing**? Check it read-only with
+    `backend\.venv\Scripts\python.exe -m app.cli knowledge verify` (inside
+    `backend`). It reports embedding flags that promise vectors Chroma does
+    not have, and vectors whose file row is gone. Flags are cleared for
+    re-embedding with `sentinel knowledge reconcile`, which is cheaper than a
+    full rebuild and is the deterministic repair; a store that cannot execute
+    a query at all needs `rag-index --reset` instead.
 - Portfolio security cell shows `⚠ pending` on every project right after an
   upgrade → not a bug since v1.17.6.6: "never scanned" is now distinct from
   "scanned and clean". Scans run on their own daily beat since v1.17.7

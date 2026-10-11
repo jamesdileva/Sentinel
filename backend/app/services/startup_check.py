@@ -92,12 +92,42 @@ def _check_chroma(chroma_path: Path) -> ComponentStatus:
         return ComponentStatus("chroma", False, str(exc))
 
 
+def _check_knowledge_pairing() -> ComponentStatus:
+    """Do the embedding flags and the vectors agree? (v1.17.19.19, audit
+    Batch 3: deterministic Chroma rebuild verification.)
+
+    A6 taught us the failure is silent: a restored or hand-copied store can
+    keep flags whose vectors are gone, `ingest_files` then skips those files
+    forever, and the first symptom is a thin answer months later. The check
+    is read-only and deterministic — it lists the divergence instead of
+    trusting the index to be complete. Divergence is a warning, never a
+    boot failure: an empty index is the correct state after a reset, and the
+    repair/rebuild path is a deliberate user action (Rule 2).
+    """
+    try:
+        from app.services.knowledge_integrity import verify_store
+
+        report = verify_store()
+    except Exception as exc:  # noqa: BLE001 — never crash the check pass
+        return ComponentStatus("knowledge", False, f"pairing probe failed: {exc}")
+    detail = report.summary()
+    if report.consistent or not report.diverged:
+        return ComponentStatus("knowledge", True, detail)
+    return ComponentStatus(
+        "knowledge",
+        False,
+        f"{detail} — repair with `sentinel knowledge reconcile`, or rebuild "
+        "with `sentinel rag-index --reset`",
+    )
+
+
 def run_startup_checks() -> list[ComponentStatus]:
     """Run all startup checks in dependency order. Never raises."""
     checks = [
         ComponentStatus("database", check_db(), str(settings.db_path)),
         _check_schema(),
         _check_chroma(settings.chroma_path),
+        _check_knowledge_pairing(),
         _check_watch_dirs(),
         _check_ollama(),
     ]

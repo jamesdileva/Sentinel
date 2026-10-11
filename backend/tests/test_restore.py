@@ -57,17 +57,23 @@ def _seed_knowledge(root: Path, missing_vectors: bool = False):
     """One project, one embedded file row, one vector for it.
 
     `missing_vectors=False` leaves the pairing intact; True writes the flag
-    without its vector — the state A6 exists to catch.
+    without its vector — the state A6 exists to catch. The file is written to
+    disk too, so it counts as embeddable (a zero-byte or vanished file
+    legitimately carries a flag with no vector).
     """
+    source = root / "src"
+    source.mkdir(parents=True, exist_ok=True)
+    absolute = source / "app.py"
+    absolute.write_text("print(1)\n", encoding="utf-8")
     with Session(get_engine()) as session:
-        project = Project(name="sentinel", path=str(root / "src"), language="Python")
+        project = Project(name="sentinel", path=str(source), language="Python")
         session.add(project)
         session.flush()
         project_id = project.id
         row = ProjectFile(
             project_id=project_id,
             path="app.py",
-            absolute_path=str(root / "src" / "app.py"),
+            absolute_path=str(absolute),
         )
         session.add(row)
         session.flush()

@@ -4,6 +4,45 @@
 > Sentinel-wide working notes live at the top; newest entries at the bottom
 > of the changelog unless otherwise dated.
 
+## 2026-10-11 — Deterministic Chroma rebuild verification (Batch 3 continues)
+
+- **Problem:** A6 verifies a *restored* store; the live one was still
+  trusted. A hand-copied Chroma dir, or a rebuild that died half-way, left
+  flags promising vectors the store did not have — and the first symptom was
+  a thin answer months later, with nothing on boot saying so.
+- **Fix:** `knowledge_integrity.verify_store()` answers "does every
+  embedding flag have its vector, and every vector have its file row?"
+  deterministically (stat + read + compare — no Ollama, no heuristics), and
+  it runs at **startup** and in `GET /api/v1/rag/index/status`. Divergence is
+  a warning and names the repair; an empty index after a reset is *not* a
+  failure, because nothing is claimed.
+- **`reconcile` is the cheaper rebuild:** it clears the flag on rows whose
+  vector is gone (so the next knowledge pass re-embeds just those files) and
+  deletes vectors whose row is gone. Both halves inside the A6 barrier, so a
+  backup cannot snapshot the repair half-done. It **refuses to touch a store
+  it cannot read** — that is a rebuild (`rag-index --reset`), not a repair,
+  and half-handling it would be worse than reporting it. CLI:
+  `sentinel knowledge verify | reconcile`.
+- **One false positive found live, and it matters:** `ingest_files`
+  deliberately marks a zero-byte file as embedded *without* upserting a
+  vector, so the pending query stops re-queueing that project forever. The
+  invariant now allows a flag with no vector exactly when the file is
+  unreadable or empty — which is what the producer's rule is. Before this,
+  every install reported **110 missing files** on every boot; a warning that
+  fires on correct state trains the user to ignore it.
+- **Also fixed en route:** a non-SQLite database file raised
+  `sqlite3.DatabaseError` (not `OperationalError`) straight through the probe.
+  Both are `DatabaseError`; the narrower catch was simply wrong.
+- **Verification:** +18 tests (all three divergence directions, the
+  empty-file and vanished-file non-divergences, the repair in both
+  directions, the barrier, the refused-unreadable case, the startup check and
+  the API field); full suite **829 passed** + 1 skipped, flake8 + black clean.
+  Run against the real index, it reports one genuine finding: 191 orphaned
+  vectors from project GC — repairable with `knowledge reconcile`, left alone
+  because that is the user's call.
+- **Next up (Batch 3 continues):** the audit's remaining recovery work,
+  then whatever closes the batch.
+
 ## 2026-10-11 — Audit A6: backup/restore semantics (Batch 3 continues)
 
 - **Problem:** a backup's SQLite snapshot and Chroma file copy were two
