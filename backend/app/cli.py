@@ -330,6 +330,32 @@ def backup(
 
 
 @app.command()
+def restore(
+    backup: Path = typer.Argument(..., help="Backup zip to restore"),
+):
+    """Restore a backup into data/ (audit A6). Stop Sentinel first.
+
+    SQLite, screenshots and logs are restored directly. The Chroma half is
+    verified against the backup's manifest before it is trusted: when the
+    pairing does not hold, the vectors are not installed and the next
+    knowledge pass re-embeds them, because an index that silently under-
+    serves is worse than an empty one."""
+    from app.services.restore_service import RestoreError, restore_backup
+
+    try:
+        report = restore_backup(backup)
+    except RestoreError as exc:
+        typer.echo(f"Restore refused: {exc}", err=True)
+        raise typer.Exit(code=1)
+    typer.echo(report.summary())
+    if report.vectors == "rebuilt":
+        typer.echo(
+            "Rebuild the knowledge index with `sentinel rag-index`.",
+            err=True,
+        )
+
+
+@app.command()
 def config(
     action: str = typer.Argument("show"),
     key: str | None = None,

@@ -216,6 +216,12 @@ class Settings(BaseSettings):
     # remote host must be a deliberate choice, not a typo in .env. Off means
     # the client refuses to talk to anything but loopback.
     allow_remote_ollama: bool = False
+    # v1.17.19.17 (audit A6): how long a backup waits for the knowledge index
+    # to quiesce before giving up. Generous because one project's embedding
+    # pass can legitimately run for many minutes; the point is that a backup
+    # writes nothing at all rather than a zip whose SQLite and Chroma halves
+    # describe different instants.
+    backup_barrier_timeout_seconds: int = 900
 
 
 # Hostnames that are unambiguously this machine. `localhost` is here because

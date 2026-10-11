@@ -244,6 +244,25 @@ class ChromaManager:
                 )
             except Exception as exc:  # noqa: BLE001 — translate then re-raise
                 self._guard(exc)
+        return self._rows(result)
+
+    def all_rows(self, collection: str) -> list[dict[str, Any]]:
+        """Id + metadata for *every* vector in a collection.
+
+        v1.17.19.17 (audit A6): restore verification needs the whole store to
+        check the flag↔vector contract, and `rows_where` deliberately treats
+        an empty clause as "no query" rather than "everything".
+        """
+        with self._lock(collection):
+            try:
+                result = self.collection(collection).get(include=["metadatas"])
+            except Exception as exc:  # noqa: BLE001 — translate then re-raise
+                self._guard(exc)
+        return self._rows(result)
+
+    @staticmethod
+    def _rows(result: dict[str, Any]) -> list[dict[str, Any]]:
+        """Normalise a Chroma `get` result into id/metadata dicts."""
         ids = result.get("ids") or []
         metadatas = result.get("metadatas") or []
         return [

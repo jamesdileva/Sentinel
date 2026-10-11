@@ -6,9 +6,23 @@ WAL-aware), the Chroma index, session screenshots and the run logs, zipped
 into `data/backups/sentinel-<UTC timestamp>.zip`. Keeps the newest N
 backups and prunes the rest. User-initiated only (CLI `sentinel backup` or
 `scripts/backup.py`) — never a beat (docs/01 Rule 2).
+
+v1.17.19.17 (audit A6): the two stores are one instant or the backup is not
+a recovery guarantee. `maintenance_window()` now brackets both snapshots, so
+a knowledge half-write — a file's `embedding_id` committed while its vectors
+upsert — cannot land between them. When the index will not quiesce inside
+`SENTINEL_BACKUP_BARRIER_TIMEOUT_SECONDS`, no zip is written at all; a
+snapshot that is inconsistent looks recoverable and is not, which is worse
+than no snapshot.
+
+The zip also carries `backup_manifest.json`: what was in it, when, and the
+per-collection vector counts at that instant. Restore reads it to decide
+whether the Chroma half can be trusted or the vectors must be rebuilt —
+see `restore_service`.
 """
 
 import datetime
+import json
 import shutil
 import sqlite3
 import zipfile
@@ -16,12 +30,22 @@ from pathlib import Path
 
 from app.core.config import settings
 from app.core.logging import get_logger
+from app.services.ingest_barrier import KnowledgeBusyError, maintenance_window
 
 logger = get_logger(__name__)
 
+MANIFEST_NAME = "backup_manifest.json"
+_MANIFEST_FORMAT = 1
+
+
+def data_dir() -> Path:
+    """`data/` — sqlite, chroma, screenshots, logs and backups all derive
+    from the database path (v1.17.19.17)."""
+    return Path(settings.db_path).parent.parent
+
 
 def backups_dir() -> Path:
-    return Path(settings.db_path).parent.parent / "backups"
+    return data_dir() / "backups"
 
 
 def _zip_path(stamp: datetime.datetime) -> Path:
@@ -55,6 +79,32 @@ def _add_dir(zf: zipfile.ZipFile, src_dir: Path, arc_root: str) -> int:
     return count
 
 
+def _chroma_counts() -> dict[str, int]:
+    """Vector count per collection at the instant the caller holds the
+    maintenance window. A store that cannot even be counted is reported as
+    an empty mapping — restore then rebuilds rather than trusting a half."""
+    try:
+        from app.services.chroma_manager import COLLECTIONS, get_chroma_manager
+
+        manager = get_chroma_manager()
+        return {name: manager.count(name) for name in COLLECTIONS}
+    except Exception:  # noqa: BLE001 — a broken store must not fail the backup
+        logger.warning("Chroma counts unavailable; manifest will carry none")
+        return {}
+
+
+def _manifest(stamp: datetime.datetime, counts: dict[str, int]) -> dict:
+    """What this zip claims to contain, so restore can tell an intact pair
+    from a torn one."""
+    return {
+        "format": _MANIFEST_FORMAT,
+        "created_at": stamp.isoformat(),
+        "sentinel_version": settings.version,
+        "sqlite": "sqlite/sentinel.db",
+        "chroma_counts": counts,
+    }
+
+
 def create_backup(keep: int = 7, push_dir: str | Path | None = None) -> dict:
     """Snapshot db + chroma + screenshots + logs into one zip, prune old
     backups. When `push_dir` is set, the finished zip is copied there
@@ -68,20 +118,38 @@ def create_backup(keep: int = 7, push_dir: str | Path | None = None) -> dict:
 
     stats = {"path": str(target), "files": 0, "skipped": []}
     try:
-        _snapshot_db(db_snapshot)
-        with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as zf:
-            zf.write(db_snapshot, "sqlite/sentinel.db")
-            stats["files"] += 1
-            stats["files"] += _add_dir(zf, Path(settings.chroma_path), "chroma")
-            stats["files"] += _add_dir(
-                zf,
-                backups_dir().parent.parent / "screenshots",
-                "screenshots",
-            )
-            stats["files"] += _add_dir(zf, backups_dir().parent / "logs", "logs")
+        # A6: both snapshots and the counts that describe them happen inside
+        # one quiescent instant.
+        with maintenance_window():
+            _snapshot_db(db_snapshot)
+            counts = _chroma_counts()
+            with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as zf:
+                zf.write(db_snapshot, "sqlite/sentinel.db")
+                stats["files"] += 1
+                stats["files"] += _add_dir(zf, settings.chroma_path, "chroma")
+                stats["files"] += _add_dir(
+                    zf, data_dir() / "screenshots", "screenshots"
+                )
+                stats["files"] += _add_dir(zf, data_dir() / "logs", "logs")
+                zf.writestr(
+                    MANIFEST_NAME,
+                    json.dumps(_manifest(stamp, counts), indent=2, sort_keys=True),
+                )
+                stats["files"] += 1
+            stats["chroma_counts"] = counts
+    except KnowledgeBusyError:
+        # A6: refuse the snapshot rather than write a zip that lies about
+        # being a recovery point.
+        stats["skipped"].append(
+            "knowledge index did not quiesce — rerun when indexing is idle"
+        )
+        stats.pop("chroma_counts", None)
+        target.unlink(missing_ok=True)
+        return stats
     except Exception:  # noqa: BLE001 — report the failure, never crash
         logger.exception("Backup failed")
         stats["skipped"].append("backup failed")
+        target.unlink(missing_ok=True)
         return stats
     finally:
         db_snapshot.unlink(missing_ok=True)

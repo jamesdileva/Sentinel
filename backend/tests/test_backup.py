@@ -100,6 +100,8 @@ def test_create_backup_basic(tmp_path, monkeypatch):
             {
                 "db_path": db_path,
                 "chroma_path": tmp_path / "chroma",
+                "version": "test",
+                "backup_barrier_timeout_seconds": 5,
             },
         )(),
     )
@@ -136,6 +138,8 @@ def test_create_backup_push_copies_zip_off_disk(tmp_path, monkeypatch):
             {
                 "db_path": db_path,
                 "chroma_path": tmp_path / "chroma",
+                "version": "test",
+                "backup_barrier_timeout_seconds": 5,
             },
         )(),
     )

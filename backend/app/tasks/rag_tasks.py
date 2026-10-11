@@ -12,6 +12,7 @@ from sqlmodel import Session, select
 from app.core.logging import get_logger
 from app.db.connection import get_engine
 from app.services import activity_bus
+from app.services.ingest_barrier import ingest_transaction
 from app.services.knowledge_coordinator import (
     KnowledgeResetInterrupt,
     knowledge_lock,
@@ -163,19 +164,19 @@ def run_reset_knowledge() -> dict:
     # v1.17.19.7 (audit A4): invalidate in-flight runs *before* wiping, so the
     # generation they captured is stale by the time they reach a write.
     generation = bump_generation()
-    # Hold every project's index lock across the wipe. An index run takes one
-    # project lock at a time, so acquiring them all here cannot deadlock, and
-    # nothing can write back into the collections reset_all() is emptying.
-    # The wipe itself is unconditional — an empty database still means the
-    # shared collections on disk must be gone.
     with ExitStack() as locks:
         for project_id in project_ids:
             locks.enter_context(knowledge_lock(project_id))
-        get_chroma_manager().reset_all()
-        with Session(get_engine()) as session:
-            result = session.exec(update(ProjectFile).values(embedding_id=None))
-            session.commit()
-            unflagged = int(result.rowcount or 0)
+        # v1.17.19.17 (audit A6): the wipe and the flag-clear are one instant,
+        # so a backup cannot land between them and restore "flags set,
+        # collections empty" — which reads as a healthy index and absorbs no
+        # re-embedding.
+        with ingest_transaction():
+            get_chroma_manager().reset_all()
+            with Session(get_engine()) as session:
+                result = session.exec(update(ProjectFile).values(embedding_id=None))
+                session.commit()
+                unflagged = int(result.rowcount or 0)
     activity_bus.publish_event(
         "index",
         "Knowledge index reset finished — re-index with `sentinel rag-index`",

@@ -40,6 +40,7 @@ from app.repositories import (
     ProjectRepository,
 )
 from app.services.command_runner import resolve_git
+from app.services.ingest_barrier import ingest_transaction
 from app.utils import detect_framework, detect_language, extract_build_commands
 
 logger = get_logger(__name__)
@@ -405,7 +406,12 @@ class IndexerService:
         try:
             from app.services.chroma_manager import get_chroma_manager
 
-            get_chroma_manager().delete_by_project(project_id)
+            # v1.17.19.17 (audit A6): the cascading deletes and the vectors go
+            # together, or a backup restores a project whose files are gone
+            # but whose knowledge answers questions from them.
+            with ingest_transaction():
+                self.session.flush()
+                get_chroma_manager().delete_by_project(project_id)
         except Exception:  # noqa: BLE001 — Chroma must never block the GC
             logger.debug("Chroma cleanup skipped for project %s", project_id)
         project = self.projects.get(project_id)
@@ -805,8 +811,12 @@ class IndexerService:
             self._upsert_file(project, absolute, existing.get(rel.as_posix()))
         for path, row in existing.items():
             if path not in seen:
-                self.session.delete(row)
-                self._retract_file_vectors(project.id, path)
+                # v1.17.19.17 (audit A6): the row and its vectors leave as one
+                # span. A backup caught between them restores a file row that
+                # keeps its embedding flag while its vectors are gone.
+                with ingest_transaction():
+                    self.session.delete(row)
+                    self._retract_file_vectors(project.id, path)
 
     def _retract_file_vectors(self, project_id: str, rel_path: str) -> None:
         """v1.17.19.7 (audit A1): delete the Chroma vectors of a file that is

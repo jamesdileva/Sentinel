@@ -4,6 +4,51 @@
 > Sentinel-wide working notes live at the top; newest entries at the bottom
 > of the changelog unless otherwise dated.
 
+## 2026-10-11 — Audit A6: backup/restore semantics (Batch 3 continues)
+
+- **Problem:** a backup's SQLite snapshot and Chroma file copy were two
+  operations at two instants. An indexing run straddling the gap (flag
+  committed, vectors not yet upserted) restored a pair that disagreed — and
+  the disagreement was the unhealable kind: rows promising vectors the store
+  lacks, so `ingest_files` skips them forever.
+- **Fix, the audit's stronger option:** new `services/ingest_barrier.py` is
+  a write-preferring read/write barrier. Every span pairing a knowledge
+  write with its vectors holds `ingest_transaction()` (six `ingest_*`
+  methods, the indexer's deletion/GC spans, the reset wipe+flag-clear), and
+  backup brackets *both* snapshots in `maintenance_window()`. On timeout
+  (`SENTINEL_BACKUP_BARRIER_TIMEOUT_SECONDS`, 900s) it writes nothing —
+  a zip that lies about being a recovery point is worse than no zip.
+- **Restore is explicit:** the zip carries `backup_manifest.json` (vector
+  counts at that instant); new `sentinel restore` (server must be stopped,
+  refused otherwise) installs SQLite/screenshots/logs and *verifies* the
+  Chroma half (manifest counts + flag-to-vector pairing in
+  `knowledge_integrity.verify_pairing`) before trusting it. Unverifiable —
+  including every pre-A6 zip — means the vectors are not installed and the
+  next knowledge pass re-embeds them. Previous state is renamed aside, never
+  deleted.
+- **Two bugs found live, both Windows-shaped:** backups zipped screenshots
+  from `<repo>/screenshots` (nonexistent) instead of `data/screenshots`,
+  silently losing them every time; and a Chroma dir a client has touched can
+  be copied but never renamed/deleted in-process, so staging lives in system
+  temp and install is copytree. The restore's own log handle also taught us
+  logs/screenshots merge over rather than move aside.
+- **Verification:** +22 new (8 barrier, 14 restore/integrity/backup — incl.
+  the wiring proof that a held window blocks a real `ingest_files`, and a
+  live CLI backup→restore smoke); full suite 811 passed + 1 skipped,
+  flake8 + black clean.
+- **One bug of my own, found by the suite:** the "writer waits for an
+  in-flight reader" barrier test was structured as main-thread-writes and
+  thread-reads — which deadlocks against itself, so the reader's `wait`
+  timed out and an unhandled `AssertionError` escaped into a background
+  thread. That is also what killed two earlier full-suite runs outright (the
+  process vanished at exit, no traceback). The writer now runs on its own
+  thread and the coordinating thread releases; thread bodies no longer
+  assert. Tests must never leave an assertion running in a thread the test
+  does not join.
+- **Next up (Batch 3 continues):** deterministic Chroma rebuild
+  verification (the `verify_pairing` + startup-report half the audit asks
+  for), then whatever closes the batch.
+
 ## 2026-10-11 — Localhost mutation protection (Batch 3 continues)
 
 - **Problem:** Sentinel is loopback-only and needs no user login — but a

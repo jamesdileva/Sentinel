@@ -137,14 +137,23 @@ in both modes.
 The backup zip (`sentinel backup --push D:\somewhere-safe` from inside
 `backend`, or `scripts\backup.py --push`) contains **the fully indexed state**
 — SQLite (projects, sessions, scores, findings, chat, summaries) + the Chroma
-vectors + screenshots. Restoring it does NOT require re-indexing or
-re-embedding: embedding ids in the restored DB point at the restored vectors.
+vectors + screenshots + logs + a `backup_manifest.json` recording the vector
+counts at that instant.
+
+Restore with the server **stopped** (`sentinel restore <zip>` from inside
+`backend`). Restore verifies the Chroma half before trusting it: when the
+restored vector counts match the manifest and every embedded file row has its
+vectors, the index is used as-is (no re-indexing needed — embedding ids in
+the restored DB point at the restored vectors). Otherwise the vectors are
+**not installed** and the next knowledge pass re-embeds them, because an index
+that silently under-serves is worse than an empty one. The pre-restore state
+is kept as `*.pre-restore-<timestamp>` next to `data/` rather than deleted.
 
 ```powershell
 git clone https://github.com/jamesdileva/Sentinel.git; cd Sentinel
 backend\.venv\Scripts\python.exe -m pip install -e "backend[dev]"
-# restore the newest backup zip's contents into .\data\  (sqlite\, chroma\,
-#   screenshots\ land exactly where they were)
+# restore the newest backup zip into .\data\ (server must be stopped)
+backend\.venv\Scripts\python.exe -m app.cli restore D:\somewhere-safe\sentinel-<ts>.zip
 backend\.venv\Scripts\python.exe run.py
 ```
 

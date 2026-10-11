@@ -31,6 +31,7 @@ from app.services.chroma_manager import COLLECTIONS, ChromaManager
 from app.services.knowledge_coordinator import assert_current, current_generation
 from app.services.chroma_manager import get_chroma_manager as _shared_chroma
 from app.services.git_history import GitHistoryService
+from app.services.ingest_barrier import ingest_transaction
 from app.services.ollama_service import OllamaService
 
 logger = get_logger(__name__)
@@ -271,6 +272,10 @@ class RagService:
         v1.17.19.7 (audit A4): the run captures the knowledge-index generation
         and re-checks it before every write, so a reset that lands mid-run
         stops the run instead of repopulating the collections it just wiped.
+
+        Deliberately NOT one barrier span: each ingest_* below is atomic on
+        its own, so a backup waits at most for one collection's pass instead
+        of the whole multi-collection run (audit A6).
         """
         counts: dict[str, int] = {}
         self._knowledge_generation = current_generation()
@@ -313,6 +318,16 @@ class RagService:
         the whole file as embedded either way. Progress ticks carry an
         aggregate `tokens_per_second` from Ollama's own counters (v1.17.2).
         """
+        # v1.17.19.17 (audit A6): the flag and its vectors are one fact, and
+        # the flag is the part that stops a lost half-write from healing.
+        with ingest_transaction():
+            return self._ingest_files(project, progress)
+
+    def _ingest_files(
+        self,
+        project: Project,
+        progress: Callable[[int, int, float | None], None] | None = None,
+    ) -> int:
         files = ProjectFileRepository(self.session).get_by_project(project.id)
         total = len(files)
         pending = [record for record in files if record.embedding_id is None]
@@ -417,6 +432,10 @@ class RagService:
         collection are skipped — files have had an embedding_id skip since
         v1.17.1, but commits were re-embedded on every index run of every
         project, a repeated Ollama cost."""
+        with ingest_transaction():
+            return self._ingest_git_commits(project)
+
+    def _ingest_git_commits(self, project: Project) -> int:
         GitHistoryService(self.session).analyze_history(project)
         commits = GitCommitRepository(self.session).get_by_project(project.id)
         ids = [f"{project.id}:{c.hash}" for c in commits]
@@ -454,6 +473,10 @@ class RagService:
 
     def ingest_test_results(self, project: Project) -> int:
         """Embed recent test results into the test_logs collection."""
+        with ingest_transaction():
+            return self._ingest_test_results(project)
+
+    def _ingest_test_results(self, project: Project) -> int:
         results = TestRepository(self.session).get_by_project(project.id, _RECENT_LIMIT)
         return self._upsert_simple(
             "test_logs",
@@ -469,6 +492,11 @@ class RagService:
         )
 
     def ingest_security_findings(self, project: Project) -> int:
+        """v1.17.19.17 (audit A6): embeds rows the scan already committed."""
+        with ingest_transaction():
+            return self._ingest_security_findings(project)
+
+    def _ingest_security_findings(self, project: Project) -> int:
         findings = SecurityRepository(self.session).get_by_project(project.id)
         return self._upsert_simple(
             "security_reports",
@@ -493,6 +521,12 @@ class RagService:
         is None — "no build command configured" boilerplate) are excluded;
         they embedded pure noise that surfaced as RAG sources (found live
         judging Card Game query results)."""
+        # The retraction and the upsert above are one span: a backup that
+        # snapped between them would restore noise this run removed.
+        with ingest_transaction():
+            return self._ingest_build_logs(project)
+
+    def _ingest_build_logs(self, project: Project) -> int:
         logs = BuildLogRepository(self.session).get_by_project(
             project.id, _RECENT_LIMIT
         )
@@ -534,7 +568,15 @@ class RagService:
         v1.17.18.6.4 (audit2 follow-up): a summary also regenerates when any
         indexed file's mtime moved past the summary's generated_at — without
         this, answers cited a summary describing long-gone code.
+
+        v1.17.19.17 (audit A6): the row is committed *before* the upsert, so
+        without a barrier a backup taken in that gap restores a summary row
+        whose vector is missing and the dedupe above then believes it.
         """
+        with ingest_transaction():
+            return self._ingest_project_summary(project, force=force)
+
+    def _ingest_project_summary(self, project: Project, force: bool = False) -> int:
         if (
             not force
             and self._summary_is_embedded(project.id)
