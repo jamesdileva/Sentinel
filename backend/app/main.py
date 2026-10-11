@@ -36,6 +36,7 @@ from app.api.v1.ws import router as ws_router
 from app.core.config import settings
 from app.core.exceptions import SentinelError
 from app.core.logging import attach_file_logging, get_logger, setup_logging
+from app.core.middleware import LocalhostMutationGuardMiddleware
 from app.db.connection import check_db, get_engine, init_db
 from app.services.chroma_manager import RagIndexError
 from app.services.job_scheduler import scheduler
@@ -188,6 +189,12 @@ app = FastAPI(
     description="Local-first personal software operations platform.",
     lifespan=lifespan,
 )
+
+# Localhost mutation protection: state-changing requests must come from
+# Sentinel's own origin, or from a client that sends no Origin at all
+# (CLI, desktop shell, tests). A page open in any browser on the machine
+# cannot otherwise POST to the loopback API and mutate local state.
+app.add_middleware(LocalhostMutationGuardMiddleware)
 
 
 @app.get("/", tags=["system"])

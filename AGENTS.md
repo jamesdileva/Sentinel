@@ -4,6 +4,41 @@
 > Sentinel-wide working notes live at the top; newest entries at the bottom
 > of the changelog unless otherwise dated.
 
+## 2026-10-11 — Localhost mutation protection (Batch 3 continues)
+
+- **Problem:** Sentinel is loopback-only and needs no user login — but a
+  browser does not treat localhost as a domain it refuses to talk to. Any
+  page the user has open can issue simple cross-origin POSTs to
+  127.0.0.1:8420. It may not be able to *read* the response, but the side
+  effect has already happened: a port listener killed, an app launched, the
+  knowledge index dropped, a session deleted. The audit is explicit that
+  this is not P0 (no arbitrary shell execution), but "localhost is a trust
+  boundary, but not an absolute security boundary" is true.
+- **Fix, the audit's recommended policy:** new
+  `LocalhostMutationGuardMiddleware` requires that any state-changing request
+  (POST/PUT/PATCH/DELETE) carries either Sentinel's own `Origin` or no
+  `Origin` at all. An unexpected `Origin` — a page on another site — is a
+  cross-site request and gets a 403. GET is deliberately not gated: reads
+  cannot mutate anything.
+- **The reject that is worth recording:** a per-install CSRF token. A token
+  held by the frontend is exactly what an attacker's page would replay — it
+  can issue form-shaped requests and cannot read the token, so requiring one
+  defends nothing here while adding key management that does not exist
+  today. The Origin check is what actually closes this hole without a login.
+- **No Origin is allowed**, not rejected: curl, the desktop shell and the
+  CLI all send no Origin and must keep working. The guard is about browsers
+  and pages, not about non-browser clients.
+- **Both localhost spellings are accepted** (`localhost` and `127.0.0.1`)
+  because they are distinct origins to a browser, and blocking one would
+  lock the dashboard out of its own buttons depending on which the user
+  typed. A different port on loopback is still refused.
+- **Verification:** +7 tests (foreign POST refused, bodyless scan-all
+  refused, GET never gated, own-origin allowed, no-Origin allowed, localhost
+  alias allowed, wrong-port refused); 788 passed + 1 skipped, flake8 +
+  black clean.
+- **Next up (Batch 3 continues):** A6 backup/restore semantics, deterministic
+  Chroma rebuild verification.
+
 ## 2026-10-11 — Audit B1: symlink containment (Batch 3 continues)
 
 - **Problem:** `git ls-files` can return a symlink path, and the walk yields
