@@ -28,10 +28,10 @@ from app.repositories import (
 )
 from app.schemas.rag import RagResponse, RagResult
 from app.services.chroma_manager import COLLECTIONS, ChromaManager
-from app.services.knowledge_coordinator import assert_current, current_generation
 from app.services.chroma_manager import get_chroma_manager as _shared_chroma
 from app.services.git_history import GitHistoryService
 from app.services.ingest_barrier import ingest_transaction
+from app.services.knowledge_coordinator import assert_current, current_generation
 from app.services.ollama_service import OllamaService
 
 logger = get_logger(__name__)

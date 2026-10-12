@@ -11,8 +11,7 @@ carries provenance (model, timestamp) per docs/01 §16.2.
 import httpx
 
 from app.core.config import is_loopback_host, settings
-from app.core.exceptions import LocalOnlyViolationError
-from app.core.exceptions import OllamaUnavailableError
+from app.core.exceptions import LocalOnlyViolationError, OllamaUnavailableError
 from app.core.logging import get_logger
 
 logger = get_logger(__name__)

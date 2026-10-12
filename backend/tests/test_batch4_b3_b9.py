@@ -21,11 +21,12 @@ from app.services import settings_service
 from app.services.portfolio_service import PortfolioService
 
 
-@pytest.fixture()
+@pytest.fixture(autouse=True)
 def isolated_paths(tmp_path, monkeypatch):
     """Patch BOTH data paths: the lifespan's knowledge-pairing check compares
     settings.db_path against settings.chroma_path, and a test database
-    pointed at the real store would report every vector as an orphan."""
+    pointed at the real store would report every vector as an orphan — as
+    well as churning the real on-disk index from a hermetic test."""
     monkeypatch.setattr(settings, "chroma_path", tmp_path / "chroma")
 
 

@@ -16,8 +16,8 @@ from sqlmodel import Session, select
 
 from app.core.config import settings
 from app.db import connection
-from app.db.models import Project, ProjectFile
 from app.db.connection import get_engine
+from app.db.models import Project, ProjectFile
 from app.services.backup_service import create_backup
 from app.services.chroma_manager import ChromaManager
 from app.services.ingest_barrier import ingest_transaction

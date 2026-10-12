@@ -2,6 +2,7 @@
 
 import httpx
 import pytest
+
 from app.core.config import settings
 from app.services.ollama_service import OllamaService, OllamaUnavailableError
 

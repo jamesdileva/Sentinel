@@ -34,8 +34,8 @@ from contextlib import contextmanager
 
 from app.services.project_operations import (
     project_operation,
-    reset_for_tests as _reset_locks,
 )
+from app.services.project_operations import reset_for_tests as _reset_locks
 
 
 class KnowledgeResetInterrupt(Exception):

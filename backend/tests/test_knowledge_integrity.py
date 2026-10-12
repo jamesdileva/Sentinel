@@ -7,17 +7,16 @@ turns the first two back into a consistent index without re-embedding the
 world, and the fact that an empty index after a reset is not a failure.
 """
 
+import shutil
 from pathlib import Path
 
 import pytest
 from sqlmodel import Session, select
 
-import shutil
-
 from app.core.config import settings
 from app.db import connection
-from app.db.models import Project, ProjectFile
 from app.db.connection import get_engine
+from app.db.models import Project, ProjectFile
 from app.services.chroma_manager import ChromaManager, get_chroma_manager
 from app.services.knowledge_integrity import (
     reconcile_store,

@@ -1,7 +1,7 @@
 {
   "name": "sentinel-desktop",
   "productName": "Sentinel",
-  "version": "1.17.18",
+  "version": "1.17.19",
   "description": "Desktop shell for the Sentinel home server - attaches to a running backend or spawns one via the project venv.",
   "main": "main.js",
   "private": true,
