@@ -10,10 +10,12 @@ import {
 } from "../api/builds";
 import { listSessions, type SessionRecord } from "../api/sessions";
 import { getTester, runTester, type TesterDescriptor } from "../api/testers";
+import { nextPollDelay } from "../hooks/usePollBackoff";
 import { useProjectList } from "../hooks/useProjects";
 import { useUI } from "../contexts/UIContext";
 
-const POLL_MS = 2000;
+// A wait can still outlast short outages: cap the whole wait at 10 min
+// rather than any single delay.
 const POLL_CAP_MS = 10 * 60 * 1000;
 
 function statusTone(job: BuildJob | BuildLog) {
@@ -144,8 +146,9 @@ export default function Builds() {
       setPollingJobId(null);
       setRunning(false);
     };
+    let timer: number | undefined;
     const tick = async () => {
-      elapsed += POLL_MS;
+      if (cancelled) return;
       try {
         const job = await getBuildStatus(pollingJobId);
         if (cancelled) return;
@@ -156,11 +159,14 @@ export default function Builds() {
             `Build ${job.status}.${launched}`,
             failed ? "error" : "success",
           );
-        } else if (elapsed >= POLL_CAP_MS) {
+          return;
+        }
+        if (elapsed >= POLL_CAP_MS) {
           await finish(
             "Build still running — refresh to see the result.",
             "error",
           );
+          return;
         }
       } catch {
         if (!cancelled) {
@@ -169,13 +175,18 @@ export default function Builds() {
             "error",
           );
         }
+        return;
       }
+      // Not done: wait longer next time (audit Batch 4 — a 10-minute build
+      // no longer costs ~300 requests for one answer).
+      const delay = nextPollDelay(elapsed);
+      elapsed += delay;
+      timer = window.setTimeout(() => void tick(), delay);
     };
     void tick();
-    const interval = window.setInterval(() => void tick(), POLL_MS);
     return () => {
       cancelled = true;
-      window.clearInterval(interval);
+      if (timer !== undefined) window.clearTimeout(timer);
     };
   }, [pollingJobId, projectId]);
 
@@ -195,8 +206,9 @@ export default function Builds() {
         session.status === "passed" ? "success" : "error",
       );
     };
+    let timer: number | undefined;
     const tick = async () => {
-      elapsed += POLL_MS;
+      if (cancelled) return;
       try {
         const sessions = await listSessions(projectId);
         if (cancelled) return;
@@ -208,17 +220,21 @@ export default function Builds() {
           )
           .sort(
             (a, b) =>
-              new Date(b.started_at).getTime() - new Date(a.started_at).getTime(),
+              new Date(b.started_at).getTime() -
+              new Date(a.started_at).getTime(),
           )[0];
         if (mine && mine.status !== "running") {
           finish(mine);
-        } else if (elapsed >= POLL_CAP_MS) {
+          return;
+        }
+        if (elapsed >= POLL_CAP_MS) {
           setTesterPolling(false);
           setTesterRunning(false);
           toast(
             "Tester still running — refresh the Sessions page to see it.",
             "error",
           );
+          return;
         }
       } catch {
         if (!cancelled) {
@@ -226,13 +242,17 @@ export default function Builds() {
           setTesterRunning(false);
           toast("Tester status lost — refresh to see the result.", "error");
         }
+        return;
       }
+      // Not done: back off (audit Batch 4), same shape as the build wait.
+      const delay = nextPollDelay(elapsed);
+      elapsed += delay;
+      timer = window.setTimeout(() => void tick(), delay);
     };
     void tick();
-    const interval = window.setInterval(() => void tick(), POLL_MS);
     return () => {
       cancelled = true;
-      window.clearInterval(interval);
+      if (timer !== undefined) window.clearTimeout(timer);
     };
   }, [testerPolling, projectId]);
 
@@ -282,8 +302,8 @@ export default function Builds() {
           Deterministic builds: the known commands for each project, run in a
           clean job (git history + CI logs, never AI). A green build — or a
           project with no compile step — launches the app (build → open).
-          Scripted testers (per-app, deterministic steps) run the app and
-          record a session with screenshots.
+          Scripted testers (per-app, deterministic steps) run the app and record
+          a session with screenshots.
         </p>
         {error && (
           <div className="mt-3 rounded-lg border border-red-300 bg-red-50 px-4 py-2 text-sm text-red-800 dark:border-red-800 dark:bg-red-950 dark:text-red-200">

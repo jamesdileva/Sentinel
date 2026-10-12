@@ -14,6 +14,7 @@ never leave the machine (docs/01 Rule 1). v1.17.18.1: removed dead
 
 import datetime
 import os
+import time
 from pathlib import Path
 
 from app.core.config import BASE_DIR, Settings, is_loopback_host, settings
@@ -22,6 +23,22 @@ from app.services.ollama_service import OllamaService
 from app.services.startup_check import _check_chroma, _check_watch_dirs
 
 logger = get_logger(__name__)
+
+# v1.17.19.21 (audit B9): provenance is stated exactly as the UI promises it.
+# A value found in the process environment and one found in `.env` used to
+# both report "env", which hid the difference the Settings page shows:
+# process env wins over `.env` at load, so they are not interchangeable.
+SOURCE_ENV = "env"
+SOURCE_ENV_FILE = "env-file"
+SOURCE_DEFAULT = "default"
+
+# v1.17.19.21 (audit Batch 4): the Ollama probe used to run on every Settings
+# page load — a live request against a local service for a report that cannot
+# have changed in seconds. Cached for a short TTL: long enough that opening the
+# page twice costs nothing, short enough that "restart Ollama, reload the page"
+# still tells the truth.
+_PROBE_TTL_SECONDS = 30.0
+_probe_cache: dict[str, object] = {"key": None, "at": 0.0, "result": None}
 
 # Setting catalog: key (env name) → display label, group, and the Settings
 # field name on the pydantic model. Value/default come from the model; only
@@ -262,21 +279,35 @@ CATALOG: list[dict] = [
 ]
 
 
-def _env_sources() -> set[str]:
-    """Names of SENTINEL_* vars set in the environment or the .env file."""
-    keys = {k for k in os.environ if k.startswith("SENTINEL_")}
+def _dotenv_keys() -> set[str]:
+    """Names set in the repo's `.env` file (parsed, not evaluated)."""
+    keys: set[str] = set()
     env_file = BASE_DIR / ".env"
-    if env_file.is_file():
-        try:
-            for line in env_file.read_text(encoding="utf-8").splitlines():
-                stripped = line.strip()
-                if stripped and not stripped.startswith("#") and "=" in stripped:
-                    name = stripped.split("=", 1)[0].strip()
-                    if name.startswith("SENTINEL_"):
-                        keys.add(name)
-        except OSError:
-            logger.warning("Could not read %s", env_file)
+    if not env_file.is_file():
+        return keys
+    try:
+        lines = env_file.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        logger.warning("Could not read %s", env_file)
+        return keys
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        name = stripped.split("=", 1)[0].strip()
+        if name.startswith("SENTINEL_"):
+            keys.add(name)
     return keys
+
+
+def _source_for(key: str, process_env: set[str], dotenv: set[str]) -> str:
+    """Exact provenance (audit B9). Process environment wins over `.env`, which
+    is pydantic-settings' own load order, so the label matches the behaviour."""
+    if key in process_env:
+        return SOURCE_ENV
+    if key in dotenv:
+        return SOURCE_ENV_FILE
+    return SOURCE_DEFAULT
 
 
 def _format_value(field_name: str, value: object) -> str:
@@ -301,6 +332,43 @@ def _default_for(field_name: str) -> object:
         except Exception:  # noqa: BLE001  defensive
             return None
     return None
+
+
+def _probe_ollama() -> tuple[bool, list[str]]:
+    """Reachable + installed models, cached for `_PROBE_TTL_SECONDS`.
+
+    The cache is keyed on what is being probed (the probing class, the host
+    and the models) — never just the answer. Changing `SENTINEL_OLLAMA_HOST`
+    (or swapping the probe for a fake) is picked up immediately rather than
+    serving the previous configuration's answer.
+    """
+    global _probe_cache
+    key = (
+        OllamaService,
+        settings.ollama_host,
+        settings.embedding_model,
+        settings.ollama_summary_model,
+    )
+    now = time.monotonic()
+    cached = _probe_cache.get("result")
+    if (
+        _probe_cache.get("key") == key
+        and now - float(_probe_cache.get("at") or 0) < _PROBE_TTL_SECONDS
+    ):
+        return cached  # type: ignore[return-value]
+
+    try:
+        ollama = OllamaService(timeout_seconds=2)  # short probe, not the 1800s default
+        try:
+            available = ollama.is_available()
+            models = ollama.list_models() if available else []
+        finally:
+            ollama.close()  # v1.17.18.3 (audit2 S1): probe runs per page load
+        result = (available, models)
+    except Exception:  # noqa: BLE001 — a probe failure is a result, not a crash
+        result = (False, [])
+    _probe_cache = {"key": key, "at": now, "result": result}
+    return result
 
 
 def _validation_warnings() -> list[dict]:
@@ -360,70 +428,53 @@ def _validation_warnings() -> list[dict]:
             }
         )
 
-    try:
-        ollama = OllamaService(timeout_seconds=2)  # short probe, not the 1800s default
-        try:
-            available = ollama.is_available()
-            models: list[str] = []
-            if available:
-                models = ollama.list_models()
-        finally:
-            ollama.close()  # v1.17.18.3 (audit2 S1): probe runs per page load
-        if not available:
-            warnings.append(
-                {
-                    "key": "ollama",
-                    "level": "warning",
-                    "message": f"Ollama unreachable at {settings.ollama_host}",
-                }
-            )
-        else:
-            # /api/tags returns names with the `:latest` suffix; the config
-            # name without it resolves to the same model (Ollama default tag).
-            installed = {
-                m.split(":", 1)[0] if m.endswith(":latest") else m for m in models
-            }
-            if settings.embedding_model not in installed:
-                warnings.append(
-                    {
-                        "key": "embedding_model",
-                        "level": "warning",
-                        "message": f"Embedding model {settings.embedding_model} is not installed",
-                    }
-                )
-            # v1.17.19.6: the summary model is a second, independent model —
-            # warn separately so a missing qwen3.5:9b doesn't masquerade as
-            # "Ollama is fine".
-            if (
-                settings.ollama_summary_model != settings.ollama_model
-                and settings.ollama_summary_model not in installed
-            ):
-                warnings.append(
-                    {
-                        "key": "ollama_summary_model",
-                        "level": "warning",
-                        "message": (
-                            f"Summary model {settings.ollama_summary_model} is not "
-                            "installed — architecture summaries will fall back to "
-                            "an error until `ollama pull` or a config change."
-                        ),
-                    }
-                )
-    except Exception:  # noqa: BLE001  probe only
+    available, models = _probe_ollama()
+    if not available:
         warnings.append(
             {
                 "key": "ollama",
                 "level": "warning",
-                "message": f"Ollama probe failed at {settings.ollama_host}",
+                "message": f"Ollama unreachable at {settings.ollama_host}",
             }
         )
+    else:
+        # /api/tags returns names with the `:latest` suffix; the config
+        # name without it resolves to the same model (Ollama default tag).
+        installed = {m.split(":", 1)[0] if m.endswith(":latest") else m for m in models}
+        if settings.embedding_model not in installed:
+            warnings.append(
+                {
+                    "key": "embedding_model",
+                    "level": "warning",
+                    "message": f"Embedding model {settings.embedding_model} is not installed",
+                }
+            )
+        # v1.17.19.6: the summary model is a second, independent model —
+        # warn separately so a missing qwen3.5:9b doesn't masquerade as
+        # "Ollama is fine".
+        if (
+            settings.ollama_summary_model != settings.ollama_model
+            and settings.ollama_summary_model not in installed
+        ):
+            warnings.append(
+                {
+                    "key": "ollama_summary_model",
+                    "level": "warning",
+                    "message": (
+                        f"Summary model {settings.ollama_summary_model} is not "
+                        "installed — architecture summaries will fall back to "
+                        "an error until `ollama pull` or a config change."
+                    ),
+                }
+            )
 
     return warnings
 
 
 def settings_report() -> dict:
     """Full read-only settings report for GET /api/v1/settings."""
-    sources = _env_sources()
+    process_env = {k for k in os.environ if k.startswith("SENTINEL_")}
+    dotenv = _dotenv_keys()
     groups: dict[str, list[dict]] = {}
     for entry in CATALOG:
         field = entry["field"]
@@ -435,7 +486,7 @@ def settings_report() -> dict:
         else:
             value_display = _format_value(field, value)
             default_display = _format_value(field, _default_for(field))
-        source = "env" if entry["key"] in sources else "default"
+        source = _source_for(entry["key"], process_env, dotenv)
         groups.setdefault(entry["group"], []).append(
             {
                 "key": entry["key"],

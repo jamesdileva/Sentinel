@@ -84,7 +84,10 @@ function WarningsBanner({ warnings }: { warnings: SettingsWarning[] }) {
       </h3>
       <ul className="mt-2 space-y-1">
         {warnings.map((warning) => (
-          <li key={warning.key} className="text-sm text-amber-800 dark:text-amber-300">
+          <li
+            key={warning.key}
+            className="text-sm text-amber-800 dark:text-amber-300"
+          >
             <span
               className={`mr-1 inline-block rounded px-1 text-xs font-semibold uppercase ${
                 warning.level === "error"
@@ -135,7 +138,7 @@ function SettingsTable({ group }: { group: SettingGroup }) {
               <td className="px-4 py-2 text-right">
                 <span
                   className={`rounded px-1.5 py-0.5 text-xs font-semibold ${
-                    item.source === "env"
+                    item.source === "env" || item.source === "env-file"
                       ? "bg-sky-100 text-sky-700 dark:bg-sky-900 dark:text-sky-300"
                       : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300"
                   }`}

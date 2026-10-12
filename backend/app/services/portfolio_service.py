@@ -384,6 +384,36 @@ class PortfolioService:
             for p in self._all_projects()
         ]
 
+    def refresh(self, project_id: str | None = None) -> list[PortfolioScore]:
+        """Explicitly recompute cached scores (audit B3, v1.17.19.21).
+
+        Reads stay lazy — `_fresh_row` recomputes only when a source row is
+        newer than the stored score — which is exactly the audit's
+        recommended architecture (recompute when evidence changes, persist,
+        serve the cache). This is the missing fourth leg: **explicit
+        refresh/invalidation**, for the cases the lazy path deliberately does
+        not cover. A row cached under an older component definition is the
+        one that matters: its evidence timestamps never move, so only a
+        forced recompute (or startup's sweep) will heal it.
+
+        Without a `project_id`, every project is recomputed — deterministic
+        and cheap (a handful of indexed queries per project), never AI.
+        """
+        projects = self._all_projects()
+        if project_id is not None:
+            projects = [p for p in projects if p.id == project_id]
+            if not projects:
+                raise ValueError(f"Unknown project: {project_id}")
+        rows = []
+        for project in projects:
+            rows.append(self.compute_portfolio_score(project))
+        logger.info(
+            "Portfolio scores refreshed for %d project(s)%s",
+            len(rows),
+            f" ({project_id})" if project_id else "",
+        )
+        return rows
+
     def get_best_candidates(self, min_score: float = 70.0) -> list[PortfolioCandidate]:
         """Ranked candidates (score >= min_score) with the items they are missing."""
         candidates: list[PortfolioCandidate] = []

@@ -12,6 +12,8 @@ from pathlib import Path
 import pytest
 from sqlmodel import Session, select
 
+import shutil
+
 from app.core.config import settings
 from app.db import connection
 from app.db.models import Project, ProjectFile
@@ -159,6 +161,39 @@ def test_verify_store_handles_an_unopenable_database(data_root):
     db.write_bytes(b"not a database at all, but a file that exists")
     report = verify_store()
     assert not report.consistent
+
+
+def test_an_empty_database_against_a_populated_store_is_not_a_pairing(
+    data_root, monkeypatch
+):
+    """Discovered live: a test (or a misconfigured `.env`) pointing a fresh
+    database at the real vector store made every vector look orphaned. That
+    is literally true and useless — the halves simply do not belong together,
+    and a repair believing it would delete the whole store."""
+    import sqlite3  # local: the module does not need it at top level
+
+    _seed(data_root, flag=True, vector=True)
+    empty = data_root / "sqlite" / "fresh.db"
+    shutil.copy2(data_root / "sqlite" / "sentinel.db", empty)
+    conn = sqlite3.connect(str(empty))
+    try:
+        # A fresh database in the honest sense: no projects, no file rows.
+        conn.execute("DELETE FROM projectfile")
+        conn.execute(
+            "DELETE FROM project WHERE id NOT IN "
+            "(SELECT DISTINCT project_id FROM projectfile)"
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    report = verify_store(db_path=empty)
+    assert not report.consistent
+    assert any("not paired" in entry for entry in report.unreadable)
+    assert report.orphans == []  # no orphan spam
+
+    monkeypatch.setattr(settings, "db_path", empty)
+    assert reconcile_store().removed_vectors == 0  # refuses, deletes nothing
 
 
 def test_verify_store_reads_a_specific_manager(data_root):

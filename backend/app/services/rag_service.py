@@ -85,6 +85,105 @@ def _diversify(sources: list[RagResult]) -> list[RagResult]:
     return kept
 
 
+# Lexical hybrid re-ranking (audit Batch 4, v1.17.19.21): pure semantic search
+# can miss the exact identifier a developer typed (`BuildRunner`,
+# `SENTINEL_OLLAMA_HOST`, `/observatory/galaxy`). The bonus is a bounded
+# tie-breaker on *ordering only* — `distance` stays the raw vector evidence,
+# so the relevance floor's semantics do not change. Case-insensitive and
+# punctuation-tolerant: `snake_case`, `camelCase` and `SCREAMING_SNAKE`
+# forms of one identifier all count as the same token.
+_IDENTIFIER = re.compile(r"[A-Za-z][A-Za-z0-9_]*(?:/[A-Za-z0-9_.-]+)*")
+
+# Bounded so a keyword-stuffed chunk cannot outrank genuinely near vectors:
+# a full identifier + path + filename hit moves a chunk by less than the
+# distance between a near-duplicate (0.05) and a merely related chunk (0.2).
+_LEXICAL_TOKEN_BONUS = 0.05
+_LEXICAL_PATH_BONUS = 0.03
+_LEXICAL_FILENAME_BONUS = 0.02
+
+
+# Punctuation that separates words inside one identifier or path segment.
+_TOKEN_SEPARATOR = re.compile(r"[_.]+")
+# camelCase / PascalCase boundaries, so `BuildRunner` yields `build` and
+# `runner` as well as the whole thing.
+_CASE_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+_MIN_TOKEN = 3
+
+
+def _lexical_tokens(text: str) -> set[str]:
+    """Identifier-ish tokens of a query or document, normalized for matching.
+
+    `BuildRunner`, `build_runner` and `buildrunner` all reduce to the same
+    token set — the forms a developer alternates between when asking and when
+    writing code. Paths split on `/` so `/observatory/galaxy` matches a
+    question about either segment, which is the case that matters for this
+    codebase. Pure noise (words under three characters: "is", "a", "or")
+    never becomes a token.
+    """
+    tokens: set[str] = set()
+    for raw in _IDENTIFIER.findall(text or ""):
+        for segment in raw.split("/"):
+            # Strip a file extension first, so `build_runner.py` does not
+            # fuse into `buildrunnerpy`.
+            base = segment.rsplit(".", 1)[0] if "." in segment else segment
+            if not base:
+                continue
+            joined = re.sub(r"[^a-z0-9]", "", base.lower())
+            if len(joined) >= _MIN_TOKEN:
+                # The joined form is what keeps `BuildRunner`, `build_runner`
+                # and `buildrunner` matching each other.
+                tokens.add(joined)
+            for piece in _TOKEN_SEPARATOR.split(base):
+                if not piece:
+                    continue
+                for part in _CASE_BOUNDARY.split(piece):
+                    part = part.lower()
+                    if len(part) >= _MIN_TOKEN:
+                        tokens.add(part)
+    return tokens
+
+
+def _lexical_bonus(
+    query_tokens: set[str], content: str, file_path: str | None
+) -> float:
+    """Bounded ordering bonus for lexical evidence (see above)."""
+    if not query_tokens:
+        return 0.0
+    document = _lexical_tokens(content)
+    hits = query_tokens & document
+    if not hits:
+        return 0.0
+    bonus = _LEXICAL_TOKEN_BONUS
+    path = (file_path or "").replace("\\", "/").lower()
+    if path and any(token in path for token in hits):
+        bonus += _LEXICAL_PATH_BONUS
+        leaf = path.rsplit("/", 1)[-1]
+        if any(token in leaf.replace("_", "") for token in hits):
+            bonus += _LEXICAL_FILENAME_BONUS
+    return bonus
+
+
+def _rerank_lexical(
+    query: str, hits: list[tuple[float, "RagResult"]]
+) -> list[tuple[float, "RagResult"]]:
+    """Order by (distance − lexical bonus), preserving distance order on ties.
+
+    The tuple keeps the raw distance for the caller; only the position
+    changes. `sorted` is stable, so equal scores keep the vector order.
+    """
+    tokens = _lexical_tokens(query)
+    scored = [
+        (
+            distance - _lexical_bonus(tokens, result.content, result.file_path),
+            distance,
+            result,
+        )
+        for distance, result in hits
+    ]
+    scored.sort(key=lambda triple: (triple[0], triple[1]))
+    return [(distance, result) for _, distance, result in scored]
+
+
 # Deterministic-first answers (v1.17.13, Rule 3): a project-scoped overview
 # question ("what is this project about?") is answered straight from the
 # stored architecture summary — no embedding, no retrieval, no fresh
@@ -779,7 +878,17 @@ class RagService:
         top_k: int = 5,
         collections: tuple[str, ...] | None = None,
     ) -> list[RagResult]:
-        """Embed the query and return the top-K matching chunks across sources."""
+        """Embed the query and return the top-K matching chunks across sources.
+
+        v1.17.19.21 (audit Batch 4): hybrid lexical + semantic re-ranking.
+        Pure semantic search can miss exact identifiers (`BuildRunner`,
+        `SENTINEL_OLLAMA_HOST`, `/observatory/galaxy` — the terms a developer
+        actually searches for). The vector distance stays the reported truth
+        (the relevance floor still judges raw vector evidence), but ordering
+        now prefers chunks that also mention the query's identifiers and the
+        files they live in. Deterministic and bounded: the bonus only ever
+        reorders candidates whose vectors were already retrieved.
+        """
         embedding = self._embed(query)
         names = collections or COLLECTIONS
         hits: list[tuple[float, RagResult]] = []
@@ -801,8 +910,12 @@ class RagService:
                         ),
                     )
                 )
-        hits.sort(key=lambda pair: pair[0])
-        return [result for _, result in hits[:top_k]]
+        if not hits:
+            return []
+        ordered = _rerank_lexical(
+            query, [(distance, result) for distance, result in hits]
+        )
+        return [result for _, result in ordered[:top_k]]
 
     def query(
         self,

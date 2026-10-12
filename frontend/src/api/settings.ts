@@ -5,7 +5,11 @@ export interface SettingItem {
   label: string;
   value: string;
   default: string;
-  source: "env" | "default";
+  // Exact provenance (v1.17.19.21, audit B9): "env" is the process
+  // environment, "env-file" is the repo's .env. Both override the model
+  // default, and the process environment wins over .env — which is why the
+  // badge distinguishes them instead of labelling both "env".
+  source: "env" | "env-file" | "default";
   secret: boolean;
 }
 

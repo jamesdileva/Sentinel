@@ -121,15 +121,17 @@ def test_missing_vector_is_reported_not_assumed(data_root):
 
 
 def test_vector_without_a_file_row_is_an_orphan(data_root, tmp_path):
-    """Orphans keep answering from deleted files — the A1 lesson's mirror."""
-    _seed_knowledge(data_root)
+    """A vector whose file row is gone (but whose project is still known) is
+    an orphan — the A1 mirror. Its project is intact, so this is a genuine
+    leftover, not a mismatched install."""
+    project_id = _seed_knowledge(data_root)
     orphan_store = tmp_path / "orphan-store"
     ChromaManager(orphan_store).upsert(
         "file_summaries",
         ids=["ghost#0"],
         embeddings=[_VECTOR],
         documents=["ghost.py"],
-        metadatas=[{"project_id": "nope", "file_path": "ghost.py"}],
+        metadatas=[{"project_id": project_id, "file_path": "ghost.py"}],
     )
     with Session(get_engine()) as session:
         row = session.exec(

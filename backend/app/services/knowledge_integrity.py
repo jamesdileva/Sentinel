@@ -138,13 +138,30 @@ def _embeddable(absolute_path: str) -> bool:
 
 
 def _compare(
-    flagged: dict[str, tuple[str, str]], report: PairingReport, manager
+    flagged: dict[str, tuple[str, str]],
+    project_ids: set[str],
+    report: PairingReport,
+    manager,
 ) -> None:
     """The invariant itself: a flag promises a vector, a vector has a row."""
     try:
         vectors = manager.all_rows("file_summaries")
     except Exception:  # noqa: BLE001
         report.unreadable.append("file_summaries")
+        return
+    vector_projects = {
+        str((row.get("metadata") or {}).get("project_id"))
+        for row in vectors
+        if (row.get("metadata") or {}).get("project_id")
+    }
+    if vectors and (not project_ids or not (vector_projects & project_ids)):
+        # The halves do not belong to each other: the store's vectors all
+        # name projects this database has never heard of (or the database
+        # knows no projects at all). Seen live when a hermetic test pointed
+        # a fresh database at the real store — it reported thousands of
+        # orphans. Nothing here is checkable, and a repair that believed it
+        # would delete the whole store.
+        report.unreadable.append("<database and vector store are not paired>")
         return
     present: set[str] = set()
     for row in vectors:
@@ -161,6 +178,18 @@ def _compare(
         if not _embeddable(absolute):
             continue  # legitimate: nothing was ever embedded for this row
         report.missing.append(f"{path} ({row_id})")
+
+
+def _project_ids(db_path: Path) -> set[str]:
+    """Ids of the projects this database knows about."""
+    conn = sqlite3.connect(str(db_path))
+    try:
+        try:
+            return {str(row[0]) for row in conn.execute("SELECT id FROM project")}
+        except sqlite3.DatabaseError:
+            return set()
+    finally:
+        conn.close()
 
 
 def verify_pairing(db_path: Path, chroma_path: Path) -> PairingReport:
@@ -191,7 +220,7 @@ def verify_pairing(db_path: Path, chroma_path: Path) -> PairingReport:
         return report
 
     _probe_collections(report, manager)
-    _compare(flagged, report, manager)
+    _compare(flagged, _project_ids(db_path), report, manager)
     return report
 
 
@@ -238,7 +267,7 @@ def verify_store(db_path: Path | None = None, chroma=None) -> PairingReport:
             return report
 
     _probe_collections(report, chroma)
-    _compare(flagged, report, chroma)
+    _compare(flagged, _project_ids(target), report, chroma)
     return report
 
 

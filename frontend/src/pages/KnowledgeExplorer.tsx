@@ -73,9 +73,15 @@ export default function KnowledgeExplorer() {
         ? `All ${entry.files} files embedded ✓`
         : `${entry.embedded} of ${entry.files} files embedded`;
     }
-    return indexStatus.files_total > 0
-      ? `${indexStatus.files_embedded} of ${indexStatus.files_total} files embedded across projects`
-      : "No files indexed yet";
+    if (indexStatus.files_total === 0) return "No files indexed yet";
+    const line = `${indexStatus.files_embedded} of ${indexStatus.files_total} files embedded across projects`;
+    // v1.17.19.21 (audit Batch 4): staleness you can see. The embedded count
+    // above is what the database *claims*; the pairing says whether the
+    // vectors those claims name actually exist. A mismatch is the state the
+    // CLI `sentinel knowledge reconcile` repairs deterministically.
+    const pairing = indexStatus.pairing;
+    if (!pairing || pairing.consistent) return line;
+    return `${line} — ${pairing.summary}`;
   }
 
   function indexStatusComplete(): boolean {
@@ -211,10 +217,9 @@ export default function KnowledgeExplorer() {
             Knowledge index damaged on disk
           </p>
           <p className="mt-1 text-xs text-amber-900 dark:text-amber-200">
-            {damagedCollections().join(", ")} can no longer be read (a
-            write was probably interrupted). Rebuild to drop the broken
-            vectors and re-embed everything — source files and rows are
-            untouched.
+            {damagedCollections().join(", ")} can no longer be read (a write was
+            probably interrupted). Rebuild to drop the broken vectors and
+            re-embed everything — source files and rows are untouched.
           </p>
         </div>
       )}

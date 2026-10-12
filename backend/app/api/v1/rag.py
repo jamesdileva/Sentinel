@@ -234,7 +234,7 @@ def list_summaries(
 @router.get("/rag/chat/{project_id}", response_model=list[ChatMessageRead])
 def chat_history(
     project_id: str,
-    limit: int = 100,
+    limit: int = Query(100, ge=1, le=500),
     session: Session = Depends(get_session),
 ) -> list[object]:
     """Persisted chat room for a project — or the literal id `__all__` for

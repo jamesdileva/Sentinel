@@ -9,10 +9,12 @@ import {
   type SecurityFinding,
 } from "../api/security";
 import { getProject } from "../api/projects";
+import { nextPollDelay } from "../hooks/usePollBackoff";
 import { useProjectList } from "../hooks/useProjects";
 import { useUI } from "../contexts/UIContext";
 
-const POLL_MS = 2000;
+// A wait can still outlast short outages: cap the whole wait at 10 min
+// rather than any single delay.
 const POLL_CAP_MS = 10 * 60 * 1000;
 
 const severityTone: Record<FindingSeverity, string> = {
@@ -97,30 +99,38 @@ export default function Security() {
       setScanning(false);
       setScanningAll(false);
     };
+    let timer: number | undefined;
     const tick = async () => {
-      elapsed += POLL_MS;
+      if (cancelled) return;
       try {
         const project = await getProject(projectId);
         if (cancelled) return;
         if (project.last_scanned !== scanBaseline) {
           await finish("Security scan complete.", "success");
-        } else if (elapsed >= POLL_CAP_MS) {
+          return;
+        }
+        if (elapsed >= POLL_CAP_MS) {
           await finish(
             "Scan still running — refresh to see the results.",
             "error",
           );
+          return;
         }
       } catch {
         if (!cancelled) {
           await finish("Scan status lost — refresh to see findings.", "error");
         }
+        return;
       }
+      // Not done: back off (audit Batch 4), same shape as the build waits.
+      const delay = nextPollDelay(elapsed);
+      elapsed += delay;
+      timer = window.setTimeout(() => void tick(), delay);
     };
     void tick();
-    const interval = window.setInterval(() => void tick(), POLL_MS);
     return () => {
       cancelled = true;
-      window.clearInterval(interval);
+      if (timer !== undefined) window.clearTimeout(timer);
     };
   }, [projectId, scanBaseline, toast]);
 

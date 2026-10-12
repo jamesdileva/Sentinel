@@ -31,10 +31,10 @@ def galaxy(
 
 @router.get("/timeline", response_model=Timeline)
 def timeline(
-    days: int = 365,
+    days: int = Query(365, ge=1, le=3650),
     kind: str | None = None,
     project_id: str | None = None,
-    offset: int = 0,
+    offset: int = Query(0, ge=0),
     limit: int = Query(500, ge=1, le=1000),
     service: ObservatoryService = Depends(get_observatory_service),
 ) -> Timeline:
@@ -43,6 +43,8 @@ def timeline(
     v1.17.9: `kind` accepts a comma-separated list, `project_id` narrows to
     one project, and `offset`/`limit` page through the window — the response
     carries `has_more`.
+    v1.17.19.21 (audit B4): `days`/`offset` carry the audit's bounds, so a
+    client cannot request a decade of rows or a negative page.
     """
     kinds = [k.strip() for k in kind.split(",") if k.strip()] if kind else None
     return service.timeline(

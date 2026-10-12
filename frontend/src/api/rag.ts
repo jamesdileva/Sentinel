@@ -47,12 +47,24 @@ export interface KnowledgeHealth {
   checked: string[];
 }
 
+export interface KnowledgePairing {
+  consistent: boolean;
+  summary: string;
+  missing: string[];
+  orphans: string[];
+  collection_counts: Record<string, number>;
+}
+
 export interface RagIndexStatus {
   project_id: string | null;
   projects: Record<string, ProjectIndexStatus>;
   files_total: number;
   files_embedded: number;
   health: KnowledgeHealth;
+  // v1.17.19.21 (audit Batch 4): flag ↔ vector agreement. `files_embedded`
+  // says how many files *claim* to be embedded; this says whether the
+  // vectors they promise are actually there.
+  pairing: KnowledgePairing;
 }
 
 export async function ragSearch(

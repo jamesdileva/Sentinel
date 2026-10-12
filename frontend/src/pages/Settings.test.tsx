@@ -89,15 +89,45 @@ describe("Settings", () => {
     mockGetSettings.mockResolvedValue(
       makeReport({
         warnings: [
-          { key: "port", level: "error", message: "Port 99999 is out of range" },
+          {
+            key: "port",
+            level: "error",
+            message: "Port 99999 is out of range",
+          },
           { key: "ollama", level: "warning", message: "Ollama unreachable" },
         ],
       }),
     );
     render(<Settings />);
-    expect(await screen.findByText(/Configuration warnings \(2\)/)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/Configuration warnings \(2\)/),
+    ).toBeInTheDocument();
     expect(screen.getByText("Port 99999 is out of range")).toBeInTheDocument();
     expect(screen.getByText("Ollama unreachable")).toBeInTheDocument();
+  });
+
+  it("renders the env-file badge for .env provenance", async () => {
+    mockGetSettings.mockResolvedValue(
+      makeReport({
+        groups: [
+          {
+            name: "AI",
+            items: [
+              {
+                key: "SENTINEL_OLLAMA_HOST",
+                label: "Ollama host",
+                value: "http://localhost:11434",
+                default: "http://localhost:11434",
+                source: "env-file",
+                secret: false,
+              },
+            ],
+          },
+        ],
+      }),
+    );
+    render(<Settings />);
+    expect(await screen.findByText("env-file")).toBeInTheDocument();
   });
 
   it("shows an error when the request fails", async () => {

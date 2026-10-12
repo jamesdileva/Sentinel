@@ -52,6 +52,16 @@ const HEALTHY_STATUS = {
   checked: ["file_summaries"],
 };
 
+// v1.17.19.22 (audit Batch 4): flag ↔ vector agreement rides along in the
+// status payload. Consistent by default; the divergence case below flips it.
+const CONSISTENT_PAIRING = {
+  consistent: true,
+  summary: "knowledge pairing consistent (4 files, 4 vectors)",
+  missing: [],
+  orphans: [],
+  collection_counts: { file_summaries: 4 },
+};
+
 function makeProject(overrides: Partial<Project> = {}): Project {
   return {
     id: "p1",
@@ -97,6 +107,7 @@ describe("KnowledgeExplorer", () => {
       files_total: 4,
       files_embedded: 2,
       health: HEALTHY_STATUS,
+      pairing: CONSISTENT_PAIRING,
     });
     mockRagSearch.mockResolvedValue({ query: "q", results: [] });
     mockRagIndex.mockResolvedValue({
@@ -131,6 +142,7 @@ describe("KnowledgeExplorer", () => {
       files_total: 4,
       files_embedded: 4,
       health: HEALTHY_STATUS,
+      pairing: CONSISTENT_PAIRING,
     });
     const user = userEvent.setup();
     render(<KnowledgeExplorer />);
@@ -182,6 +194,7 @@ describe("KnowledgeExplorer", () => {
       files_total: 4,
       files_embedded: 4,
       health: HEALTHY_STATUS,
+      pairing: CONSISTENT_PAIRING,
     });
 
     render(<KnowledgeExplorer />);
@@ -213,7 +226,12 @@ describe("KnowledgeExplorer", () => {
       projects: { p1: { files: 4, embedded: 2 } },
       files_total: 4,
       files_embedded: 2,
-      health: { healthy: false, broken: ["file_summaries"], checked: ["file_summaries"] },
+      health: {
+        healthy: false,
+        broken: ["file_summaries"],
+        checked: ["file_summaries"],
+      },
+      pairing: CONSISTENT_PAIRING,
     });
     const toast = vi.fn();
     mockUseUI.mockReturnValue({
@@ -225,9 +243,7 @@ describe("KnowledgeExplorer", () => {
       toast,
       dismissToast: vi.fn(),
     });
-    const confirmSpy = vi
-      .spyOn(window, "confirm")
-      .mockReturnValue(true);
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
     const user = userEvent.setup();
     render(<KnowledgeExplorer />);
     expect(
@@ -248,13 +264,41 @@ describe("KnowledgeExplorer", () => {
     confirmSpy.mockRestore();
   });
 
+  it("surfaces the pairing divergence in the status line", async () => {
+    mockGetIndexStatus.mockResolvedValue({
+      project_id: null,
+      projects: { p1: { files: 4, embedded: 4 } },
+      files_total: 4,
+      files_embedded: 4,
+      health: HEALTHY_STATUS,
+      pairing: {
+        consistent: false,
+        summary: "2 file(s) missing vectors; 3 orphaned vector(s)",
+        missing: ["a.py (row-1)", "b.py (row-2)"],
+        orphans: ["ghost#0", "ghost#1", "ghost#2"],
+        collection_counts: { file_summaries: 5 },
+      },
+    });
+    render(<KnowledgeExplorer />);
+    // The embedded count claims everything is fine; the pairing says it is
+    // not — and both halves of the sentence reach the page (audit Batch 4).
+    expect(
+      await screen.findByText(/2 file\(s\) missing vectors/),
+    ).toBeInTheDocument();
+  });
+
   it("does not rebuild when the user cancels", async () => {
     mockGetIndexStatus.mockResolvedValue({
       project_id: null,
       projects: { p1: { files: 4, embedded: 2 } },
       files_total: 4,
       files_embedded: 2,
-      health: { healthy: false, broken: ["file_summaries"], checked: ["file_summaries"] },
+      health: {
+        healthy: false,
+        broken: ["file_summaries"],
+        checked: ["file_summaries"],
+      },
+      pairing: CONSISTENT_PAIRING,
     });
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
     const user = userEvent.setup();

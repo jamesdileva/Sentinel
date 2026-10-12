@@ -4,6 +4,55 @@
 > Sentinel-wide working notes live at the top; newest entries at the bottom
 > of the changelog unless otherwise dated.
 
+## 2026-10-11 — Audit Batch 4: scale without over-engineering (complete)
+
+The audit's last batch. Six items, all closed in one pass (v1.17.19.21).
+Tests: +19 backend, +6 frontend; backend 868 passed (1 skip) bar the
+documented Chroma HNSW flake, frontend 123 passed + tsc clean.
+
+- **B3 portfolio score invalidation — the missing fourth leg.** Reads were
+  already lazy (recompute when evidence changed, persist, serve the cache),
+  but the audit's architecture has a fourth part: *explicit
+  refresh/invalidation*. A row cached under an **older component definition**
+  has evidence timestamps that never move, so nothing would ever heal it but
+  the startup sweep. `POST /api/v1/portfolio/scores/refresh` (optionally
+  `?project_id=`) forces the recompute. Deterministic and synchronous — no
+  job pool, no AI.
+- **B9 settings provenance, made exact.** A value from the *process
+  environment* and one from `.env` both reported `"env"`. They are not the
+  same thing (process env wins at load), and the Settings page promises
+  provenance, so the source is now `env` / `env-file` / `default`.
+  **Also cached the Ollama probe** (30 s TTL, keyed on host+models+probe
+  class): the Settings page made a live request on every load, which for a
+  report that cannot have changed in seconds is pure waste.
+- **B4 endpoint bounds.** `days`/`offset` on the observatory timeline now
+  carry `Query(ge/le)` (the audit's exact numbers: `365, ge=1, le=3650`,
+  `offset ge=0`), and the same bounds were applied to the other numeric
+  params that had none (chat-history `limit`, `best-candidates`
+  `min_score`). An absurd window is a 422, not a huge scan.
+- **Generic job polling reduction.** The dashboard polled its job waits every
+  2 s for up to 10 minutes — ~300 requests for one answer. A shared
+  `nextPollDelay()` backs off 2 s → 4 s → 8 s capped at 10 s (~70 requests),
+  wired into all three wait sites (build, tester, scan). Deliberately *not*
+  websocket-driven: the sites each watch a different shape (build status,
+  session list, `last_scanned`), and rewriting three bespoke loops around a
+  generic event would be more machinery than a localhost dashboard needs.
+- **Hybrid lexical + semantic search.** Pure semantic search can miss the
+  exact identifier a developer types. Retrieved chunks are now re-ranked by
+  lexical evidence (identifier, path segment, filename match), with a bonus
+  bounded at 0.05 so a keyword-stuffed chunk cannot outrank a genuinely near
+  vector. **The reported `distance` stays the raw vector evidence**, so the
+  A8 relevance floor and every confidence number are untouched. Tokens
+  normalise `BuildRunner` ≡ `build_runner` ≡ `buildrunner`, and paths split
+  on `/` so `/observatory/galaxy` matches either segment.
+- **Stale-index state visible.** `/rag/index/status` now carries the
+  flag↔vector pairing from `knowledge_integrity`, and the Knowledge page
+  appends it to the "N of M files embedded" line. That is the difference
+  between *claiming* to have knowledge and *having* it, and it is what makes
+  a thin answer diagnosable.
+- **Next up:** the desktop `npm run dist` rebuild, so `win-unpacked` ships
+  every change from Batches 3 and 4.
+
 ## 2026-10-11 — Unclaimed P2s: B2 containment, B8 health, B10 validation
 
 Three P2 findings the audit listed but no batch absorbed, all closed in one
